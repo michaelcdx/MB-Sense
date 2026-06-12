@@ -10,6 +10,8 @@ function App() {
   return (
     <>
       <section id="center">
+        <h1>TESTING</h1>
+        <h2>TESTING 2</h2>
         <div className="hero">
           <img src={heroImg} className="base" width="170" height="179" alt="" />
           <img src={reactLogo} className="framework" alt="React logo" />
