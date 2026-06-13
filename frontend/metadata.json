@@ -1,0 +1,11 @@
+{
+  "name": "Remix: MB Sense Hub",
+  "description": "An AI-powered smart vehicle companion platform for schedule management, vehicle controls, AI driving recommendations, and voice integration. Features Gemini Advanced integration for mobility.",
+  "requestFramePermissions": [
+    "microphone",
+    "geolocation"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
