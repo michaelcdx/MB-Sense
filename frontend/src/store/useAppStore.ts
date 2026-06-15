@@ -23,9 +23,14 @@ export interface VehicleState {
 }
 
 interface AppStore {
+  isAuthenticated: boolean;
   user: {
     name: string;
     email: string;
+    notifications: {
+      preferences: boolean;
+      photos: boolean;
+    };
   };
   location: string;
   weather: {
@@ -36,6 +41,10 @@ interface AppStore {
   events: CalendarEvent[];
   recentActions: {icon: string, title: string, time: string, description: string}[];
   // Actions
+  login: () => void;
+  logout: () => void;
+  register: () => void;
+  updateUser: (data: Partial<AppStore['user']>) => void;
   toggleLock: () => void;
   toggleEngine: () => void;
   togglePreCool: () => void;
@@ -44,9 +53,14 @@ interface AppStore {
 }
 
 export const useAppStore = create<AppStore>((set) => ({
+  isAuthenticated: false,
   user: {
     name: 'Alex Johnson',
-    email: 'alex.j@example.com'
+    email: 'alex.j@example.com',
+    notifications: {
+      preferences: true,
+      photos: false
+    }
   },
   location: 'Palo Alto',
   weather: {
@@ -132,5 +146,9 @@ export const useAppStore = create<AppStore>((set) => ({
   })),
 
   addEvent: (event) => set((state) => ({ events: [...state.events, event] })),
-  addRecentAction: (action) => set((state) => ({ recentActions: [action, ...state.recentActions].slice(0, 5) }))
+  addRecentAction: (action) => set((state) => ({ recentActions: [action, ...state.recentActions].slice(0, 5) })),
+  login: () => set({ isAuthenticated: true }),
+  logout: () => set({ isAuthenticated: false }),
+  register: () => set({ isAuthenticated: true }),
+  updateUser: (data) => set((state) => ({ user: { ...state.user, ...data } }))
 }));

@@ -1818,7 +1818,7 @@ export default function MapView() {
             {/* Header */}
             <div className="flex justify-between items-start">
               <div>
-                <span className="text-[10px] font-bold text-blue-400 uppercase tracking-widest block font-sans">MB Sense Intelligent charging network</span>
+                <span className="text-[10px] font-bold text-blue-400 uppercase tracking-widest block font-sans">MB SENSE Intelligent charging network</span>
                 <h3 className="text-base font-extrabold flex items-center gap-1.5 mt-0.5 font-sans">
                   <Plug className="w-4.5 h-4.5 text-blue-400" /> EV Charger Locator
                 </h3>
@@ -2062,7 +2062,7 @@ export default function MapView() {
             {/* Header */}
             <div className="flex justify-between items-start">
               <div>
-                <span className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest block font-sans">MB Sense Intelligent Telemetry</span>
+                <span className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest block font-sans">MB SENSE Intelligent Telemetry</span>
                 <h3 className="text-base font-extrabold flex items-center gap-1.5 mt-0.5 font-sans">
                   <Clock className="w-4.5 h-4.5 text-indigo-400" /> Space Predictive Parking
                 </h3>
