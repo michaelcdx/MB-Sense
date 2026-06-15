@@ -1,7 +1,6 @@
 import { motion } from 'motion/react';
 import { useAppStore } from '../store/useAppStore';
-import { format } from 'date-fns';
-import { Car, Video, MapPin, Clock, BrainCircuit, Plus, Settings2 } from 'lucide-react';
+import { Car, Video, MapPin, Clock, BrainCircuit } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useState } from 'react';
 
@@ -127,10 +126,6 @@ export default function Calendar() {
         </div>
 
       </section>
-
-      <button className="fixed bottom-24 right-6 w-14 h-14 bg-white text-slate-950 rounded-2xl shadow-xl flex items-center justify-center hover:scale-110 active:scale-95 transition-all z-40">
-        <Plus className="w-8 h-8" />
-      </button>
     </motion.div>
   );
 }
