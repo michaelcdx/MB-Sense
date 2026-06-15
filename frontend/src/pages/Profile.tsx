@@ -1,11 +1,34 @@
 import { useAppStore } from '../store/useAppStore';
 import { motion } from 'motion/react';
-import { Settings, Shield, ChevronRight, Zap, TrendingUp, History } from 'lucide-react';
+import { Settings, Shield, ChevronRight, Zap, TrendingUp, History, Eye, EyeOff } from 'lucide-react';
 import { useState } from 'react';
 
 export default function Profile() {
-  const { user } = useAppStore();
+  const { user, updateUser } = useAppStore();
   const [activeTab, setActiveTab] = useState<'profile' | 'settings'>('profile');
+  
+  // Settings Form State
+  const [name, setName] = useState(user.name);
+  const [email, setEmail] = useState(user.email);
+  const [currentPassword, setCurrentPassword] = useState('password123');
+  const [newPassword, setNewPassword] = useState('password123');
+  const [showCurrentPassword, setShowCurrentPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  
+  const [notifyPrefs, setNotifyPrefs] = useState(user.notifications.preferences);
+  const [notifyPhotos, setNotifyPhotos] = useState(user.notifications.photos);
+
+  const handleSaveChanges = () => {
+    updateUser({
+      name,
+      email,
+      notifications: {
+        preferences: notifyPrefs,
+        photos: notifyPhotos
+      }
+    });
+    // Normally you'd also handle password change here
+  };
 
   return (
     <motion.div 
@@ -107,42 +130,105 @@ export default function Profile() {
         </>
       ) : (
          <div className="space-y-6">
+           <section className="flex flex-col items-center sm:flex-row sm:items-center sm:justify-start gap-4 mb-8">
+             <div className="w-16 h-16 rounded-full border-2 border-slate-700 overflow-hidden">
+               <img src="https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&h=150&fit=crop" alt={user.name} className="w-full h-full object-cover" />
+             </div>
+             <button className="text-sm font-bold text-white bg-slate-800 hover:bg-slate-700 px-4 py-2 rounded-lg transition-colors">
+               Upload New Photo
+             </button>
+           </section>
+
            <section className="space-y-4">
-            <h3 className="text-xs font-bold text-blue-400 uppercase tracking-widest px-1">Notifications</h3>
-            <div className="bg-slate-900 border border-white/5 rounded-3xl overflow-hidden divide-y divide-white/5">
-              <div className="flex items-center justify-between p-5 hover:bg-slate-800/50 transition-colors">
-                <div>
-                  <p className="text-sm font-semibold text-white">Departure Alerts</p>
-                  <p className="text-xs text-slate-500 mt-1">Get notified when it's time to head to vehicle</p>
-                </div>
-                <div className="w-10 h-6 bg-blue-500 rounded-full relative cursor-pointer">
-                  <div className="absolute right-1 top-1 bg-white w-4 h-4 rounded-full"></div>
-                </div>
-              </div>
-              <div className="flex items-center justify-between p-5 hover:bg-slate-800/50 transition-colors">
-                <div>
-                  <p className="text-sm font-semibold text-white">Pre-cool confirmations</p>
-                  <p className="text-xs text-slate-500 mt-1">Confirmed cabin temp optimizations</p>
-                </div>
-                <div className="w-10 h-6 bg-blue-500 rounded-full relative cursor-pointer">
-                  <div className="absolute right-1 top-1 bg-white w-4 h-4 rounded-full"></div>
-                </div>
+            <div className="space-y-1">
+              <label className="text-xs font-bold text-white tracking-wide px-1">Full Name</label>
+              <input 
+                type="text" 
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                className="w-full bg-slate-900 border border-blue-500/30 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500 transition-colors"
+              />
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-xs font-bold text-white tracking-wide px-1">Email</label>
+              <input 
+                type="email" 
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="w-full bg-slate-900 border border-blue-500/30 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500 transition-colors"
+              />
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-xs font-bold text-white tracking-wide px-1">Current Password</label>
+              <div className="relative">
+                <input 
+                  type={showCurrentPassword ? "text" : "password"}
+                  value={currentPassword}
+                  onChange={(e) => setCurrentPassword(e.target.value)}
+                  className="w-full bg-slate-900 border border-blue-500/30 rounded-xl pl-4 pr-12 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500 transition-colors"
+                />
+                <button 
+                  type="button"
+                  onClick={() => setShowCurrentPassword(!showCurrentPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
+                >
+                  {showCurrentPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
               </div>
             </div>
-          </section>
 
-          <section className="mt-8 pt-8 border-t border-white/5">
-            <h3 className="text-xs font-bold text-rose-500 uppercase tracking-widest px-1 mb-4">Danger Zone</h3>
-            <div className="bg-rose-500/5 border border-rose-500/20 p-5 flex flex-col items-center justify-between gap-4 rounded-3xl sm:flex-row">
-              <div>
-                <p className="text-sm font-bold text-white">Delete Account</p>
-                <p className="text-xs text-slate-400 mt-1">Permanently remove vehicle data and history</p>
+            <div className="space-y-1">
+              <label className="text-xs font-bold text-white tracking-wide px-1">New Password</label>
+              <div className="relative">
+                <input 
+                  type={showNewPassword ? "text" : "password"}
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  className="w-full bg-slate-900 border border-blue-500/30 rounded-xl pl-4 pr-12 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500 transition-colors"
+                />
+                <button 
+                  type="button"
+                  onClick={() => setShowNewPassword(!showNewPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
+                >
+                  {showNewPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
               </div>
-              <button className="px-6 py-2.5 bg-rose-500/10 text-rose-500 border border-rose-500/50 rounded-xl text-xs font-bold tracking-widest uppercase hover:bg-rose-500 hover:text-white transition-colors text-nowrap w-full w-full">
-                Delete Account
+            </div>
+           </section>
+
+           <section className="space-y-4 pt-4">
+            <h3 className="text-xs font-bold text-white px-1">Notification Preferences</h3>
+            
+            <div className="flex items-center justify-between px-1">
+              <span className="text-sm text-slate-300">Notification Preferences</span>
+              <button 
+                onClick={() => setNotifyPrefs(!notifyPrefs)}
+                className={`w-10 h-6 rounded-full relative transition-colors ${notifyPrefs ? 'bg-white' : 'bg-slate-700'}`}
+              >
+                <div className={`absolute top-1 w-4 h-4 rounded-full transition-all ${notifyPrefs ? 'right-1 bg-slate-900' : 'left-1 bg-white'}`}></div>
               </button>
             </div>
-          </section>
+
+            <div className="flex items-center justify-between px-1">
+              <span className="text-sm text-slate-300">Notification Photos</span>
+              <button 
+                onClick={() => setNotifyPhotos(!notifyPhotos)}
+                className={`w-10 h-6 rounded-full relative transition-colors ${notifyPhotos ? 'bg-white' : 'bg-slate-700'}`}
+              >
+                <div className={`absolute top-1 w-4 h-4 rounded-full transition-all ${notifyPhotos ? 'right-1 bg-slate-900' : 'left-1 bg-white'}`}></div>
+              </button>
+            </div>
+           </section>
+
+           <button 
+             onClick={handleSaveChanges}
+             className="w-full bg-white text-slate-950 font-bold text-sm py-3 rounded-xl mt-8 hover:bg-slate-200 transition-colors active:scale-[0.98]"
+           >
+             Save Changes
+           </button>
          </div>
       )}
     </motion.div>

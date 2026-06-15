@@ -87,7 +87,7 @@ export default function Chatbot() {
                   <BrainCircuit className="w-4 h-4 text-blue-400" />
                 </div>
                 <div>
-                  <h3 className="font-bold text-slate-100 leading-tight">AIDV Assistant</h3>
+                  <h3 className="font-bold text-slate-100 leading-tight uppercase tracking-wide">MB SENSE Assistant</h3>
                   <div className="flex items-center gap-1.5">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
                     <span className="text-[10px] uppercase tracking-widest text-emerald-400 font-bold">Online</span>
