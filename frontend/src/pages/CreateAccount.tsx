@@ -17,33 +17,33 @@ export default function CreateAccount() {
 
   return (
     <div className="flex flex-col items-center justify-center min-h-[80vh] px-6">
-      <div className="w-full max-w-sm flex flex-col items-center gap-8">
+      <div className="w-full max-w-sm flex flex-col items-center gap-8 rounded-3xl border border-outline-variant/45 bg-surface-container-lowest/82 p-7 shadow-ambient-lg backdrop-blur-xl">
         
         {/* Logo */}
         <div className="text-center">
-          <h1 className="text-5xl font-black tracking-widest uppercase text-blue-500 mb-6 drop-shadow-[0_0_15px_rgba(59,130,246,0.5)]">MB SENSE</h1>
-          <h2 className="text-2xl font-bold text-white">Create Account</h2>
+          <h1 className="text-4xl font-black tracking-wide uppercase text-primary mb-4">MB SENSE</h1>
+          <h2 className="text-2xl font-bold text-on-surface">Create Account</h2>
         </div>
 
         {/* Form */}
         <form onSubmit={handleCreateAccount} className="w-full space-y-5">
           <div className="space-y-2">
-            <label className="text-sm font-bold text-white tracking-wide">Email Address</label>
+            <label className="text-sm font-bold text-on-surface tracking-wide">Email Address</label>
             <input 
               type="email" 
               required
-              className="w-full bg-slate-900 border border-white/5 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
+              className="w-full bg-surface-container-lowest border border-outline-variant/55 rounded-xl px-4 py-3 text-on-surface placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-primary/45 transition-all"
               placeholder="you@example.com"
             />
           </div>
 
           <div className="space-y-2">
-            <label className="text-sm font-bold text-white tracking-wide">Password</label>
+            <label className="text-sm font-bold text-on-surface tracking-wide">Password</label>
             <div className="relative">
               <input 
                 type={showPassword ? "text" : "password"}
                 required
-                className="w-full bg-slate-900 border border-white/5 rounded-xl pl-4 pr-12 py-3 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
+                className="w-full bg-surface-container-lowest border border-outline-variant/55 rounded-xl pl-4 pr-12 py-3 text-on-surface placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-primary/45 transition-all"
                 placeholder="••••••••"
               />
               <button 
@@ -57,12 +57,12 @@ export default function CreateAccount() {
           </div>
 
           <div className="space-y-2">
-            <label className="text-sm font-bold text-white tracking-wide">Confirm Password</label>
+            <label className="text-sm font-bold text-on-surface tracking-wide">Confirm Password</label>
             <div className="relative">
               <input 
                 type={showConfirmPassword ? "text" : "password"}
                 required
-                className="w-full bg-slate-900 border border-white/5 rounded-xl pl-4 pr-12 py-3 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
+                className="w-full bg-surface-container-lowest border border-outline-variant/55 rounded-xl pl-4 pr-12 py-3 text-on-surface placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-primary/45 transition-all"
                 placeholder="••••••••"
               />
               <button 
@@ -80,23 +80,23 @@ export default function CreateAccount() {
               type="checkbox" 
               id="terms" 
               required
-              className="w-4 h-4 rounded border-white/20 bg-slate-900 text-blue-500 focus:ring-blue-500 focus:ring-offset-slate-950"
+              className="w-4 h-4 rounded border-outline-variant bg-surface-container-lowest text-primary focus:ring-primary focus:ring-offset-surface"
             />
             <label htmlFor="terms" className="text-sm text-slate-400">
-              I agree to the <a href="#" className="text-blue-400 hover:text-blue-300 transition-colors">Terms of Service</a>
+              I agree to the <a href="#" className="text-primary hover:text-primary-dim transition-colors">Terms of Service</a>
             </label>
           </div>
 
           <button 
             type="submit"
-            className="w-full bg-white text-slate-950 font-bold text-base py-3.5 rounded-xl mt-6 hover:bg-slate-200 transition-colors active:scale-[0.98]"
+            className="w-full bg-primary text-on-primary font-bold text-base py-3.5 rounded-xl mt-6 hover:bg-primary-dim transition-colors active:scale-[0.98]"
           >
             Create Account
           </button>
         </form>
 
         <div className="text-sm text-slate-400 mt-2">
-          Already have an account? <Link to="/signin" className="text-blue-400 font-bold hover:text-blue-300 transition-colors">Sign In</Link>
+          Already have an account? <Link to="/signin" className="text-primary font-bold hover:text-primary-dim transition-colors">Sign In</Link>
         </div>
       </div>
     </div>

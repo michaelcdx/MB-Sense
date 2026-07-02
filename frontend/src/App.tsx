@@ -18,9 +18,9 @@ function AppShell() {
   const isAuth = location.pathname === '/signin' || location.pathname === '/register';
 
   return (
-    <div className="min-h-dvh bg-slate-950 text-slate-100 font-sans selection:bg-white/30 overflow-x-hidden">
+    <div className="min-h-dvh bg-surface text-on-surface font-sans selection:bg-primary-fixed/35 overflow-x-hidden">
       <div className={cn(
-        "relative min-h-dvh w-full bg-slate-950 pb-[calc(6rem+env(safe-area-inset-bottom))] sm:pb-8"
+        "relative min-h-dvh w-full bg-surface pb-[calc(6rem+env(safe-area-inset-bottom))] sm:pb-8"
       )}>
         <TopBar />
         <main className={cn(
@@ -41,7 +41,7 @@ function AppShell() {
         {!isAuth && (
           <>
             <VoiceAssistant />
-            <Chatbot />
+            {!isMap && <Chatbot />}
           </>
         )}
         <BottomNav />
