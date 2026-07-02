@@ -2,31 +2,140 @@
 
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
-  
-  /* Background and Surfaces */
-  --color-slate-950: #0D0F14;
-  --color-slate-900: #161A23;
-  --color-slate-800: #0A0C10;
-  
-  /* Accents */
-  --color-blue-400: #2D7EFF;
-  --color-blue-500: #2D7EFF;
-  
-  --color-emerald-400: #22C55E;
-  --color-emerald-500: #22C55E;
-  
-  --color-amber-400: #F5A623;
-  --color-amber-500: #F5A623;
+  --font-headline: "Plus Jakarta Sans", "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-body: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-label: "Inter", ui-sans-serif, system-ui, sans-serif;
+
+  /* Reclaim-inspired Material surface system */
+  --color-outline: #747779;
+  --color-outline-variant: #abadaf;
+  --color-surface-tint: #4647d3;
+  --color-surface: #f5f7f9;
+  --color-surface-bright: #f5f7f9;
+  --color-surface-dim: #d0d5d8;
+  --color-surface-container-lowest: #ffffff;
+  --color-surface-container-low: #eef1f3;
+  --color-surface-container: #e5e9eb;
+  --color-surface-container-high: #dfe3e6;
+  --color-surface-container-highest: #d9dde0;
+  --color-background: #f5f7f9;
+  --color-on-background: #2c2f31;
+  --color-on-surface: #2c2f31;
+  --color-on-surface-variant: #595c5e;
+  --color-inverse-surface: #0b0f10;
+  --color-inverse-on-surface: #f5f7f9;
+
+  --color-primary: #4647d3;
+  --color-primary-dim: #3939c7;
+  --color-primary-container: #9396ff;
+  --color-primary-fixed: #9396ff;
+  --color-primary-fixed-dim: #8387ff;
+  --color-on-primary: #f4f1ff;
+  --color-on-primary-container: #0a0081;
+  --color-inverse-primary: #8083ff;
+
+  --color-secondary: #00628c;
+  --color-secondary-container: #a4d8ff;
+  --color-secondary-fixed: #a4d8ff;
+  --color-secondary-fixed-dim: #81ccff;
+  --color-on-secondary: #e9f4ff;
+  --color-on-secondary-container: #004c6f;
+  --color-on-secondary-fixed: #003853;
+  --color-on-secondary-fixed-variant: #00567c;
+
+  --color-tertiary: #9e00b4;
+  --color-tertiary-dim: #8a009e;
+  --color-tertiary-container: #f487ff;
+  --color-tertiary-fixed: #f487ff;
+  --color-tertiary-fixed-dim: #ef6eff;
+  --color-on-tertiary: #ffeefb;
+  --color-on-tertiary-container: #580065;
+  --color-on-tertiary-fixed: #300038;
+  --color-on-tertiary-fixed-variant: #660075;
+
+  --color-error: #b41340;
+  --color-error-dim: #a70138;
+  --color-error-container: #f74b6d;
+  --color-on-error: #ffefef;
+  --color-on-error-container: #510017;
+
+  /* Legacy palette remapped onto the Reclaim system */
+  --color-slate-950: #2c2f31;
+  --color-slate-905: #ffffff;
+  --color-slate-900: #ffffff;
+  --color-slate-850: #eef1f3;
+  --color-slate-800: #e5e9eb;
+  --color-slate-750: #d9dde0;
+  --color-slate-700: #d0d5d8;
+  --color-slate-650: #c4c8cb;
+  --color-slate-600: #abadaf;
+  --color-slate-550: #8f9396;
+  --color-slate-500: #747779;
+  --color-slate-455: #666a6d;
+  --color-slate-450: #666a6d;
+  --color-slate-400: #595c5e;
+  --color-slate-350: #424548;
+  --color-slate-300: #3e4245;
+  --color-slate-205: #2c2f31;
+  --color-slate-200: #2c2f31;
+  --color-slate-100: #2c2f31;
+
+  --color-blue-950: #eef1ff;
+  --color-blue-600: #3939c7;
+  --color-blue-500: #4647d3;
+  --color-blue-450: #5354dc;
+  --color-blue-400: #5d60e1;
+  --color-blue-300: #8387ff;
+  --color-blue-200: #c8ccff;
+  --color-blue-100: #e6e8ff;
+
+  --color-emerald-950: #ecfdf5;
+  --color-emerald-500: #10a86c;
+  --color-emerald-450: #16b77a;
+  --color-emerald-400: #22c55e;
+  --color-emerald-300: #7ddfb1;
+  --color-emerald-200: #d6f8e9;
+  --color-emerald-100: #ecfdf5;
+
+  --color-amber-950: #fff7e6;
+  --color-amber-500: #d28700;
+  --color-amber-450: #e39a12;
+  --color-amber-400: #f5a623;
+  --color-amber-350: #f7b84b;
+  --color-amber-300: #ffd27a;
+  --color-amber-200: #fff1c7;
+  --color-amber-100: #fff8e8;
+
+  --color-rose-950: #fff0f4;
+  --color-rose-500: #d11f4d;
+  --color-rose-450: #dd315d;
+  --color-rose-400: #e44870;
+  --color-rose-300: #f18ca4;
+
+  --color-cyan-300: #81ccff;
+  --color-cyan-200: #cdefff;
+  --color-cyan-100: #effaff;
+  --color-sky-400: #00628c;
+  --color-sky-300: #81ccff;
+  --color-teal-400: #008b87;
+  --color-teal-300: #7edbd4;
+  --color-violet-350: #9b7cff;
+  --color-violet-300: #b8a5ff;
+
+  --shadow-ambient: 0 8px 40px -4px rgb(44 47 49 / 0.06);
+  --shadow-ambient-lg: 0 12px 60px -8px rgb(44 47 49 / 0.08);
 }
 
 body {
-  background-color: var(--color-slate-950);
-  color: #fff;
+  background-color: var(--color-surface);
+  color: var(--color-on-surface);
+  font-family: var(--font-body);
   overflow-x: hidden;
 }
 
 html {
-  background-color: var(--color-slate-950);
+  background-color: var(--color-surface);
+  scroll-padding-top: 5rem;
 }
 
 button,
@@ -35,6 +144,119 @@ input,
 select,
 textarea {
   -webkit-tap-highlight-color: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+@layer utilities {
+  .split-gradient {
+    background: linear-gradient(135deg, #4647d3 0%, #9396ff 52%, #9e00b4 100%);
+  }
+
+  .glass-card {
+    background-color: rgb(255 255 255 / 0.72);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+  }
+
+  .shadow-ambient {
+    box-shadow: var(--shadow-ambient);
+  }
+
+  .shadow-ambient-lg {
+    box-shadow: var(--shadow-ambient-lg);
+  }
+
+  :where([class~="bg-slate-950"]) {
+    background-color: var(--color-surface) !important;
+  }
+
+  :where(
+    [class~="bg-slate-950/10"],
+    [class~="bg-slate-950/40"],
+    [class~="bg-slate-950/50"],
+    [class~="bg-slate-950/60"],
+    [class~="bg-slate-950/70"],
+    [class~="bg-slate-950/75"],
+    [class~="bg-slate-950/95"]
+  ) {
+    background-color: color-mix(in oklab, var(--color-surface-container-low) 82%, transparent) !important;
+  }
+
+  :where([class~="bg-slate-900"], [class~="bg-slate-905"]) {
+    background-color: var(--color-surface-container-lowest) !important;
+  }
+
+  :where([class~="bg-slate-900/30"], [class~="bg-slate-900/40"], [class~="bg-slate-900/60"]) {
+    background-color: rgb(255 255 255 / 0.72) !important;
+  }
+
+  :where([class~="bg-slate-850"], [class~="bg-slate-800"], [class~="bg-slate-800/45"], [class~="bg-slate-800/50"], [class~="bg-slate-700"]) {
+    background-color: var(--color-surface-container) !important;
+  }
+
+  :where([class*="border-white/"], [class*="border-white["]) {
+    border-color: color-mix(in oklab, var(--color-outline-variant) 62%, transparent) !important;
+  }
+
+  :where([class*="divide-white/"]) > :not([hidden]) ~ :not([hidden]) {
+    border-color: color-mix(in oklab, var(--color-outline-variant) 55%, transparent) !important;
+  }
+
+  :where([class*="bg-white/"], [class*="bg-white["]) {
+    background-color: color-mix(in oklab, var(--color-primary) 7%, var(--color-surface-container-lowest)) !important;
+  }
+
+  :where([class~="text-white"]) {
+    color: var(--color-on-surface) !important;
+  }
+
+  :where([class~="text-white/80"]) {
+    color: rgb(44 47 49 / 0.72) !important;
+  }
+
+  :where([class~="hover:text-white"]):hover {
+    color: var(--color-on-surface) !important;
+  }
+
+  :where(
+    .bg-blue-500.text-white,
+    .bg-blue-600.text-white,
+    .bg-primary.text-white,
+    .split-gradient .text-white,
+    .split-gradient [class~="text-white/80"],
+    .bg-blue-500 .text-white,
+    .bg-blue-600 .text-white,
+    .bg-primary .text-white
+  ) {
+    color: var(--color-on-primary) !important;
+  }
+
+  :where(
+    [class*="bg-[#03060b]"],
+    [class*="bg-[#05070b]"],
+    [class*="bg-[#05070c]"],
+    [class*="bg-[#06080d]"],
+    [class*="bg-[#07090d]"],
+    [class*="bg-[#080a0f]"],
+    [class*="bg-[#080c14]"]
+  ) {
+    background-color: rgb(255 255 255 / 0.86) !important;
+    color: var(--color-on-surface) !important;
+  }
+
+  :where([class*="shadow-[0_0_"], [class*="drop-shadow-[0_0_"]) {
+    filter: none;
+  }
 }
 
 .no-scrollbar::-webkit-scrollbar {
@@ -56,10 +278,27 @@ textarea {
 }
 .markdown-body strong {
   font-weight: 600;
-  color: var(--color-blue-400);
+  color: var(--color-primary);
 }
 .markdown-body ul {
   list-style-type: disc;
   padding-left: 1.5em;
   margin-bottom: 0.5em;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-outline-variant);
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-primary-fixed-dim);
 }

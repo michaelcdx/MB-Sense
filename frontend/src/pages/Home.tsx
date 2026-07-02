@@ -116,7 +116,7 @@ export default function Home() {
           <h1 className="text-3xl font-bold text-slate-100">Hello, {user.name.split(' ')[0]}</h1>
           <p className="text-sm text-slate-400 mt-1 font-medium tracking-wide">{time}</p>
         </div>
-        <div className="flex items-center gap-3 bg-slate-900 border border-white/5 px-4 py-2 rounded-xl">
+        <div className="flex items-center gap-3 bg-surface-container-lowest border border-outline-variant/45 px-4 py-2 rounded-xl shadow-ambient">
           <div className="text-right">
             <p className="text-xs text-slate-300 font-medium">Palo Alto</p>
             <p className="text-lg font-semibold text-blue-400">{weather.temp}°C</p>
@@ -126,12 +126,12 @@ export default function Home() {
 
       {/* Search Bar */}
       <section>
-        <div className="bg-slate-900 border border-white/5 rounded-2xl flex items-center px-4 py-3 gap-3 focus-within:ring-2 focus-within:ring-blue-500/50 transition-all">
-          <Search className="w-5 h-5 text-blue-400" />
+        <div className="bg-surface-container-lowest border border-outline-variant/45 rounded-2xl flex items-center px-4 py-3 gap-3 shadow-ambient focus-within:ring-2 focus-within:ring-primary/35 transition-all">
+          <Search className="w-5 h-5 text-primary" />
           <input 
             type="text" 
             placeholder="Where to?" 
-            className="bg-transparent border-none flex-1 focus:ring-0 text-white placeholder:text-slate-500" 
+            className="bg-transparent border-none flex-1 focus:ring-0 text-on-surface placeholder:text-slate-500" 
           />
           <Mic className="w-5 h-5 text-slate-400" />
         </div>
@@ -139,39 +139,39 @@ export default function Home() {
 
       {/* Suggested Destination Card */}
       <section>
-        <div className="relative overflow-hidden bg-gradient-to-br from-blue-500 to-slate-900 border border-white/10 rounded-3xl p-6">
+        <div className="relative overflow-hidden split-gradient border border-primary-fixed/45 rounded-3xl p-6 shadow-ambient-lg">
           <div className="absolute inset-x-0 -bottom-px h-px bg-gradient-to-r from-transparent via-white/50 to-transparent" />
           <div className="relative z-10">
-            <span className="inline-block px-3 py-1 rounded-full bg-white/20 text-white text-xs font-bold uppercase tracking-widest mb-4">
+            <span className="inline-block px-3 py-1 rounded-full bg-primary-dim/45 text-on-primary text-xs font-bold uppercase tracking-widest mb-4">
               Suggested Now
             </span>
-            <h2 className="text-3xl font-bold text-white mb-2">Work</h2>
-            <p className="text-sm text-white/80 flex items-center gap-2 font-medium">
+            <h2 className="text-3xl font-bold text-on-primary mb-2">Work</h2>
+            <p className="text-sm text-on-primary/85 flex items-center gap-2 font-medium">
               <Info className="w-4 h-4" />
               15 min commute • Normal traffic
             </p>
           </div>
           <div className="mt-8 flex gap-3 relative z-10">
-            <Link to="/map" className="flex-1 bg-white hover:bg-slate-200 text-slate-950 py-3.5 rounded-xl text-sm font-bold uppercase tracking-widest transition-colors flex items-center justify-center gap-2">
+            <Link to="/map" className="flex-1 bg-surface-container-lowest hover:bg-surface-container-low text-primary py-3.5 rounded-xl text-sm font-bold uppercase tracking-widest transition-colors flex items-center justify-center gap-2 shadow-ambient">
               <Navigation className="w-4 h-4" />
               Start Navigation
             </Link>
-            <button className="w-14 h-14 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl flex items-center justify-center transition-colors">
-              <MoreHorizontal className="w-5 h-5 text-white" />
+            <button className="w-14 h-14 bg-primary-dim/35 hover:bg-primary-dim/45 border border-primary-fixed/35 rounded-xl flex items-center justify-center transition-colors">
+              <MoreHorizontal className="w-5 h-5 text-on-primary" />
             </button>
           </div>
         </div>
       </section>
 
       {/* Geolocation Weather & Driving Safety Center Widget */}
-      <section className="bg-slate-900 border border-white/5 rounded-3xl p-5 flex flex-col gap-4 relative overflow-hidden">
+      <section className="bg-surface-container-lowest border border-outline-variant/45 rounded-3xl p-5 flex flex-col gap-4 relative overflow-hidden shadow-ambient">
         {/* Decorative Top Accent Glow */}
         <div className="absolute inset-x-0 -top-px h-px bg-gradient-to-r from-transparent via-blue-500/40 to-transparent" />
         
         {/* Title and Geolocation Trigger */}
         <div className="flex justify-between items-center">
           <div className="flex items-center gap-2">
-            <ShieldAlert className="w-5 h-5 text-sky-400" />
+            <ShieldAlert className="w-5 h-5 text-primary" />
             <h3 className="font-extrabold text-sm text-slate-200 uppercase tracking-wider">Drive Conditions Watch</h3>
           </div>
           
@@ -181,12 +181,22 @@ export default function Home() {
             className={cn(
               "px-3 py-1.5 rounded-xl border text-[11px] font-black uppercase tracking-wider flex items-center gap-1.5 transition-all",
               isLocating 
-                ? "bg-slate-800 border-white/5 text-slate-400 cursor-not-allowed" 
-                : "bg-white/5 hover:bg-white/10 active:scale-98 border-white/10 text-white hover:border-white/20"
+                ? "bg-surface-container border-outline-variant/45 text-slate-400 cursor-not-allowed" 
+                : "bg-primary/10 hover:bg-primary/15 active:scale-98 border-primary/20 text-primary hover:border-primary/30"
             )}
           >
-            <MapPin className="w-3.5 h-3.5 text-sky-400" />
-            {isLocating ? "Syncing GPS..." : "Detect Location"}
+            <MapPin className="w-3.5 h-3.5 text-primary" />
+            {isLocating ? (
+              <>
+                <span className="sm:hidden">Syncing</span>
+                <span className="hidden sm:inline">Syncing GPS...</span>
+              </>
+            ) : (
+              <>
+                <span className="sm:hidden">Detect</span>
+                <span className="hidden sm:inline">Detect Location</span>
+              </>
+            )}
           </button>
         </div>
 
@@ -200,7 +210,7 @@ export default function Home() {
         {/* Forecast / Custom Simulation presets selection */}
         <div className="flex flex-col gap-1.5">
           <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest pl-0.5">Simulate Driving Scenario Weather</span>
-          <div className="grid grid-cols-5 gap-1 p-1 bg-slate-950 rounded-xl border border-white/5">
+          <div className="grid grid-cols-5 gap-1 p-1 bg-surface-container-low rounded-xl border border-outline-variant/45">
             {([
               { key: 'clear', label: 'Clear' },
               { key: 'fog', label: 'Fog' },
@@ -215,8 +225,8 @@ export default function Home() {
                 className={cn(
                   "py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all",
                   preset === opt.key 
-                    ? "bg-blue-600/25 border border-blue-500/40 text-blue-300" 
-                    : "text-slate-400 hover:text-white bg-transparent border border-transparent"
+                    ? "bg-primary/15 border border-primary/35 text-primary" 
+                    : "text-slate-400 hover:text-on-surface bg-transparent border border-transparent"
                 )}
               >
                 {opt.label}
@@ -227,16 +237,16 @@ export default function Home() {
 
         {/* Advisory main content panel */}
         {isLoadingAdvisory ? (
-          <div className="h-44 bg-slate-950/50 rounded-2xl border border-white/5 flex flex-col items-center justify-center gap-2">
-            <div className="w-6 h-6 rounded-full border-2 border-sky-400 border-t-transparent animate-spin" />
+          <div className="h-44 bg-surface-container-low rounded-2xl border border-outline-variant/45 flex flex-col items-center justify-center gap-2">
+            <div className="w-6 h-6 rounded-full border-2 border-primary border-t-transparent animate-spin" />
             <p className="text-xs text-slate-400 font-bold tracking-widest uppercase">Querying Weather Telemetry...</p>
           </div>
         ) : advisory ? (
-          <div className="flex flex-col gap-3.5 bg-slate-950 p-4 rounded-2xl border border-white/5">
+          <div className="flex flex-col gap-3.5 bg-surface-container-low p-4 rounded-2xl border border-outline-variant/45">
             {/* Bottom row: Condition overview & Dial score */}
             <div className="flex justify-between items-center gap-4">
               <div className="flex items-center gap-3">
-                <div className="p-2 bg-white/5 rounded-xl border border-white/5">
+                <div className="p-2 bg-surface-container-lowest rounded-xl border border-outline-variant/45 shadow-ambient">
                   {preset === 'clear' && <Sun className="w-8 h-8 text-amber-400" />}
                   {preset === 'fog' && <CloudFog className="w-8 h-8 text-sky-300" />}
                   {preset === 'rain' && <CloudRain className="w-8 h-8 text-blue-400" />}
@@ -256,7 +266,7 @@ export default function Home() {
               {/* Safety Index Dial */}
               <div className="flex flex-col items-center shrink-0">
                 <div className="relative flex items-center justify-center">
-                  <div className="w-14 h-14 rounded-full border-4 border-white/5 flex items-center justify-center">
+                  <div className="w-14 h-14 rounded-full border-4 border-primary/10 bg-surface-container-lowest flex items-center justify-center">
                     <span className={cn(
                       "text-sm font-black font-mono",
                       advisory.safetyRating >= 85 ? "text-emerald-400" :
@@ -277,25 +287,25 @@ export default function Home() {
             </div>
 
             {/* Weather specs grid */}
-            <div className="grid grid-cols-4 gap-2 py-2 border-t border-b border-white/5">
+            <div className="grid grid-cols-4 gap-2 py-2 border-t border-b border-outline-variant/45">
               <div className="flex flex-col items-center">
                 <Thermometer className="w-3.5 h-3.5 text-slate-500 mb-1" />
-                <span className="text-xs font-bold text-white">{advisory.temp}°C</span>
+                <span className="text-xs font-bold text-on-surface">{advisory.temp}°C</span>
                 <span className="text-[9px] text-slate-500 uppercase font-semibold">Temp</span>
               </div>
-              <div className="flex flex-col items-center border-l border-white/5">
+              <div className="flex flex-col items-center border-l border-outline-variant/45">
                 <Droplets className="w-3.5 h-3.5 text-slate-500 mb-1" />
-                <span className="text-xs font-bold text-white">{advisory.humidity}%</span>
+                <span className="text-xs font-bold text-on-surface">{advisory.humidity}%</span>
                 <span className="text-[9px] text-slate-500 uppercase font-semibold">Humidity</span>
               </div>
-              <div className="flex flex-col items-center border-l border-white/5">
+              <div className="flex flex-col items-center border-l border-outline-variant/45">
                 <Eye className="w-3.5 h-3.5 text-slate-500 mb-1" />
-                <span className="text-xs font-bold text-white">{advisory.visibility}</span>
+                <span className="text-xs font-bold text-on-surface">{advisory.visibility}</span>
                 <span className="text-[9px] text-slate-500 uppercase font-semibold">Visibility</span>
               </div>
-              <div className="flex flex-col items-center border-l border-white/5">
+              <div className="flex flex-col items-center border-l border-outline-variant/45">
                 <Wind className="w-3.5 h-3.5 text-slate-500 mb-1" />
-                <span className="text-xs font-bold text-white">{advisory.windSpeed}</span>
+                <span className="text-xs font-bold text-on-surface">{advisory.windSpeed}</span>
                 <span className="text-[9px] text-slate-500 uppercase font-semibold">Wind Speed</span>
               </div>
             </div>
@@ -321,19 +331,19 @@ export default function Home() {
                 <p className="font-extrabold uppercase tracking-wide text-[10px] opacity-90">
                   {advisory.alertLevel === 'none' ? 'General Advisory' : `${advisory.alertLevel} alert`}
                 </p>
-                <p className="mt-0.5 font-semibold text-slate-200">{advisory.drivingAlert}</p>
+                <p className="mt-0.5 font-semibold text-on-surface">{advisory.drivingAlert}</p>
               </div>
             </div>
 
             {/* Mercedes-Benz Safety Assists Auto-Activated */}
-            <div className="bg-slate-900/60 p-3 rounded-xl border border-white/5">
-              <span className="text-[9px] font-black text-sky-400 uppercase tracking-widest mb-2 block">
+            <div className="bg-primary/5 p-3 rounded-xl border border-primary/15">
+              <span className="text-[9px] font-black text-primary uppercase tracking-widest mb-2 block">
                 ⭐ Proactive Safety Interventions Pre-Biased
               </span>
               <ul className="space-y-1.5 ml-0.5 text-slate-300 text-[10.5px] font-semibold">
                 {advisory.mbFeaturesActive.map((feat, fidx) => (
                   <li key={fidx} className="flex items-center gap-1.5">
-                    <div className="w-1.5 h-1.5 rounded-full bg-sky-400 shrink-0" />
+                    <div className="w-1.5 h-1.5 rounded-full bg-primary shrink-0" />
                     <span>{feat}</span>
                   </li>
                 ))}
@@ -353,7 +363,7 @@ export default function Home() {
         <div className="flex gap-4 overflow-x-auto pb-4 pt-1 px-1 -mx-1 snap-x no-scrollbar">
           {events.map((event, idx) => (
             <div key={event.id} className={cn(
-              "snap-start flex-shrink-0 w-64 bg-slate-900 border border-white/5 rounded-2xl p-4 flex flex-col gap-3",
+              "snap-start flex-shrink-0 w-64 bg-surface-container-lowest border border-outline-variant/45 rounded-2xl p-4 flex flex-col gap-3 shadow-ambient",
               idx > 0 && "opacity-60"
             )}>
               <div className="flex justify-between items-start">
@@ -368,7 +378,7 @@ export default function Home() {
                 <CalendarIcon className="w-4 h-4 text-slate-500" />
               </div>
               <div>
-                <p className="font-semibold text-white truncate text-base">{event.title}</p>
+                <p className="font-semibold text-on-surface truncate text-base">{event.title}</p>
                 <p className="text-xs text-slate-400 mt-1 truncate">{event.location}</p>
               </div>
             </div>
@@ -378,30 +388,30 @@ export default function Home() {
 
       {/* Vehicle Summary */}
       <section className="pb-8">
-         <div className="bg-slate-900 border border-white/5 rounded-3xl p-6 flex flex-col gap-6">
+         <div className="bg-surface-container-lowest border border-outline-variant/45 rounded-3xl p-6 flex flex-col gap-6 shadow-ambient">
           <div className="flex justify-between items-center">
             <div className="flex items-center gap-3">
-              <Car className="w-6 h-6 text-blue-400" />
+              <Car className="w-6 h-6 text-primary" />
               <h3 className="font-bold text-lg text-slate-100">Model S-X Active</h3>
             </div>
-            <div className="px-3 py-1 bg-blue-500/10 text-blue-400 rounded-full flex items-center gap-1.5 border border-blue-500/20">
+            <div className="px-3 py-1 bg-primary/10 text-primary rounded-full flex items-center gap-1.5 border border-primary/20">
               <CircleCheck className="w-3.5 h-3.5" />
               <span className="text-xs font-bold uppercase tracking-wider">{vehicle.locked ? 'Locked' : 'Unlocked'}</span>
             </div>
           </div>
           
           <div className="grid grid-cols-3 gap-2">
-            <div className="bg-slate-950 p-4 rounded-2xl border border-white/5 flex flex-col items-center gap-2">
+            <div className="bg-surface-container-low p-4 rounded-2xl border border-outline-variant/45 flex flex-col items-center gap-2">
               <Thermometer className="w-5 h-5 text-slate-400" />
-              <p className="text-xl font-bold text-white">{vehicle.cabinTemp}°C</p>
+              <p className="text-xl font-bold text-on-surface">{vehicle.cabinTemp}°C</p>
               <p className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">Cabin</p>
             </div>
-            <div className="bg-slate-950 p-4 rounded-2xl border border-white/5 flex flex-col items-center gap-2">
+            <div className="bg-surface-container-low p-4 rounded-2xl border border-outline-variant/45 flex flex-col items-center gap-2">
               <Battery className="w-5 h-5 text-amber-400" />
-              <p className="text-xl font-bold text-white">{vehicle.batteryLevel}%</p>
+              <p className="text-xl font-bold text-on-surface">{vehicle.batteryLevel}%</p>
               <p className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">Charge</p>
             </div>
-            <div className="bg-slate-950 p-4 rounded-2xl border border-white/5 flex flex-col items-center gap-2">
+            <div className="bg-surface-container-low p-4 rounded-2xl border border-outline-variant/45 flex flex-col items-center gap-2">
               <Info className="w-5 h-5 text-slate-400" />
               <p className="text-xl font-bold text-emerald-400">{vehicle.tirePressure}</p>
               <p className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">Tires</p>

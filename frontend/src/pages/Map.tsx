@@ -1,2734 +1,2556 @@
-import { useEffect, useRef, useState } from 'react';
-import { APIProvider, Map, AdvancedMarker, Pin, useMap, useMapsLibrary } from '@vis.gl/react-google-maps';
-import { 
-  Layers, LocateFixed, Plus, Navigation, Sparkles, Calendar, Clock, MapPin, 
-  BrainCircuit, ChevronRight, Check, X, AlertCircle, Banknote, Leaf, Sliders, Fuel, Coins, Zap,
-  Plug, RefreshCw, Bus, Car, Scale, Trash2, ArrowUp, ArrowDown, Route
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { MouseEvent, PointerEvent, ReactNode, WheelEvent } from 'react';
+import { APIProvider, AdvancedMarker, Map as GoogleMap, useMap } from '@vis.gl/react-google-maps';
+import {
+  Banknote,
+  Check,
+  Coffee,
+  LocateFixed,
+  MapPin,
+  Minus,
+  Navigation,
+  Plug,
+  Plus,
+  Route,
+  Search,
+  Sparkles,
+  X,
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import type { LucideIcon } from 'lucide-react';
+import { clampMockView, createMockFocusView, getMockCameraView, mockScaleToCameraZoom } from '../components/map/mapCamera';
+import {
+  alternativeRoutePath,
+  costMarkers,
+  defaultMockView,
+  destinationPosition,
+  destinationPreviewDelayMs,
+  destinationPreviewZoom,
+  evStations,
+  mapCenter,
+  mockAiRoute,
+  mockCost,
+  mockEvStations,
+  mockRoutePath,
+  mockRouteSummary,
+  navigationZoom,
+  pinchRefocusDelayMs,
+  routeOverviewZoom,
+  vehiclePosition,
+} from '../constants/mapDemoData';
 import { cn } from '../lib/utils';
 import { useAppStore } from '../store/useAppStore';
-import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Cell } from 'recharts';
+import type { CameraMode, Coordinates, MapCameraState, MapMode, MapTone, MockMapView, SheetState } from '../types/mapModes';
+
+const runtimeGoogleMapsKey =
+  'GOOGLE_MAPS_PLATFORM_KEY' in globalThis
+    ? String((globalThis as { GOOGLE_MAPS_PLATFORM_KEY?: string }).GOOGLE_MAPS_PLATFORM_KEY ?? '')
+    : '';
+const processGoogleMapsKey = typeof process !== 'undefined' ? process.env.GOOGLE_MAPS_PLATFORM_KEY || '' : '';
+type ViteImportMeta = ImportMeta & {
+  env: {
+    VITE_GOOGLE_MAPS_PLATFORM_KEY?: string;
+    VITE_GOOGLE_MAPS_KEY?: string;
+  };
+};
+const viteEnv = (import.meta as ViteImportMeta).env;
 
 const API_KEY =
-  process.env.GOOGLE_MAPS_PLATFORM_KEY ||
-  (import.meta as any).env?.VITE_GOOGLE_MAPS_PLATFORM_KEY ||
-  (globalThis as any).GOOGLE_MAPS_PLATFORM_KEY ||
+  processGoogleMapsKey ||
+  viteEnv.VITE_GOOGLE_MAPS_PLATFORM_KEY ||
+  viteEnv.VITE_GOOGLE_MAPS_KEY ||
+  runtimeGoogleMapsKey ||
   '';
+
 const hasValidKey = Boolean(API_KEY) && API_KEY !== 'YOUR_API_KEY';
 
-function RouteDisplay({ origin, destination }: {
-  origin: string | google.maps.LatLngLiteral;
-  destination: string | google.maps.LatLngLiteral;
+const reclaimGoogleMapStyles: google.maps.MapTypeStyle[] = [
+  { elementType: 'geometry', stylers: [{ color: '#f5f7f9' }] },
+  { elementType: 'labels.text.fill', stylers: [{ color: '#595c5e' }] },
+  { elementType: 'labels.text.stroke', stylers: [{ color: '#ffffff' }] },
+  { featureType: 'administrative.locality', elementType: 'labels.text.fill', stylers: [{ color: '#2c2f31' }] },
+  { featureType: 'poi', elementType: 'labels.text.fill', stylers: [{ color: '#747779' }] },
+  { featureType: 'poi.park', elementType: 'geometry', stylers: [{ color: '#dff3e9' }] },
+  { featureType: 'poi.park', elementType: 'labels.text.fill', stylers: [{ color: '#287a57' }] },
+  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#ffffff' }] },
+  { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#d9dde0' }] },
+  { featureType: 'road', elementType: 'labels.text.fill', stylers: [{ color: '#747779' }] },
+  { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#e8ecff' }] },
+  { featureType: 'road.highway', elementType: 'geometry.stroke', stylers: [{ color: '#b8befd' }, { weight: 0.3 }] },
+  { featureType: 'transit', elementType: 'geometry', stylers: [{ color: '#e5e9eb' }] },
+  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#cfeeff' }] },
+  { featureType: 'water', elementType: 'labels.text.fill', stylers: [{ color: '#00628c' }] },
+];
+
+const toolChips: Array<{
+  key: MapMode;
+  label: string;
+  shortLabel: string;
+  value: string;
+  icon: LucideIcon;
+}> = [
+  { key: 'aiRoute', label: 'Route', shortLabel: 'Route', value: '3 min saved', icon: Sparkles },
+  { key: 'parking', label: 'Stops', shortLabel: 'Stops', value: '5 saved', icon: Coffee },
+  { key: 'evStations', label: 'Charge', shortLabel: 'Charge', value: '4 fast', icon: Plug },
+  { key: 'cost', label: 'Cost', shortLabel: 'Cost', value: '$12.80', icon: Banknote },
+];
+
+const modeVisuals: Record<MapMode, { routeColor: string; glow: string; tone: MapTone }> = {
+  aiRoute: { routeColor: '#4647d3', glow: 'rgba(70, 71, 211, 0.14)', tone: 'blue' },
+  parking: { routeColor: '#10a86c', glow: 'rgba(16, 168, 108, 0.12)', tone: 'emerald' },
+  evStations: { routeColor: '#00628c', glow: 'rgba(0, 98, 140, 0.12)', tone: 'cyan' },
+  cost: { routeColor: '#d28700', glow: 'rgba(210, 135, 0, 0.12)', tone: 'amber' },
+};
+
+type ActivePanel = null | 'search' | 'routeCompare' | 'favoriteStops' | 'evStops' | 'costBreakdown';
+type RouteVariant = 'recommended' | 'comfort' | 'eco';
+
+type MockDestination = {
+  id: string;
+  name: string;
+  detail: string;
+  eta: string;
+  departAt: string;
+  distance: string;
+  traffic: string;
+  saved: string;
+  position: Coordinates;
+  routePath: Coordinates[];
+  alternativePath: Coordinates[];
+  routeInsight: string;
+};
+
+const mockDestinations: MockDestination[] = [
+  {
+    id: 'mb-research',
+    name: mockRouteSummary.destination,
+    detail: mockRouteSummary.subtitle,
+    eta: mockRouteSummary.eta,
+    departAt: mockRouteSummary.departAt,
+    distance: mockRouteSummary.distance,
+    traffic: mockRouteSummary.traffic,
+    saved: mockRouteSummary.saved,
+    position: destinationPosition,
+    routePath: mockRoutePath,
+    alternativePath: alternativeRoutePath,
+    routeInsight: mockAiRoute.insight,
+  },
+  {
+    id: 'klcc-demo',
+    name: 'KLCC Executive Entrance',
+    detail: 'City centre arrival test route - 18.6 mi',
+    eta: '19 min',
+    departAt: '9:10 AM',
+    distance: '18.6 mi',
+    traffic: 'Moderate',
+    saved: '5 min',
+    position: { lat: 37.512, lng: -122.142 },
+    routePath: [
+      vehiclePosition,
+      { lat: 37.738, lng: -122.372 },
+      { lat: 37.655, lng: -122.318 },
+      { lat: 37.574, lng: -122.224 },
+      { lat: 37.512, lng: -122.142 },
+    ],
+    alternativePath: [
+      vehiclePosition,
+      { lat: 37.72, lng: -122.43 },
+      { lat: 37.638, lng: -122.36 },
+      { lat: 37.548, lng: -122.266 },
+      { lat: 37.512, lng: -122.142 },
+    ],
+    routeInsight: 'Executive route prioritizes predictable arrival time and avoids two merge-heavy segments.',
+  },
+  {
+    id: 'bangsar-demo',
+    name: 'Bangsar Village II',
+    detail: 'Dining and retail valet arrival - 14.2 mi',
+    eta: '22 min',
+    departAt: '7:35 PM',
+    distance: '14.2 mi',
+    traffic: 'Heavy',
+    saved: '8 min',
+    position: { lat: 37.458, lng: -122.234 },
+    routePath: [
+      vehiclePosition,
+      { lat: 37.708, lng: -122.407 },
+      { lat: 37.627, lng: -122.374 },
+      { lat: 37.536, lng: -122.29 },
+      { lat: 37.458, lng: -122.234 },
+    ],
+    alternativePath: [
+      vehiclePosition,
+      { lat: 37.742, lng: -122.338 },
+      { lat: 37.65, lng: -122.298 },
+      { lat: 37.54, lng: -122.245 },
+      { lat: 37.458, lng: -122.234 },
+    ],
+    routeInsight: 'Intelligent routing favors roads with steadier flow for a smoother chauffeured-style arrival.',
+  },
+  {
+    id: 'pavilion-demo',
+    name: 'Pavilion Kuala Lumpur',
+    detail: 'Premium mall drop-off simulation - 23.1 mi',
+    eta: '27 min',
+    departAt: '3:20 PM',
+    distance: '23.1 mi',
+    traffic: 'Light',
+    saved: '4 min',
+    position: { lat: 37.686, lng: -122.128 },
+    routePath: [
+      vehiclePosition,
+      { lat: 37.764, lng: -122.366 },
+      { lat: 37.724, lng: -122.285 },
+      { lat: 37.703, lng: -122.204 },
+      { lat: 37.686, lng: -122.128 },
+    ],
+    alternativePath: [
+      vehiclePosition,
+      { lat: 37.735, lng: -122.421 },
+      { lat: 37.71, lng: -122.33 },
+      { lat: 37.698, lng: -122.23 },
+      { lat: 37.686, lng: -122.128 },
+    ],
+    routeInsight: 'Suggested route preserves battery efficiency while keeping arrival near the main entrance.',
+  },
+];
+
+const routeVariants: Array<{
+  key: RouteVariant;
+  name: string;
+  etaDelta: string;
+  distanceDelta: string;
+  detail: string;
+  tone: MapTone;
+}> = [
+  { key: 'recommended', name: 'Recommended', etaDelta: 'Fastest', distanceDelta: 'Balanced', detail: 'Best blend of ETA, comfort, and traffic confidence.', tone: 'blue' },
+  { key: 'comfort', name: 'Comfort Priority', etaDelta: '+4 min', distanceDelta: '+1.2 mi', detail: 'Fewer sharp merges and calmer road segments.', tone: 'slate' },
+  { key: 'eco', name: 'Eco Route', etaDelta: '+7 min', distanceDelta: `Save ${mockCost.ecoRoute.savings}`, detail: 'Lower energy draw with smoother average speeds.', tone: 'emerald' },
+];
+
+type FavoriteStop = {
+  id: string;
+  name: string;
+  label: string;
+  habit: string;
+  detour: string;
+  confidence: string;
+  visits: string;
+  position: Coordinates;
+  recommended?: boolean;
+};
+
+const favoriteStops: FavoriteStop[] = [
+  {
+    id: 'morning-coffee',
+    name: 'The Exchange Coffee Lounge',
+    label: 'Coffee',
+    habit: 'Usually visited before 9 AM',
+    detour: '+4 min',
+    confidence: '96%',
+    visits: '18 visits',
+    position: { lat: 37.634, lng: -122.315 },
+    recommended: true,
+  },
+  {
+    id: 'lunch-spot',
+    name: 'Bangsar Lunch Club',
+    label: 'Lunch',
+    habit: 'Frequent weekday lunch stop',
+    detour: '+7 min',
+    confidence: '88%',
+    visits: '12 visits',
+    position: { lat: 37.572, lng: -122.248 },
+  },
+  {
+    id: 'gym-routine',
+    name: 'Equinox Premium Gym',
+    label: 'Gym',
+    habit: 'Common evening routine',
+    detour: '+6 min',
+    confidence: '82%',
+    visits: '9 visits',
+    position: { lat: 37.512, lng: -122.286 },
+  },
+  {
+    id: 'charging-lounge',
+    name: 'Mercedes Charging Lounge',
+    label: 'Lounge',
+    habit: 'Preferred long-drive charging stop',
+    detour: '+11 min',
+    confidence: '91%',
+    visits: '7 visits',
+    position: { lat: 37.691, lng: -122.198 },
+  },
+  {
+    id: 'office-shortcut',
+    name: 'Office South Entrance',
+    label: 'Office',
+    habit: 'Fastest arrival on workdays',
+    detour: '+2 min',
+    confidence: '94%',
+    visits: '22 visits',
+    position: { lat: 37.472, lng: -122.176 },
+  },
+];
+
+const costDistribution = [
+  { label: 'Energy/Fuel', value: mockCost.energyFuel, percent: 66, tone: 'cyan' as const },
+  { label: 'Tolls', value: mockCost.tolls, percent: 17, tone: 'amber' as const },
+  { label: 'Favorite Stop', value: mockCost.parkingEstimate, percent: 17, tone: 'emerald' as const },
+  { label: 'Consumption', value: mockCost.consumption, percent: 42, tone: 'slate' as const },
+];
+
+function parsePercent(value: string) {
+  const parsed = Number.parseInt(value.replace(/[^\d]/g, ''), 10);
+  return Number.isFinite(parsed) ? Math.max(0, Math.min(100, parsed)) : 0;
+}
+
+const bottomSheets: Record<
+  MapMode,
+  {
+    eyebrow: string;
+    title: string;
+    subtitle: string;
+    collapsedTitle: string;
+    collapsedMeta: string;
+    collapsedStatus: string;
+    collapsedAction: string;
+    statusLabel: string;
+    statusValue: string;
+    metrics: Array<{ label: string; value: string; tone?: MapTone }>;
+    optionsTitle: string;
+    options: Array<{ label: string; value: string; detail: string }>;
+    insight: string;
+    primaryAction: string;
+    secondaryAction: string;
+  }
+> = {
+  aiRoute: {
+    eyebrow: 'Intelligent Route',
+    title: mockRouteSummary.destination,
+    subtitle: mockRouteSummary.subtitle,
+    collapsedTitle: mockRouteSummary.destination,
+    collapsedMeta: `${mockRouteSummary.eta} - Depart ${mockRouteSummary.departAt}`,
+    collapsedStatus: `Traffic: ${mockRouteSummary.traffic}`,
+    collapsedAction: 'Start Navigation',
+    statusLabel: 'Traffic',
+    statusValue: mockRouteSummary.traffic,
+    metrics: [
+      { label: 'Depart', value: mockRouteSummary.departAt, tone: 'blue' },
+      { label: 'ETA', value: mockRouteSummary.eta },
+      { label: 'Traffic', value: mockRouteSummary.traffic, tone: 'emerald' },
+      { label: 'Saved', value: mockRouteSummary.saved, tone: 'cyan' },
+    ],
+    optionsTitle: 'Route Options',
+    options: [
+      { label: mockAiRoute.recommended.name, value: mockAiRoute.recommended.eta, detail: mockAiRoute.recommended.detail },
+      { label: mockAiRoute.alternative.name, value: mockAiRoute.alternative.eta, detail: mockAiRoute.alternative.detail },
+    ],
+    insight: mockAiRoute.insight,
+    primaryAction: 'Start Navigation',
+    secondaryAction: 'Compare Routes',
+  },
+  parking: {
+    eyebrow: 'Favorite Stops',
+    title: favoriteStops[0].name,
+    subtitle: 'Habit-based stops remembered for quick access',
+    collapsedTitle: 'Favorite stops on this route',
+    collapsedMeta: `Top pick: ${favoriteStops[0].name}`,
+    collapsedStatus: `${favoriteStops[0].habit} - ${favoriteStops[0].detour}`,
+    collapsedAction: 'Add Favorite Stop',
+    statusLabel: 'Match',
+    statusValue: favoriteStops[0].confidence,
+    metrics: [
+      { label: 'Top Stop', value: favoriteStops[0].label, tone: 'emerald' },
+      { label: 'Detour', value: favoriteStops[0].detour },
+      { label: 'Match', value: favoriteStops[0].confidence, tone: 'blue' },
+      { label: 'History', value: favoriteStops[0].visits },
+    ],
+    optionsTitle: 'Remembered Stops',
+    options: favoriteStops.slice(1).map((stop) => ({
+      label: stop.name,
+      value: stop.detour,
+      detail: `${stop.habit} - ${stop.confidence} match`,
+    })),
+    insight: `${favoriteStops[0].name} appears because this user often takes a coffee break before morning trips.`,
+    primaryAction: 'Add Favorite Stop',
+    secondaryAction: 'View Stops',
+  },
+  evStations: {
+    eyebrow: 'EV Stations',
+    title: mockEvStations.recommended.name,
+    subtitle: 'Recommended fast charger along route',
+    collapsedTitle: `${mockEvStations.stationCount} fast chargers nearby`,
+    collapsedMeta: `Recommended: ${mockEvStations.recommended.name}`,
+    collapsedStatus: `${mockEvStations.recommended.speed} - ${mockEvStations.recommended.detour}`,
+    collapsedAction: 'Add Charging Stop',
+    statusLabel: 'Arrival',
+    statusValue: `${mockEvStations.batteryOnArrival} battery`,
+    metrics: [
+      { label: 'Open', value: evStations[0].availability, tone: 'cyan' },
+      { label: 'Speed', value: mockEvStations.recommended.speed },
+      { label: 'Detour', value: mockEvStations.recommended.detour, tone: 'emerald' },
+      { label: 'Arrival', value: mockEvStations.batteryOnArrival },
+    ],
+    optionsTitle: 'Nearby Stations',
+    options: evStations.map((station) => ({
+      label: station.name,
+      value: station.availability,
+      detail: `${station.speed} - ${station.detour}`,
+    })),
+    insight: mockEvStations.note,
+    primaryAction: 'Add Charging Stop',
+    secondaryAction: 'Navigate Directly',
+  },
+  cost: {
+    eyebrow: 'Cost',
+    title: 'Trip cost estimate',
+    subtitle: 'Energy, toll, and favorite-stop estimate',
+    collapsedTitle: 'Estimated trip cost',
+    collapsedMeta: mockCost.totalCost,
+    collapsedStatus: `${mockRouteSummary.distance} - ${mockRouteSummary.eta}`,
+    collapsedAction: 'View Cost Breakdown',
+    statusLabel: 'Per Mile',
+    statusValue: mockCost.costPerMile,
+    metrics: [
+      { label: 'Total', value: mockCost.totalCost, tone: 'amber' },
+      { label: 'Energy/Fuel', value: mockCost.energyFuel, tone: 'cyan' },
+      { label: 'Tolls', value: mockCost.tolls },
+      { label: 'Stop', value: mockCost.parkingEstimate },
+      { label: 'Use', value: mockCost.consumption },
+      { label: 'Per Mile', value: mockCost.costPerMile, tone: 'emerald' },
+    ],
+    optionsTitle: 'Cheaper Eco Route',
+    options: [
+      { label: 'Eco surface route', value: `Save ${mockCost.ecoRoute.savings}`, detail: `Adds ${mockCost.ecoRoute.extraTime}` },
+    ],
+    insight: `Eco route saves ${mockCost.ecoRoute.savings} but adds ${mockCost.ecoRoute.extraTime}.`,
+    primaryAction: 'Compare Routes',
+    secondaryAction: 'Optimize Cost',
+  },
+};
+
+const mapBounds = {
+  minLat: 37.35,
+  maxLat: 37.82,
+  minLng: -122.52,
+  maxLng: -122.04,
+};
+
+function coordsToPercent({ lat, lng }: google.maps.LatLngLiteral) {
+  const x = ((lng - mapBounds.minLng) / (mapBounds.maxLng - mapBounds.minLng)) * 100;
+  const y = (1 - (lat - mapBounds.minLat) / (mapBounds.maxLat - mapBounds.minLat)) * 100;
+
+  return {
+    x: `${Math.max(5, Math.min(95, x))}%`,
+    y: `${Math.max(5, Math.min(95, y))}%`,
+  };
+}
+
+function coordsToUnitPoint(coords: Coordinates) {
+  const { x, y } = coordsToPercent(coords);
+
+  return {
+    x: parseFloat(x) / 100,
+    y: parseFloat(y) / 100,
+  };
+}
+
+function GoogleRouteOverlay({
+  mode,
+  path,
+  alternativePath,
+  sheetState,
+}: {
+  mode: MapMode;
+  path: Coordinates[];
+  alternativePath: Coordinates[];
+  sheetState: SheetState;
 }) {
   const map = useMap();
-  const routesLib = useMapsLibrary('routes');
   const polylinesRef = useRef<google.maps.Polyline[]>([]);
 
   useEffect(() => {
-    if (!routesLib || !map) return;
-    
-    polylinesRef.current.forEach(p => p.setMap(null));
+    if (!map || typeof google === 'undefined') return;
 
-    routesLib.Route.computeRoutes({
-      origin,
-      destination,
-      travelMode: 'DRIVING',
-      fields: ['path', 'distanceMeters', 'durationMillis', 'viewport'],
-    }).then(({ routes }) => {
-      if (routes?.[0]) {
-        const newPolylines = routes[0].createPolylines();
-        newPolylines.forEach(p => p.setMap(map));
-        polylinesRef.current = newPolylines;
-        if (routes[0].viewport) map.fitBounds(routes[0].viewport);
-      }
+    polylinesRef.current.forEach((line) => line.setMap(null));
+    const visual = modeVisuals[mode];
+    const nextPolylines: google.maps.Polyline[] = [];
+
+    if (mode === 'aiRoute') {
+      const alternativeRoute = new google.maps.Polyline({
+        clickable: false,
+        geodesic: true,
+        path: alternativePath,
+        strokeColor: '#abadaf',
+        strokeOpacity: sheetState === 'expanded' ? 0.32 : 0.18,
+        strokeWeight: 4,
+        zIndex: 1,
+      });
+
+      alternativeRoute.setMap(map);
+      nextPolylines.push(alternativeRoute);
+    }
+
+    const routeHalo = new google.maps.Polyline({
+      clickable: false,
+      geodesic: true,
+      path,
+      strokeColor: '#ffffff',
+      strokeOpacity: 0.82,
+      strokeWeight: 9,
+      zIndex: 2,
     });
 
-    return () => polylinesRef.current.forEach(p => p.setMap(null));
-  }, [routesLib, map, origin, destination]);
+    const activeRoute = new google.maps.Polyline({
+      clickable: false,
+      geodesic: true,
+      path,
+      strokeColor: visual.routeColor,
+      strokeOpacity: 1,
+      strokeWeight: 4.5,
+      zIndex: 3,
+    });
+
+    routeHalo.setMap(map);
+    activeRoute.setMap(map);
+    nextPolylines.push(routeHalo, activeRoute);
+    polylinesRef.current = nextPolylines;
+
+    return () => {
+      polylinesRef.current.forEach((line) => line.setMap(null));
+      polylinesRef.current = [];
+    };
+  }, [alternativePath, map, mode, path, sheetState]);
 
   return null;
 }
 
-const mapCoordsToPercent = (lat: number, lng: number) => {
-  const minLat = 37.73;
-  const maxLat = 37.825;
-  const minLng = -122.52;
-  const maxLng = -122.38;
-  const x = ((lng - minLng) / (maxLng - minLng)) * 100;
-  const y = (1 - (lat - minLat) / (maxLat - minLat)) * 100;
-  return { 
-    x: `${Math.max(5, Math.min(95, x))}%`, 
-    y: `${Math.max(5, Math.min(95, y))}%` 
-  };
+function GoogleMapBridge({ onReady }: { onReady: (map: google.maps.Map | null) => void }) {
+  const map = useMap();
+
+  useEffect(() => {
+    onReady(map);
+    return () => onReady(null);
+  }, [map, onReady]);
+
+  return null;
+}
+
+function VehicleMarker({ activeNavigation = false }: { activeNavigation?: boolean }) {
+  return (
+    <div data-map-marker="vehicle" className="relative flex h-13 w-13 items-center justify-center">
+      <div className="absolute h-11 w-11 rounded-full bg-blue-300/12 blur-md" />
+      <div
+        className={cn(
+          'absolute rounded-full border',
+          activeNavigation ? 'h-11 w-11 animate-ping' : 'h-9 w-9'
+        )}
+        style={{ borderColor: 'rgba(70,71,211,0.24)', backgroundColor: 'rgba(70,71,211,0.08)' }}
+      />
+      <div
+        className={cn(
+          'relative flex h-10 w-10 items-center justify-center overflow-hidden rounded-full border text-on-primary shadow-ambient',
+          activeNavigation ? 'scale-105' : ''
+        )}
+        style={{
+          background: 'radial-gradient(circle at 50% 25%, rgba(255,255,255,0.34), #4647d3 58%, #3939c7 100%)',
+          borderColor: activeNavigation ? 'rgba(70,71,211,0.48)' : 'rgba(70,71,211,0.26)',
+        }}
+      >
+        <div className="absolute inset-1.5 rounded-full border border-white/[0.07]" />
+        <div className="absolute bottom-1 h-3 w-6 rounded-full bg-blue-300/18 blur-md" />
+        <div
+          className="relative h-6 w-6 drop-shadow-[0_8px_14px_rgba(0,0,0,0.42)]"
+          style={{
+            clipPath: 'polygon(50% 0%, 88% 100%, 50% 76%, 12% 100%)',
+            background: 'linear-gradient(180deg, #ffffff 0%, #dfe1ff 44%, #f4f1ff 100%)',
+          }}
+        />
+        <div className="absolute top-[17px] h-2 w-1.5 rounded-full bg-primary-dim/72" />
+      </div>
+    </div>
+  );
+}
+
+function DestinationMarker() {
+  return (
+    <div data-map-marker="destination" className="relative flex h-14 w-14 items-center justify-center">
+      <div className="absolute h-11 w-11 rounded-full bg-emerald-300/16 blur-md" />
+      <div className="relative flex h-9 w-9 items-center justify-center rounded-xl border border-primary/20 bg-surface-container-lowest text-slate-950 shadow-ambient">
+        <MapPin className="h-4 w-4 text-primary" />
+      </div>
+      <div className="absolute -top-6 whitespace-nowrap rounded-full border border-outline-variant/45 bg-surface-container-lowest/90 px-2 py-0.5 text-[8px] font-semibold uppercase tracking-[0.16em] text-on-surface shadow-ambient backdrop-blur">
+        Destination
+      </div>
+    </div>
+  );
+}
+
+const toneClasses: Record<MapTone, { icon: string; badge: string; text: string; glow: string }> = {
+  blue: {
+    icon: 'border-primary/25 bg-primary/10 text-primary',
+    badge: 'border-primary/20 bg-primary/10',
+    text: 'text-primary',
+    glow: 'bg-primary/10',
+  },
+  emerald: {
+    icon: 'border-emerald-500/20 bg-emerald-500/10 text-emerald-500',
+    badge: 'border-emerald-500/20 bg-emerald-500/10',
+    text: 'text-emerald-500',
+    glow: 'bg-emerald-500/10',
+  },
+  cyan: {
+    icon: 'border-cyan-300/25 bg-cyan-300/15 text-secondary',
+    badge: 'border-cyan-300/25 bg-cyan-300/15',
+    text: 'text-secondary',
+    glow: 'bg-cyan-300/15',
+  },
+  amber: {
+    icon: 'border-amber-500/20 bg-amber-500/10 text-amber-500',
+    badge: 'border-amber-500/20 bg-amber-500/10',
+    text: 'text-amber-500',
+    glow: 'bg-amber-500/10',
+  },
+  slate: {
+    icon: 'border-outline-variant/45 bg-surface-container text-slate-200',
+    badge: 'border-outline-variant/45 bg-surface-container-lowest/88',
+    text: 'text-slate-200',
+    glow: 'bg-white/[0.06]',
+  },
 };
 
-export default function MapView() {
-  const { events, addRecentAction } = useAppStore();
-  const [showETA, setShowETA] = useState(true);
-  const [isOptimizing, setIsOptimizing] = useState(false);
-  const [syncApplied, setSyncApplied] = useState(false);
-  const [squareSyncApplied, setSquareSyncApplied] = useState(false);
-  const [errorText, setErrorText] = useState<string | null>(null);
-  
-  // Smart Routing states
-  const [showSmartRouting, setShowSmartRouting] = useState(false);
-  const [selectedTrafficProfile, setSelectedTrafficProfile] = useState<'light' | 'moderate' | 'heavy' | 'severe'>('moderate');
-  const [isLoadingRouting, setIsLoadingRouting] = useState(false);
-  const [routingData, setRoutingData] = useState<{
-    advisories: Array<{
-      id: string;
-      title: string;
-      time: string;
-      location: string;
-      baseDuration: string;
-      trafficDuration: string;
-      suggestedDeparture: string;
-      trafficStatus: string;
-      delayAddedMins: number;
-      aiRecommendation: string;
-    }>;
-    commuteSummary: string;
+const toneAccentColors: Record<MapTone, string> = {
+  blue: '#4647d3',
+  emerald: '#10a86c',
+  cyan: '#00628c',
+  amber: '#d28700',
+  slate: '#747779',
+};
+
+function PremiumMetricBar({
+  label,
+  value,
+  percent,
+  tone = 'blue',
+  detail,
+  compact = false,
+}: {
+  label: string;
+  value: string;
+  percent: number;
+  tone?: MapTone;
+  detail?: string;
+  compact?: boolean;
+}) {
+  const accent = toneAccentColors[tone];
+  const boundedPercent = Math.max(4, Math.min(100, percent));
+
+  return (
+    <div className={cn('rounded-[16px] border border-white/[0.045] bg-white/[0.022] shadow-[inset_0_1px_0_rgba(255,255,255,0.028)]', compact ? 'px-3 py-2' : 'px-3 py-2.5')}>
+      <div className={cn('flex items-center justify-between gap-3', compact ? 'mb-1.5' : 'mb-2')}>
+        <span className="truncate text-[9px] font-semibold uppercase tracking-[0.13em] text-slate-500">{label}</span>
+        <span className="shrink-0 text-[12px] font-semibold text-white">{value}</span>
+      </div>
+      <div className={cn('overflow-hidden rounded-full bg-white/[0.07]', compact ? 'h-1.5' : 'h-2')}>
+        <div
+          className="h-full rounded-full transition-all duration-500 ease-out"
+          style={{
+            width: `${boundedPercent}%`,
+            background: `linear-gradient(90deg, ${accent}70, ${accent})`,
+            boxShadow: `0 0 10px ${accent}24`,
+          }}
+        />
+      </div>
+      {detail && <p className="mt-1.5 truncate text-[10px] font-medium text-slate-500">{detail}</p>}
+    </div>
+  );
+}
+
+function PremiumPanelCard({
+  icon: Icon,
+  title,
+  detail,
+  meta,
+  tone = 'blue',
+  selected = false,
+  children,
+  onClick,
+}: {
+  icon: LucideIcon;
+  title: string;
+  detail: string;
+  meta?: string;
+  tone?: MapTone;
+  selected?: boolean;
+  children?: ReactNode;
+  onClick?: () => void;
+}) {
+  const accent = toneAccentColors[tone];
+  const Wrapper = onClick ? 'button' : 'div';
+
+  return (
+    <Wrapper
+      type={onClick ? 'button' : undefined}
+      onClick={onClick}
+      className={cn(
+        'w-full rounded-[18px] border px-3 py-2.5 text-left transition duration-200 ease-out',
+        'bg-white/[0.022] shadow-[inset_0_1px_0_rgba(255,255,255,0.028)]',
+        selected ? 'border-white/16 bg-white/[0.04]' : 'border-white/[0.055]',
+        onClick && 'active:scale-[0.99] hover:bg-white/[0.04]'
+      )}
+      style={{ boxShadow: selected ? `0 0 0 1px ${accent}26, 0 12px 30px rgba(0,0,0,0.18)` : undefined }}
+    >
+      <div className="flex items-start gap-3">
+        <span
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border"
+          style={{ borderColor: `${accent}24`, backgroundColor: `${accent}0f`, color: accent }}
+        >
+          <Icon className="h-3.5 w-3.5" />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="flex items-start justify-between gap-3">
+            <span className="min-w-0">
+              <span className="block truncate text-[13px] font-semibold text-white">{title}</span>
+              <span className="mt-1 block text-[11px] font-medium leading-relaxed text-slate-500">{detail}</span>
+            </span>
+            {meta && (
+              <span
+                className="shrink-0 rounded-full border px-2 py-0.5 text-[8.5px] font-semibold uppercase tracking-[0.08em]"
+                style={{ borderColor: `${accent}2e`, backgroundColor: `${accent}10`, color: accent }}
+              >
+                {meta}
+              </span>
+            )}
+          </span>
+          {children && <span className="mt-3 block">{children}</span>}
+        </span>
+      </div>
+    </Wrapper>
+  );
+}
+
+function MapModeBadge({
+  icon,
+  label,
+  detail,
+  tone,
+}: {
+  icon: 'favorite' | 'ev' | 'cost' | 'route';
+  label: string;
+  detail: string;
+  tone: MapTone;
+}) {
+  const toneClass = toneClasses[tone];
+  const Icon = icon === 'ev' ? Plug : icon === 'cost' ? Banknote : icon === 'route' ? Route : Coffee;
+
+  return (
+    <div className="relative flex items-center gap-1">
+      <div
+        className={cn(
+          'relative flex h-5 w-5 items-center justify-center rounded-full border shadow-[0_6px_18px_rgba(0,0,0,0.20)]',
+          toneClass.icon
+        )}
+      >
+        <Icon className="h-2.5 w-2.5" />
+      </div>
+      <div
+        className={cn(
+          'relative min-w-max rounded-full border px-1.5 py-0.5 shadow-[0_8px_20px_rgba(0,0,0,0.18)] backdrop-blur-xl',
+          toneClass.badge
+        )}
+      >
+        <div className="text-[7.5px] font-semibold uppercase leading-none tracking-[0.08em] text-slate-100">{label}</div>
+        <div className={cn('mt-0.5 text-[7.5px] font-medium leading-none text-slate-400', toneClass.text)}>{detail}</div>
+      </div>
+    </div>
+  );
+}
+
+function FavoriteStopMarker({ stop }: { stop: FavoriteStop }) {
+  return (
+    <MapModeBadge
+      icon="favorite"
+      label={stop.label}
+      detail={stop.recommended ? `${stop.detour} - top habit` : stop.detour}
+      tone="emerald"
+    />
+  );
+}
+
+function EVStationMarker({ station }: { station: (typeof evStations)[number] }) {
+  return (
+    <MapModeBadge
+      icon="ev"
+      label={station.label}
+      detail={`${station.speed} - ${station.detour}`}
+      tone="cyan"
+    />
+  );
+}
+
+function CostMapMarker({ marker }: { marker: (typeof costMarkers)[number] }) {
+  return <MapModeBadge icon="cost" label={marker.label} detail={marker.detail} tone="amber" />;
+}
+
+function RouteChoiceMarker({ label, detail, tone }: { label: string; detail: string; tone: MapTone }) {
+  return <MapModeBadge icon="route" label={label} detail={detail} tone={tone} />;
+}
+
+function MapControlGroup({ children, className }: { children: ReactNode; className?: string }) {
+  return (
+    <div
+      className={cn(
+        'overflow-hidden rounded-[18px] border border-outline-variant/45 bg-surface-container-lowest/88 shadow-ambient backdrop-blur-2xl',
+        'divide-y divide-white/[0.065]',
+        className
+      )}
+    >
+      {children}
+    </div>
+  );
+}
+
+function MapControlButton({
+  icon: Icon,
+  label,
+  ariaLabel,
+  onClick,
+  active = false,
+  className,
+}: {
+  icon: LucideIcon;
+  label?: string;
+  ariaLabel: string;
+  onClick: () => void;
+  active?: boolean;
+  className?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={ariaLabel}
+      className={cn(
+        'flex h-10 items-center justify-center gap-2 px-3 text-[9.5px] font-semibold uppercase tracking-[0.08em] transition duration-200 ease-out active:scale-[0.97]',
+        'text-slate-200 hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/35 focus-visible:ring-inset',
+        label ? 'min-w-[6.75rem]' : 'w-10',
+        active && 'border-primary/20 bg-primary/10 text-primary shadow-ambient hover:bg-primary/15',
+        className
+      )}
+    >
+      <Icon className={cn('h-4 w-4 shrink-0', active ? 'text-primary' : 'text-slate-400')} />
+      {label && <span className="truncate">{label}</span>}
+    </button>
+  );
+}
+
+function MapStatePill({
+  icon: Icon,
+  label,
+  active,
+}: {
+  icon: LucideIcon;
+  label: string;
+  active: boolean;
+}) {
+  return (
+    <div
+      className={cn(
+        'inline-flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-[8.5px] font-semibold uppercase tracking-[0.10em] shadow-ambient backdrop-blur-2xl',
+        active
+          ? 'border-primary/25 bg-primary/10 text-primary'
+          : 'border-outline-variant/45 bg-surface-container-lowest/88 text-slate-300'
+      )}
+    >
+      <Icon className={cn('h-3 w-3', active ? 'text-primary' : 'text-slate-400')} />
+      <span>{label}</span>
+    </div>
+  );
+}
+
+function MockMapCanvas({
+  mode,
+  sheetState,
+  view,
+  cameraMode,
+  activeNavigation,
+  routePath,
+  alternativePath,
+  destination,
+  addedEvStop,
+  selectedFavoriteStop,
+  onViewChange,
+  onManualPan,
+  onZoomInteraction,
+}: {
+  mode: MapMode;
+  sheetState: SheetState;
+  view: MockMapView;
+  cameraMode: CameraMode;
+  activeNavigation: boolean;
+  routePath: Coordinates[];
+  alternativePath: Coordinates[];
+  destination: Coordinates;
+  addedEvStop?: (typeof evStations)[number] | null;
+  selectedFavoriteStop?: FavoriteStop | null;
+  onViewChange: (updater: (view: MockMapView) => MockMapView) => void;
+  onManualPan: () => void;
+  onZoomInteraction: (nextZoom?: number) => void;
+}) {
+  const dragRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    originX: number;
+    originY: number;
+    hasMoved: boolean;
+  } | null>(null);
+  const activePointersRef = useRef<Map<number, { x: number; y: number }>>(new Map());
+  const pinchRef = useRef<{
+    startDistance: number;
+    startZoom: number;
   } | null>(null);
 
-  const [optimizedRoute, setOptimizedRoute] = useState<{
-    stops: Array<{
-      id: string;
-      title: string;
-      locationName: string;
-      lat: number;
-      lng: number;
-      optimizedTime: string;
-      suggestedDeparture: string;
-      travelDuration: string;
-      insight: string;
-    }>;
-    explanation: string;
-  } | null>(null);
+  const routePoints = routePath
+    .map((point) => {
+      const { x, y } = coordsToPercent(point);
+      return `${parseFloat(x) * 10},${parseFloat(y) * 10}`;
+    })
+    .join(' ');
+  const alternativeRoutePoints = alternativePath
+    .map((point) => {
+      const { x, y } = coordsToPercent(point);
+      return `${parseFloat(x) * 10},${parseFloat(y) * 10}`;
+    })
+    .join(' ');
+  const vehicle = coordsToPercent(vehiclePosition);
+  const destinationPoint = coordsToPercent(destination);
+  const visual = modeVisuals[mode];
 
-  const handleFetchSmartRouting = async (profile: 'light' | 'moderate' | 'heavy' | 'severe') => {
-    setIsLoadingRouting(true);
-    setErrorText(null);
-    const routableEvents = events.filter(e => e.location && e.carNeeded);
-    if (routableEvents.length === 0) {
-      setErrorText("No car-required events with locations found in your calendar.");
-      setIsLoadingRouting(false);
-      return;
-    }
-    try {
-      const res = await fetch('/api/smart-routing-advisor', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          events: routableEvents,
-          trafficProfile: profile
-        })
-      });
-      if (!res.ok) {
-        throw new Error("Failed to load smart routing analytics");
-      }
-      const data = await res.json();
-      setRoutingData(data);
-    } catch (e: any) {
-      console.error(e);
-      setErrorText("Departure analysis failed. Please try again.");
-    } finally {
-      setIsLoadingRouting(false);
-    }
+  const getPointerDistance = () => {
+    const pointers = Array.from(activePointersRef.current.values());
+    if (pointers.length < 2) return 0;
+    const [first, second] = pointers;
+    return Math.hypot(second.x - first.x, second.y - first.y);
   };
 
-  useEffect(() => {
-    if (showSmartRouting) {
-      handleFetchSmartRouting(selectedTrafficProfile);
+  const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
+    activePointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+
+    if (activePointersRef.current.size >= 2) {
+      pinchRef.current = {
+        startDistance: getPointerDistance(),
+        startZoom: view.zoom,
+      };
+      dragRef.current = null;
+      onZoomInteraction();
+      return;
     }
-  }, [showSmartRouting, selectedTrafficProfile, events]);
 
-  // Trip Cost Estimator States
-  const [showCostEstimator, setShowCostEstimator] = useState(false);
-  const [costFuelType, setCostFuelType] = useState<'electricity' | 'gasoline'>('electricity');
-  const [costUnitPrice, setCostUnitPrice] = useState<number>(0.36);
-  const [costDistance, setCostDistance] = useState<number>(45);
-  const [costPattern, setCostPattern] = useState<'eco' | 'nominal' | 'adverse'>('nominal');
-  const [isEstimatedLoading, setIsEstimatedLoading] = useState(false);
-  const [costSyncApplied, setCostSyncApplied] = useState(false);
-  const [estimatedData, setEstimatedData] = useState<{
-    fuelType: 'electricity' | 'gasoline';
-    unitPrice: number;
-    distanceKm: number;
-    efficiencyPattern: 'eco' | 'nominal' | 'adverse';
-    efficiencyRateText: string;
-    consumptionAmount: number;
-    totalCost: number;
-    carbonFootprintKg: number;
-    aiOptimizationAdvisory: string;
-  } | null>(null);
-
-  // Alternate Comparison States
-  const [compareAlternativeModes, setCompareAlternativeModes] = useState(false);
-  const [compareMetric, setCompareMetric] = useState<'cost' | 'carbon'>('cost');
-  const [isAlternateComparingLoading, setIsAlternateComparingLoading] = useState(false);
-  const [alternateCompareData, setAlternateCompareData] = useState<{
-    transit: {
-      name: string;
-      cost: number;
-      carbonKg: number;
-      durationMin: number;
-      efficiencyLevel: string;
+    dragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      originX: view.x,
+      originY: view.y,
+      hasMoved: false,
     };
-    rideshare: {
-      name: string;
-      cost: number;
-      carbonKg: number;
-      durationMin: number;
-      efficiencyLevel: string;
-    };
-    gasolineModel: {
-      name: string;
-      cost: number;
-      carbonKg: number;
-      durationMin: number;
-      efficiencyLevel: string;
-    };
-    aiComparisonAdvisory: string;
-  } | null>(null);
-
-  const fetchAlternateComparison = async () => {
-    setIsAlternateComparingLoading(true);
-    try {
-      const defaultDrivingCost = estimatedData?.totalCost || (costFuelType === 'electricity' ? 2.67 : 7.39);
-      const defaultDrivingCarbon = estimatedData?.carbonFootprintKg || (costFuelType === 'electricity' ? 1.1 : 14.3);
-      const defaultDriveTime = Math.round(costDistance * 1.3 + 5);
-
-      const res = await fetch('/api/transit-rideshare-compare', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          distanceKm: costDistance,
-          drivingCost: defaultDrivingCost,
-          drivingCarbon: defaultDrivingCarbon,
-          drivingDurationMin: defaultDriveTime,
-          fuelType: costFuelType
-        })
-      });
-
-      if (!res.ok) throw new Error("Alternate comparator failed");
-      const data = await res.json();
-      setAlternateCompareData(data);
-    } catch (err) {
-      console.error(err);
-      // Local fallback calculation if server is starting or network is down
-      const defaultDrivingCost = estimatedData?.totalCost || (costFuelType === 'electricity' ? 2.67 : 7.39);
-      const defaultDrivingCarbon = estimatedData?.carbonFootprintKg || (costFuelType === 'electricity' ? 1.1 : 14.3);
-      const defaultDriveTime = Math.round(costDistance * 1.3 + 5);
-
-      const transitFare = Math.min(9.50, Math.max(2.75, Math.round((2.75 + costDistance * 0.12) * 100) / 100));
-      const transitCarbon = Math.round((costDistance * 0.012) * 10) / 10;
-      const transitTime = Math.round(defaultDriveTime * 1.4 + 10);
-      const transitName = costDistance > 60 ? "Caltrain Express" : costDistance > 20 ? "BART Rapid Rail" : "Muni Light Rail";
-
-      const rideShareCost = Math.round((6.50 + costDistance * 2.10 + defaultDriveTime * 0.40) * 100) / 100;
-      const rideShareCarbon = Math.round((costDistance * 0.13) * 10) / 10;
-      const rideShareTime = defaultDriveTime + 5;
-
-      const altGasCost = Math.round((costDistance * 0.621371 / 25 * 4.60) * 100) / 100;
-      const altGasCarbon = Math.round((costDistance * 0.621371 / 25 * 8.887) * 10) / 10;
-
-      const adviseMessage = costFuelType === 'electricity'
-        ? `Commanding your Mercedes-Benz EQ is $${(rideShareCost - defaultDrivingCost).toFixed(2)} more cost-effective than ride-sharing while saving ${transitTime - defaultDriveTime} minutes over public rail transit with supreme seat massage comfort.`
-        : `Your Mercedes luxury companion shaves ${transitTime - defaultDriveTime} minutes off the public transit itinerary, with a refined cockpit and acoustic insulation shielding you from transit stress.`;
-
-      setAlternateCompareData({
-        transit: {
-          name: transitName,
-          cost: transitFare,
-          carbonKg: transitCarbon,
-          durationMin: transitTime,
-          efficiencyLevel: "ULTRA_GREEN"
-        },
-        rideshare: {
-          name: "Premium Rideshare (Comfort EV)",
-          cost: rideShareCost,
-          carbonKg: rideShareCarbon,
-          durationMin: rideShareTime,
-          efficiencyLevel: "MODERATE"
-        },
-        gasolineModel: {
-          name: "Standard Gas Alternative",
-          cost: altGasCost,
-          carbonKg: altGasCarbon,
-          durationMin: defaultDriveTime,
-          efficiencyLevel: "INEFFICIENT"
-        },
-        aiComparisonAdvisory: adviseMessage
-      });
-    } finally {
-      setIsAlternateComparingLoading(false);
-    }
+    event.currentTarget.setPointerCapture(event.pointerId);
   };
 
-  useEffect(() => {
-    if (showCostEstimator && compareAlternativeModes) {
-      const delayDebt = setTimeout(() => {
-        fetchAlternateComparison();
-      }, 400);
-      return () => clearTimeout(delayDebt);
+  const handlePointerMove = (event: PointerEvent<HTMLDivElement>) => {
+    if (activePointersRef.current.has(event.pointerId)) {
+      activePointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
     }
-  }, [showCostEstimator, compareAlternativeModes, costDistance, costFuelType, costUnitPrice, costPattern, estimatedData]);
 
-  const fetchTripCostEstimation = async (
-    type: 'electricity' | 'gasoline',
-    price: number,
-    dist: number,
-    patt: 'eco' | 'nominal' | 'adverse'
-  ) => {
-    setIsEstimatedLoading(true);
-    setErrorText(null);
-    try {
-      const res = await fetch('/api/trip-cost-estimator', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          fuelType: type,
-          unitPrice: price,
-          distanceKm: dist,
-          efficiencyPattern: patt
-        })
-      });
-      if (!res.ok) {
-        throw new Error("Failed to load cost estimation");
+    if (pinchRef.current && activePointersRef.current.size >= 2) {
+      const nextDistance = getPointerDistance();
+      const pinch = pinchRef.current;
+      if (pinch.startDistance > 0) {
+        const zoomDelta = (nextDistance - pinch.startDistance) / 170;
+        const nextZoom = pinch.startZoom + zoomDelta;
+        onViewChange((current) => clampMockView({ ...current, zoom: nextZoom }));
+        onZoomInteraction(mockScaleToCameraZoom(nextZoom));
       }
-      const data = await res.json();
-      setEstimatedData(data);
-    } catch (err) {
-      console.error(err);
-      // Fallback local calculations if network error or offline
-      let whPerKm = patt === 'eco' ? 135 : patt === 'nominal' ? 165 : 210;
-      let effRateText = `${whPerKm} Wh/km`;
-      let cons = (dist * whPerKm) / 1000;
-      let rawCost = cons * price;
-      let carbon = cons * 0.15;
-      
-      if (type === 'gasoline') {
-        const mpg = patt === 'eco' ? 38 : patt === 'nominal' ? 28 : 18;
-        effRateText = `${mpg} MPG`;
-        const distanceMiles = dist * 0.621371;
-        cons = distanceMiles / mpg;
-        rawCost = cons * price;
-        carbon = cons * 8.887;
-      }
-      
-      setEstimatedData({
-        fuelType: type,
-        unitPrice: price,
-        distanceKm: dist,
-        efficiencyPattern: patt,
-        efficiencyRateText: effRateText,
-        consumptionAmount: Math.round(cons * 10) / 10,
-        totalCost: Math.round(rawCost * 100) / 100,
-        carbonFootprintKg: Math.round(carbon * 10) / 10,
-        aiOptimizationAdvisory: type === 'electricity' 
-          ? "Activate Mercedes-Benz D-- maximum recuperation mode for single-pedal urban driving. This recaptures up to 28% kinetic energy on deceleration, reducing overall Wh/km costs."
-          : "Leverage adaptive cruise control with active eco gliding mode to minimize abrupt throttle inputs, boosting fuel efficiency by up to 14% on highway stretches."
-      });
-    } finally {
-      setIsEstimatedLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    if (showCostEstimator) {
-      const delayDebt = setTimeout(() => {
-        fetchTripCostEstimation(costFuelType, costUnitPrice, costDistance, costPattern);
-      }, 350);
-      return () => clearTimeout(delayDebt);
-    }
-  }, [showCostEstimator, costFuelType, costUnitPrice, costDistance, costPattern]);
-
-  const handleFuelTypeChange = (type: 'electricity' | 'gasoline') => {
-    setCostFuelType(type);
-    setCostUnitPrice(type === 'electricity' ? 0.36 : 4.60);
-  };
-
-  // EV charging stations nearby states
-  const [showEVStations, setShowEVStations] = useState(false);
-  const [evStations, setEvStations] = useState<any[]>([]);
-  const [evLoading, setEvLoading] = useState(false);
-  const [evSoc, setEvSoc] = useState(35);
-  const [evMinSpeed, setEvMinSpeed] = useState(0);
-  const [evProviderFilter, setEvProviderFilter] = useState('all');
-  const [evRecommendation, setEvRecommendation] = useState('');
-  const [selectedStation, setSelectedStation] = useState<any | null>(null);
-  const [evSyncApplied, setEvSyncApplied] = useState(false);
-
-  // Predictive Parking Finder states and parameters
-  const [showParkingFinder, setShowParkingFinder] = useState(false);
-  const [parkingLots, setParkingLots] = useState<any[]>([]);
-  const [parkingLoading, setParkingLoading] = useState(false);
-  const [parkingArrivalHour, setParkingArrivalHour] = useState<number>(14);
-  const [parkingDayOfWeek, setParkingDayOfWeek] = useState<string>('Saturday');
-  const [parkingRecommendation, setParkingRecommendation] = useState<string>('');
-  const [selectedParkingLot, setSelectedParkingLot] = useState<any | null>(null);
-  const [parkingSyncApplied, setParkingSyncApplied] = useState(false);
-
-  const fetchParkingPredictions = async () => {
-    setParkingLoading(true);
-    setErrorText(null);
-    try {
-      const res = await fetch('/api/destination-parking-predictions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          lat: destination.lat,
-          lng: destination.lng,
-          arrivalHour: parkingArrivalHour,
-          dayOfWeek: parkingDayOfWeek
-        })
-      });
-      if (!res.ok) {
-        throw new Error("Failed to load parking predictions telemetry");
-      }
-      const data = await res.json();
-      setParkingLots(data.lots || []);
-      setParkingRecommendation(data.aiParkingExplanatory || '');
-      
-      // Auto select the first lot if none is selected
-      if (data.lots && data.lots.length > 0 && !selectedParkingLot) {
-        setSelectedParkingLot(data.lots[0]);
-      } else if (selectedParkingLot && data.lots) {
-        const updatedSelected = data.lots.find((l: any) => l.id === selectedParkingLot.id);
-        if (updatedSelected) {
-          setSelectedParkingLot(updatedSelected);
-        }
-      }
-    } catch (err) {
-      console.error(err);
-      setErrorText("Trouble downloading live destination parking telemetry.");
-    } finally {
-      setParkingLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    if (showParkingFinder) {
-      const timer = setTimeout(() => {
-        fetchParkingPredictions();
-      }, 300);
-      return () => clearTimeout(timer);
-    }
-  }, [showParkingFinder, parkingArrivalHour, parkingDayOfWeek]);
-
-  // AI Route Planner states
-  const [showRoutePlanner, setShowRoutePlanner] = useState(false);
-  const [plannerWaypoints, setPlannerWaypoints] = useState<any[]>([
-    { id: 'wp-start', name: 'Start: SF MB Experience Center', lat: 37.7770, lng: -122.4100 },
-    { id: 'wp-goldengate', name: 'Golden Gate Bridge Overlook', lat: 37.8085, lng: -122.4757 },
-    { id: 'wp-salesforce', name: 'Salesforce Park Rooftop', lat: 37.7891, lng: -122.3969 },
-    { id: 'wp-twinpeaks', name: 'Twin Peaks Summit Vista', lat: 37.7544, lng: -122.4477 }
-  ]);
-  const [plannerVehicleType, setPlannerVehicleType] = useState<'electric' | 'gasoline'>('electric');
-  const [plannerLoading, setPlannerLoading] = useState(false);
-  const [plannerResult, setPlannerResult] = useState<any | null>(null);
-  const [plannerNewName, setPlannerNewName] = useState('');
-  const [plannerNewLat, setPlannerNewLat] = useState('37.7749');
-  const [plannerNewLng, setPlannerNewLng] = useState('-122.4194');
-  const [plannerSyncApplied, setPlannerSyncApplied] = useState(false);
-
-  // Preset location options for easy clicking
-  const PRESET_WAYPOINTS = [
-    { name: 'Palace of Fine Arts', lat: 37.8029, lng: -122.4484 },
-    { name: 'Fisherman\'s Wharf Pier 39', lat: 37.8080, lng: -122.4177 },
-    { name: 'Sutro Baths Cliff Overlook', lat: 37.7804, lng: -122.5137 },
-    { name: 'Lombard Crooked Street', lat: 37.8021, lng: -122.4187 },
-    { name: 'Mission Dolores Park Vista', lat: 37.7596, lng: -122.4269 }
-  ];
-
-  const handleAddPresetWaypoint = (preset: any) => {
-    const newId = `wp-${Date.now()}`;
-    setPlannerWaypoints(prev => [
-      ...prev,
-      { id: newId, name: preset.name, lat: preset.lat, lng: preset.lng }
-    ]);
-  };
-
-  const handleAddCustomWaypoint = () => {
-    if (!plannerNewName.trim()) return;
-    const latNum = parseFloat(plannerNewLat);
-    const lngNum = parseFloat(plannerNewLng);
-    if (isNaN(latNum) || isNaN(lngNum)) {
-      setErrorText("Invalid latitude or longitude coordinate.");
-      return;
-    }
-    const newId = `wp-${Date.now()}`;
-    setPlannerWaypoints(prev => [
-      ...prev,
-      { id: newId, name: plannerNewName, lat: latNum, lng: lngNum }
-    ]);
-    setPlannerNewName('');
-  };
-
-  const handleRemoveWaypoint = (id: string) => {
-    setPlannerWaypoints(prev => prev.filter(wp => wp.id !== id));
-  };
-
-  const handleMoveWaypoint = (index: number, direction: 'up' | 'down') => {
-    if (direction === 'up' && index === 0) return; // Keep starting point locked
-    if (direction === 'down' && index === plannerWaypoints.length - 1) return;
-    const newIndex = direction === 'up' ? index - 1 : index + 1;
-    if (newIndex === 0) return; // Never displace the locked index 0 starter
-
-    const updated = [...plannerWaypoints];
-    const temp = updated[index];
-    updated[index] = updated[newIndex];
-    updated[newIndex] = temp;
-    setPlannerWaypoints(updated);
-  };
-
-  const calculateAIPlan = async () => {
-    if (plannerWaypoints.length < 2) {
-      setErrorText("Provide at least 2 waypoints to sequence.");
-      return;
-    }
-    setPlannerLoading(true);
-    setErrorText(null);
-    try {
-      const res = await fetch('/api/ai-route-planner', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          waypoints: plannerWaypoints,
-          vehicleType: plannerVehicleType
-        })
-      });
-      if (!res.ok) {
-        throw new Error("Route planner API failed");
-      }
-      const data = await res.json();
-      setPlannerResult(data);
-      if (data.optimizedWaypoints) {
-        setPlannerWaypoints(data.optimizedWaypoints);
-      }
-    } catch (err) {
-      console.error(err);
-      setErrorText("Trouble optimizing multiple waypoints sequence.");
-    } finally {
-      setPlannerLoading(false);
-    }
-  };
-
-  const fetchEVStations = async () => {
-    setEvLoading(true);
-    setErrorText(null);
-    try {
-      const res = await fetch('/api/ev-charging-stations', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          lat: origin.lat,
-          lng: origin.lng,
-          vehicleSOC: evSoc,
-          filterProvider: evProviderFilter,
-          minChargingSpeed: evMinSpeed
-        })
-      });
-      if (!res.ok) {
-        throw new Error("Failed to load EV stations telemetry");
-      }
-      const data = await res.json();
-      setEvStations(data.stations || []);
-      setEvRecommendation(data.aiRecommendation || '');
-      if (selectedStation) {
-        const updatedSelected = data.stations?.find((s: any) => s.id === selectedStation.id);
-        if (updatedSelected) {
-          setSelectedStation(updatedSelected);
-        }
-      }
-    } catch (err) {
-      console.error(err);
-      setErrorText("Trouble downloading live charging telemetry.");
-    } finally {
-      setEvLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    if (showEVStations) {
-      const timer = setTimeout(() => {
-        fetchEVStations();
-      }, 300);
-      return () => clearTimeout(timer);
-    }
-  }, [showEVStations, evSoc, evMinSpeed, evProviderFilter]);
-
-  const isDemoMode = !hasValidKey;
-
-  const destination = { lat: 37.7749, lng: -122.4194 };
-  const origin = { lat: 37.75, lng: -122.43 };
-
-  // Calculate only routable locations
-  const routableEventsCount = events.filter(e => e.location && e.carNeeded).length;
-
-  const handleOptimizeRoutes = async () => {
-    setIsOptimizing(true);
-    setErrorText(null);
-    setSyncApplied(false);
-    setShowSmartRouting(false); // Close smart routing side-panel to clear path display
-
-    // Filter events requiring vehicle
-    const routableEvents = events.filter(e => e.location && e.carNeeded);
-
-    if (routableEvents.length === 0) {
-      setErrorText("No car-required events with locations found in your calendar to optimize.");
-      setIsOptimizing(false);
       return;
     }
 
-    try {
-      const res = await fetch('/api/optimize-route', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          events: routableEvents,
-          origin
-        })
-      });
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
 
-      if (!res.ok) {
-        throw new Error("Failed to post optimize schedule route");
-      }
+    const nextX = drag.originX + event.clientX - drag.startX;
+    const nextY = drag.originY + event.clientY - drag.startY;
+    if (!drag.hasMoved && Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) > 4) {
+      drag.hasMoved = true;
+      onManualPan();
+    }
+    onViewChange((current) => clampMockView({ ...current, x: nextX, y: nextY }));
+  };
 
-      const data = await res.json();
-      if (data && Array.isArray(data.stops)) {
-        setOptimizedRoute(data);
-        setShowETA(false); // Hide the standard origin-destination ETA
-
-        addRecentAction({
-          icon: 'explore',
-          title: 'Schedule Route Optimized',
-          description: `Sequenced ${data.stops.length} calendar stops via Gemini`,
-          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-        });
-      } else {
-        throw new Error("Invalid schema");
-      }
-    } catch (e: any) {
-      console.error("Route optimization error", e);
-      setErrorText("Trouble sequencing routes. Fallback calculated.");
-    } finally {
-      setIsOptimizing(false);
+  const endDrag = (event: PointerEvent<HTMLDivElement>) => {
+    activePointersRef.current.delete(event.pointerId);
+    if (pinchRef.current && activePointersRef.current.size < 2) {
+      pinchRef.current = null;
+      onZoomInteraction();
+    }
+    if (dragRef.current?.pointerId === event.pointerId) {
+      dragRef.current = null;
     }
   };
 
-  const handleSyncToCar = () => {
-    setSyncApplied(true);
-    addRecentAction({
-      icon: 'sync',
-      title: 'Optimal Navigation Synced',
-      description: 'Pushed optimized route matrix to MB Cockpit',
-      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    });
+  const handleWheel = (event: WheelEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const delta = event.deltaY > 0 ? -0.08 : 0.08;
+    onZoomInteraction(mockScaleToCameraZoom(view.zoom + delta));
+    onViewChange((current) => clampMockView({ ...current, zoom: current.zoom + delta }));
   };
 
   return (
-    <div className="absolute inset-0 z-0">
-      {!isDemoMode ? (
-        <APIProvider apiKey={API_KEY} version="weekly">
-          <Map
-            defaultCenter={origin}
-            defaultZoom={11}
-            mapId="DEMO_MAP_ID"
-            internalUsageAttributionIds={['gmp_mcp_codeassist_v1_aistudio']}
-            style={{ width: '100%', height: '100dvh' }}
-            disableDefaultUI={true}
+    <div
+      className="absolute inset-0 cursor-grab overflow-hidden bg-surface active:cursor-grabbing"
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={endDrag}
+      onPointerCancel={endDrag}
+      onWheel={handleWheel}
+      style={{ touchAction: 'none' }}
+    >
+      <div
+        className={cn(
+          'absolute inset-[-18%] will-change-transform',
+          cameraMode !== 'manualExplore' && 'transition-transform duration-300 ease-out'
+        )}
+        style={{
+          transform: `matrix(${view.zoom}, 0, 0, ${view.zoom}, ${view.x}, ${view.y})`,
+          transformOrigin: '0 0',
+        }}
+      >
+        <div className="absolute inset-0 opacity-[0.42] bg-[linear-gradient(to_right,#d9dde0_1px,transparent_1px),linear-gradient(to_bottom,#d9dde0_1px,transparent_1px)] bg-[size:48px_48px]" />
+        <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(245,247,249,0.24),rgba(238,241,243,0.70))]" />
+
+        <svg className="absolute inset-0 h-full w-full" viewBox="0 0 1000 1000" preserveAspectRatio="none">
+          <path
+            d="M-80 172 C122 215 258 268 430 230 C620 188 710 102 1080 116"
+            fill="none"
+            stroke="#d9dde0"
+            strokeWidth="13"
+            strokeLinecap="round"
+            opacity="0.7"
+          />
+          <path
+            d="M-40 500 C170 456 270 385 432 410 C618 438 738 512 1040 448"
+            fill="none"
+            stroke="#e5e9eb"
+            strokeWidth="9"
+            strokeLinecap="round"
+            opacity="0.78"
+          />
+          <path
+            d="M128 1060 C226 822 335 610 462 463 C628 270 804 254 1088 192"
+            fill="none"
+            stroke="#abadaf"
+            strokeWidth="5"
+            strokeDasharray="14 18"
+            opacity="0.52"
+          />
+          <path
+            d="M-70 700 C140 686 256 724 430 664 C606 604 682 712 1080 704"
+            fill="none"
+            stroke="#d9dde0"
+            strokeWidth="4"
+            strokeLinecap="round"
+            opacity="0.62"
+          />
+          <path
+            d="M642 -80 C600 168 528 280 554 466 C582 660 688 760 710 1080"
+            fill="none"
+            stroke="#dfe3e6"
+            strokeWidth="6"
+            strokeLinecap="round"
+            opacity="0.72"
+          />
+          {mode === 'aiRoute' && (
+            <polyline
+              points={alternativeRoutePoints}
+              fill="none"
+              stroke="#abadaf"
+              strokeWidth="5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeDasharray="18 16"
+              opacity={sheetState === 'expanded' ? '0.32' : '0.18'}
+            />
+          )}
+          <polyline
+            points={routePoints}
+            fill="none"
+            stroke="#ffffff"
+            strokeWidth="15"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            opacity="0.86"
+          />
+          <polyline
+            points={routePoints}
+            fill="none"
+            stroke={visual.routeColor}
+            strokeWidth="5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            style={{ filter: `drop-shadow(0 0 8px ${visual.glow})` }}
+          />
+        </svg>
+
+        {mode === 'aiRoute' && (
+          <>
+            <div
+              className="absolute -translate-x-1/2 -translate-y-1/2"
+              style={{ left: coordsToPercent({ lat: 37.62, lng: -122.35 }).x, top: coordsToPercent({ lat: 37.62, lng: -122.35 }).y }}
+            >
+              <RouteChoiceMarker label="Best Route" detail="24 min" tone="blue" />
+            </div>
+            {sheetState === 'expanded' && (
+              <div
+                className="absolute -translate-x-1/2 -translate-y-1/2 opacity-75"
+                style={{ left: coordsToPercent({ lat: 37.59, lng: -122.22 }).x, top: coordsToPercent({ lat: 37.59, lng: -122.22 }).y }}
+              >
+                <RouteChoiceMarker label="Alternative" detail="31 min" tone="slate" />
+              </div>
+            )}
+          </>
+        )}
+
+        {mode === 'parking' &&
+          favoriteStops.map((stop) => {
+            const pos = coordsToPercent(stop.position);
+            return (
+              <div
+                key={stop.id}
+                className="absolute -translate-x-1/2 -translate-y-1/2"
+                style={{ left: pos.x, top: pos.y }}
+              >
+                <FavoriteStopMarker stop={stop} />
+              </div>
+            );
+          })}
+
+        {mode === 'evStations' &&
+          evStations.map((station) => {
+            const pos = coordsToPercent(station.position);
+            const isAdded = addedEvStop?.id === station.id;
+            return (
+              <div
+                key={station.id}
+                className={cn('absolute -translate-x-1/2 -translate-y-1/2', isAdded && 'scale-110')}
+                style={{ left: pos.x, top: pos.y }}
+              >
+                <EVStationMarker station={station} />
+              </div>
+            );
+          })}
+
+        {addedEvStop && mode !== 'evStations' && (
+          <div
+            className="absolute -translate-x-1/2 -translate-y-1/2 scale-110"
+            style={{ left: coordsToPercent(addedEvStop.position).x, top: coordsToPercent(addedEvStop.position).y }}
           >
-            {optimizedRoute ? (
+            <EVStationMarker station={addedEvStop} />
+          </div>
+        )}
+
+        {selectedFavoriteStop && mode !== 'parking' && (
+          <div
+            className="absolute -translate-x-1/2 -translate-y-1/2 scale-110"
+            style={{ left: coordsToPercent(selectedFavoriteStop.position).x, top: coordsToPercent(selectedFavoriteStop.position).y }}
+          >
+            <FavoriteStopMarker stop={selectedFavoriteStop} />
+          </div>
+        )}
+
+        {mode === 'cost' &&
+          costMarkers.map((marker) => {
+            const pos = coordsToPercent(marker.position);
+            return (
+              <div
+                key={marker.id}
+                className="absolute -translate-x-1/2 -translate-y-1/2"
+                style={{ left: pos.x, top: pos.y }}
+              >
+                <CostMapMarker marker={marker} />
+              </div>
+            );
+          })}
+
+        {mode === 'cost' && (
+          <div
+            className="absolute -translate-x-1/2 -translate-y-1/2"
+            style={{ left: coordsToPercent({ lat: 37.55, lng: -122.255 }).x, top: coordsToPercent({ lat: 37.55, lng: -122.255 }).y }}
+          >
+            <RouteChoiceMarker label="$12.80 total" detail="$0.47/mi" tone="amber" />
+          </div>
+        )}
+
+        {mode === 'cost' && sheetState === 'expanded' && (
+          <div
+            className="absolute -translate-x-1/2 -translate-y-1/2 opacity-80"
+            style={{ left: coordsToPercent({ lat: 37.69, lng: -122.312 }).x, top: coordsToPercent({ lat: 37.69, lng: -122.312 }).y }}
+          >
+            <RouteChoiceMarker label="Eco route" detail="Save $1.10" tone="slate" />
+          </div>
+        )}
+
+        <div
+          className="absolute -translate-x-1/2 -translate-y-1/2"
+          style={{ left: vehicle.x, top: vehicle.y }}
+        >
+          <VehicleMarker activeNavigation={activeNavigation} />
+        </div>
+        <div
+          className="absolute -translate-x-1/2 -translate-y-1/2"
+          style={{ left: destinationPoint.x, top: destinationPoint.y }}
+        >
+          <DestinationMarker />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default function MapView() {
+  const { addRecentAction } = useAppStore();
+  const [mapMode, setMapMode] = useState<MapMode>('aiRoute');
+  const [sheetState, setSheetState] = useState<SheetState>('collapsed');
+  const [mapInstance, setMapInstance] = useState<google.maps.Map | null>(null);
+  const [mockView, setMockView] = useState<MockMapView>(defaultMockView);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedDestination, setSelectedDestination] = useState<MockDestination>(mockDestinations[0]);
+  const [activePanel, setActivePanel] = useState<ActivePanel>(null);
+  const [selectedEvStop, setSelectedEvStop] = useState<(typeof evStations)[number] | null>(null);
+  const [selectedFavoriteStop, setSelectedFavoriteStop] = useState<FavoriteStop | null>(null);
+  const [selectedRouteVariant, setSelectedRouteVariant] = useState<RouteVariant>('recommended');
+  const [transientToast, setTransientToast] = useState<{ title: string; detail: string; tone: MapTone } | null>(null);
+  const [cameraState, setCameraState] = useState<MapCameraState>({
+    cameraMode: 'routeOverview',
+    activeNavigation: false,
+    followCar: false,
+    userInteractingWithMap: false,
+    currentZoom: routeOverviewZoom,
+  });
+  const [lastAction, setLastAction] = useState<string | null>(null);
+  const pinchRefocusTimerRef = useRef<number | null>(null);
+  const destinationPreviewTimerRef = useRef<number | null>(null);
+  const cameraGuardTimerRef = useRef<number | null>(null);
+  const navigationOffsetTimerRef = useRef<number | null>(null);
+  const transientToastTimerRef = useRef<number | null>(null);
+  const programmaticCameraRef = useRef(false);
+  const initialCameraFlowRef = useRef(false);
+  const cameraStateRef = useRef<MapCameraState>(cameraState);
+  const visual = modeVisuals[mapMode];
+  const activeTool = toolChips.find((tool) => tool.key === mapMode) ?? toolChips[0];
+  const ActiveModeIcon = activeTool.icon;
+  const { activeNavigation, cameraMode, currentZoom, followCar, userInteractingWithMap } = cameraState;
+  const filteredDestinations =
+    searchQuery.trim().length === 0
+      ? mockDestinations
+      : mockDestinations.filter((destination) =>
+          `${destination.name} ${destination.detail}`.toLowerCase().includes(searchQuery.trim().toLowerCase())
+        );
+  const routeAddOnPoints = [selectedFavoriteStop?.position, selectedEvStop?.position].filter(Boolean) as Coordinates[];
+  const routePathWithStops = routeAddOnPoints.length > 0
+    ? [
+        selectedDestination.routePath[0],
+        ...selectedDestination.routePath.slice(1, -1),
+        ...routeAddOnPoints,
+        selectedDestination.position,
+      ]
+    : selectedDestination.routePath;
+  const activeRouteVariant = routeVariants.find((variant) => variant.key === selectedRouteVariant) ?? routeVariants[0];
+  const sheetBase = bottomSheets[mapMode];
+  const sheet = {
+    ...sheetBase,
+    title: mapMode === 'aiRoute' ? selectedDestination.name : sheetBase.title,
+    subtitle: mapMode === 'aiRoute' ? selectedDestination.detail : sheetBase.subtitle,
+    collapsedTitle: mapMode === 'aiRoute' ? selectedDestination.name : sheetBase.collapsedTitle,
+    collapsedMeta:
+      mapMode === 'aiRoute'
+        ? `${selectedDestination.eta} - Depart ${selectedDestination.departAt}`
+        : sheetBase.collapsedMeta,
+    collapsedStatus:
+      mapMode === 'aiRoute'
+        ? `Traffic: ${selectedDestination.traffic}${selectedFavoriteStop ? ` - Favorite stop added` : ''}${selectedEvStop ? ` - Charging stop added` : ''}`
+        : sheetBase.collapsedStatus,
+    statusValue:
+      mapMode === 'aiRoute'
+        ? selectedRouteVariant === 'eco'
+          ? 'Eco'
+          : selectedDestination.traffic
+        : sheetBase.statusValue,
+    metrics:
+      mapMode === 'aiRoute'
+        ? [
+            { label: 'Depart', value: selectedDestination.departAt, tone: 'blue' as const },
+            { label: 'ETA', value: selectedDestination.eta },
+            { label: 'Traffic', value: selectedDestination.traffic, tone: selectedDestination.traffic === 'Heavy' ? 'amber' as const : 'emerald' as const },
+            { label: 'Saved', value: selectedDestination.saved, tone: 'cyan' as const },
+          ]
+        : sheetBase.metrics,
+    insight:
+      mapMode === 'aiRoute'
+        ? `${selectedDestination.routeInsight}${selectedFavoriteStop ? ` Favorite stop: ${selectedFavoriteStop.name}.` : ''}${selectedEvStop ? ` Charging stop: ${selectedEvStop.name}.` : ''}`
+        : sheetBase.insight,
+  };
+  const expandedSummaryBars: Array<{ label: string; value: string; percent: number; tone: MapTone; detail?: string }> =
+    mapMode === 'parking'
+      ? [
+          {
+            label: 'Habit match',
+            value: favoriteStops[0].confidence,
+            percent: parsePercent(favoriteStops[0].confidence),
+            tone: 'emerald',
+            detail: favoriteStops[0].habit,
+          },
+          {
+            label: 'Visit strength',
+            value: favoriteStops[0].visits,
+            percent: 82,
+            tone: 'blue',
+            detail: 'Routine confidence from repeated behavior',
+          },
+        ]
+      : mapMode === 'evStations'
+        ? [
+            {
+              label: 'Arrival battery',
+              value: mockEvStations.batteryOnArrival,
+              percent: parsePercent(mockEvStations.batteryOnArrival),
+              tone: 'cyan',
+              detail: 'Projected charge at destination',
+            },
+            {
+              label: 'Open',
+              value: evStations[0].availability,
+              percent: 25,
+              tone: 'emerald',
+              detail: `${evStations[0].speed} partner charger`,
+            },
+          ]
+        : mapMode === 'cost'
+          ? costDistribution
+          : mapMode === 'aiRoute'
+            ? [
+                {
+                  label: 'Route confidence',
+                  value: selectedRouteVariant === 'eco' ? '86%' : '94%',
+                  percent: selectedRouteVariant === 'eco' ? 86 : 94,
+                  tone: selectedRouteVariant === 'eco' ? 'emerald' : 'blue',
+                  detail: activeRouteVariant.detail,
+                },
+              ]
+            : [];
+
+  const handleMapReady = useCallback((map: google.maps.Map | null) => {
+    setMapInstance(map);
+  }, []);
+
+  useEffect(() => {
+    cameraStateRef.current = cameraState;
+  }, [cameraState]);
+
+  const updateCameraState = useCallback((patch: Partial<MapCameraState>) => {
+    setCameraState((current) => ({ ...current, ...patch }));
+  }, []);
+
+  const clearPinchRefocusTimer = useCallback(() => {
+    if (pinchRefocusTimerRef.current) {
+      window.clearTimeout(pinchRefocusTimerRef.current);
+      pinchRefocusTimerRef.current = null;
+    }
+  }, []);
+
+  const clearDestinationPreviewTimer = useCallback(() => {
+    if (destinationPreviewTimerRef.current) {
+      window.clearTimeout(destinationPreviewTimerRef.current);
+      destinationPreviewTimerRef.current = null;
+    }
+  }, []);
+
+  const showTransientToast = useCallback((title: string, detail: string, tone: MapTone = 'blue') => {
+    if (transientToastTimerRef.current) {
+      window.clearTimeout(transientToastTimerRef.current);
+    }
+
+    setTransientToast({ title, detail, tone });
+    transientToastTimerRef.current = window.setTimeout(() => {
+      setTransientToast(null);
+      transientToastTimerRef.current = null;
+    }, 1400);
+  }, []);
+
+  const markProgrammaticCamera = useCallback(() => {
+    programmaticCameraRef.current = true;
+    if (cameraGuardTimerRef.current) {
+      window.clearTimeout(cameraGuardTimerRef.current);
+    }
+    cameraGuardTimerRef.current = window.setTimeout(() => {
+      programmaticCameraRef.current = false;
+      cameraGuardTimerRef.current = null;
+    }, 700);
+  }, []);
+
+  const getModeFocusPoints = useCallback((mode: MapMode): Coordinates[] => {
+    if (mode === 'parking') {
+      return [...routePathWithStops, ...favoriteStops.map((stop) => stop.position)];
+    }
+
+    if (mode === 'evStations') {
+      return [...routePathWithStops, ...evStations.map((station) => station.position)];
+    }
+
+    if (mode === 'cost') {
+      return [...routePathWithStops, ...costMarkers.map((marker) => marker.position)];
+    }
+
+    return [...routePathWithStops, ...selectedDestination.alternativePath];
+  }, [routePathWithStops, selectedDestination.alternativePath]);
+
+  const fitRouteOverview = useCallback((nextMode: MapMode = mapMode) => {
+    clearPinchRefocusTimer();
+    clearDestinationPreviewTimer();
+    markProgrammaticCamera();
+
+    updateCameraState({
+      cameraMode: 'routeOverview',
+      followCar: false,
+      userInteractingWithMap: false,
+      currentZoom: routeOverviewZoom,
+    });
+
+    if (mapInstance && typeof google !== 'undefined') {
+      const bounds = new google.maps.LatLngBounds();
+      getModeFocusPoints(nextMode).forEach((point) => bounds.extend(point));
+      mapInstance.fitBounds(bounds, 72);
+      window.setTimeout(() => {
+        const fittedZoom = mapInstance.getZoom() ?? routeOverviewZoom;
+        const nextZoom = Math.min(fittedZoom, routeOverviewZoom);
+        mapInstance.setZoom(nextZoom);
+        updateCameraState({ currentZoom: nextZoom });
+      }, 260);
+    }
+
+    setMockView(getMockCameraView('routeOverview'));
+  }, [
+    clearDestinationPreviewTimer,
+    clearPinchRefocusTimer,
+    getModeFocusPoints,
+    mapInstance,
+    mapMode,
+    markProgrammaticCamera,
+    updateCameraState,
+  ]);
+
+  const getDestinationPreviewMockView = useCallback(() => {
+    return createMockFocusView({
+      point: coordsToUnitPoint(selectedDestination.position),
+      target: { x: 0.5, y: 0.48 },
+      zoom: getMockCameraView('destinationPreview').zoom,
+    });
+  }, [selectedDestination.position]);
+
+  const getVehicleFollowMockView = useCallback(() => {
+    return createMockFocusView({
+      point: coordsToUnitPoint(vehiclePosition),
+      target: { x: 0.5, y: 0.62 },
+      zoom: getMockCameraView('navigationFollow').zoom,
+    });
+  }, []);
+
+  const centerNavigationCamera = useCallback(() => {
+    markProgrammaticCamera();
+    clearPinchRefocusTimer();
+    clearDestinationPreviewTimer();
+
+    updateCameraState({
+      activeNavigation: true,
+      cameraMode: 'navigationFollow',
+      followCar: true,
+      userInteractingWithMap: false,
+      currentZoom: navigationZoom,
+    });
+
+    if (mapInstance) {
+      mapInstance.setZoom(navigationZoom);
+      mapInstance.panTo(vehiclePosition);
+      window.setTimeout(() => {
+        mapInstance.panTo(vehiclePosition);
+        if (navigationOffsetTimerRef.current) {
+          window.clearTimeout(navigationOffsetTimerRef.current);
+        }
+        navigationOffsetTimerRef.current = window.setTimeout(() => {
+          mapInstance.panBy(0, Math.round(window.innerHeight * 0.12));
+          navigationOffsetTimerRef.current = null;
+        }, 220);
+      }, 180);
+    }
+
+    setMockView(getVehicleFollowMockView());
+  }, [
+    clearDestinationPreviewTimer,
+    clearPinchRefocusTimer,
+    getVehicleFollowMockView,
+    mapInstance,
+    markProgrammaticCamera,
+    updateCameraState,
+  ]);
+
+  const handleManualMapExplore = useCallback(() => {
+    clearPinchRefocusTimer();
+    clearDestinationPreviewTimer();
+    updateCameraState({
+      cameraMode: 'manualExplore',
+      followCar: false,
+      userInteractingWithMap: true,
+    });
+  }, [clearDestinationPreviewTimer, clearPinchRefocusTimer, updateCameraState]);
+
+  const schedulePinchRefocus = useCallback(() => {
+    clearPinchRefocusTimer();
+    pinchRefocusTimerRef.current = window.setTimeout(() => {
+      if (cameraStateRef.current.activeNavigation) {
+        centerNavigationCamera();
+      } else {
+        updateCameraState({ userInteractingWithMap: false });
+      }
+      pinchRefocusTimerRef.current = null;
+    }, pinchRefocusDelayMs);
+  }, [centerNavigationCamera, clearPinchRefocusTimer, updateCameraState]);
+
+  const handleZoomInteraction = useCallback((nextZoom?: number) => {
+    const zoomPatch = typeof nextZoom === 'number' ? { currentZoom: Number(nextZoom.toFixed(1)) } : {};
+
+    if (programmaticCameraRef.current) {
+      updateCameraState(zoomPatch);
+      return;
+    }
+
+    if (!cameraStateRef.current.activeNavigation) {
+      updateCameraState(zoomPatch);
+      return;
+    }
+
+    updateCameraState({
+      ...zoomPatch,
+      followCar: false,
+      userInteractingWithMap: true,
+    });
+    schedulePinchRefocus();
+  }, [schedulePinchRefocus, updateCameraState]);
+
+  const focusDestinationPreview = useCallback(() => {
+    clearPinchRefocusTimer();
+    clearDestinationPreviewTimer();
+    markProgrammaticCamera();
+
+    updateCameraState({
+      activeNavigation: false,
+      cameraMode: 'destinationPreview',
+      followCar: false,
+      userInteractingWithMap: false,
+      currentZoom: destinationPreviewZoom,
+    });
+
+    if (mapInstance) {
+      mapInstance.panTo(selectedDestination.position);
+      window.setTimeout(() => {
+        mapInstance.setZoom(destinationPreviewZoom);
+      }, 180);
+    }
+
+    setMockView(getDestinationPreviewMockView());
+  }, [
+    clearDestinationPreviewTimer,
+    clearPinchRefocusTimer,
+    getDestinationPreviewMockView,
+    mapInstance,
+    markProgrammaticCamera,
+    selectedDestination.position,
+    updateCameraState,
+  ]);
+
+  useEffect(() => {
+    if (cameraMode !== 'destinationPreview' || activeNavigation) return;
+
+    clearDestinationPreviewTimer();
+    destinationPreviewTimerRef.current = window.setTimeout(() => {
+      if (!cameraStateRef.current.activeNavigation && cameraStateRef.current.cameraMode === 'destinationPreview') {
+        fitRouteOverview(mapMode);
+      }
+      destinationPreviewTimerRef.current = null;
+    }, destinationPreviewDelayMs);
+
+    return () => {
+      clearDestinationPreviewTimer();
+    };
+  }, [activeNavigation, cameraMode, clearDestinationPreviewTimer, fitRouteOverview, mapMode]);
+
+  useEffect(() => {
+    if (initialCameraFlowRef.current) return;
+    if (hasValidKey && !mapInstance) return;
+
+    initialCameraFlowRef.current = true;
+    focusDestinationPreview();
+  }, [focusDestinationPreview, mapInstance]);
+
+  useEffect(() => {
+    if (!mapInstance) return;
+
+    const dragStartListener = mapInstance.addListener('dragstart', handleManualMapExplore);
+    const zoomChangedListener = mapInstance.addListener('zoom_changed', () => {
+      const nextZoom = mapInstance.getZoom();
+      handleZoomInteraction(typeof nextZoom === 'number' ? nextZoom : undefined);
+    });
+
+    return () => {
+      dragStartListener.remove();
+      zoomChangedListener.remove();
+    };
+  }, [handleManualMapExplore, handleZoomInteraction, mapInstance]);
+
+  useEffect(() => {
+    return () => {
+      clearPinchRefocusTimer();
+      clearDestinationPreviewTimer();
+      if (cameraGuardTimerRef.current) {
+        window.clearTimeout(cameraGuardTimerRef.current);
+      }
+      if (navigationOffsetTimerRef.current) {
+        window.clearTimeout(navigationOffsetTimerRef.current);
+      }
+      if (transientToastTimerRef.current) {
+        window.clearTimeout(transientToastTimerRef.current);
+      }
+    };
+  }, [clearDestinationPreviewTimer, clearPinchRefocusTimer]);
+
+  const handleModeChange = (nextMode: MapMode) => {
+    setMapMode(nextMode);
+    setSheetState('collapsed');
+    setLastAction(null);
+    setActivePanel(null);
+  };
+
+  const handleBackgroundClick = (event: MouseEvent<HTMLDivElement>) => {
+    const target = event.target as HTMLElement;
+    if (target.closest('[data-map-ui="true"]')) return;
+    if (activePanel === 'search') {
+      setActivePanel(null);
+    }
+    if (sheetState !== 'expanded') return;
+    setSheetState('collapsed');
+  };
+
+  const handleRecenter = () => {
+    updateCameraState({ userInteractingWithMap: false });
+    if (cameraStateRef.current.activeNavigation) {
+      centerNavigationCamera();
+      return;
+    }
+
+    fitRouteOverview();
+  };
+
+  const applyNavigationZoomControl = (nextScale: number, nextCameraZoom: number) => {
+    markProgrammaticCamera();
+    clearPinchRefocusTimer();
+
+    updateCameraState({
+      cameraMode: 'navigationFollow',
+      currentZoom: nextCameraZoom,
+      followCar: true,
+      userInteractingWithMap: false,
+    });
+
+    if (mapInstance) {
+      mapInstance.setZoom(nextCameraZoom);
+      mapInstance.panTo(vehiclePosition);
+      window.setTimeout(() => {
+        mapInstance.panBy(0, Math.round(window.innerHeight * 0.12));
+      }, 180);
+    }
+
+    setMockView(createMockFocusView({
+      point: coordsToUnitPoint(vehiclePosition),
+      target: { x: 0.5, y: 0.62 },
+      zoom: nextScale,
+    }));
+  };
+
+  const handleZoomIn = () => {
+    const nextMockScale = clampMockView({ ...mockView, zoom: mockView.zoom + 0.18 }).zoom;
+
+    if (activeNavigation && followCar) {
+      applyNavigationZoomControl(nextMockScale, Math.min(currentZoom + 1, 18));
+      return;
+    }
+
+    if (mapInstance) {
+      const nextZoom = (mapInstance.getZoom() ?? routeOverviewZoom) + 1;
+      handleZoomInteraction(nextZoom);
+      mapInstance.setZoom(nextZoom);
+    }
+    const nextView = clampMockView({ ...mockView, zoom: nextMockScale });
+    handleZoomInteraction(mockScaleToCameraZoom(nextView.zoom));
+    setMockView(nextView);
+  };
+
+  const handleZoomOut = () => {
+    const nextMockScale = clampMockView({ ...mockView, zoom: mockView.zoom - 0.18 }).zoom;
+
+    if (activeNavigation && followCar) {
+      applyNavigationZoomControl(nextMockScale, Math.max(currentZoom - 1, 7));
+      return;
+    }
+
+    if (mapInstance) {
+      const nextZoom = (mapInstance.getZoom() ?? routeOverviewZoom) - 1;
+      handleZoomInteraction(nextZoom);
+      mapInstance.setZoom(nextZoom);
+    }
+    const nextView = clampMockView({ ...mockView, zoom: nextMockScale });
+    handleZoomInteraction(mockScaleToCameraZoom(nextView.zoom));
+    setMockView(nextView);
+  };
+
+  const handleDestinationSelect = (destination: MockDestination) => {
+    setSelectedDestination(destination);
+    setSearchQuery(destination.name);
+    setActivePanel(null);
+    setSheetState('collapsed');
+    setMapMode('aiRoute');
+    setSelectedRouteVariant('recommended');
+    setSelectedFavoriteStop(null);
+    setSelectedEvStop(null);
+    setLastAction(`Route set: ${destination.name}`);
+    updateCameraState({
+      activeNavigation: false,
+      followCar: false,
+      userInteractingWithMap: false,
+      cameraMode: 'routeOverview',
+      currentZoom: routeOverviewZoom,
+    });
+    showTransientToast('Route loaded', destination.name, 'blue');
+
+    if (mapInstance && typeof google !== 'undefined') {
+      markProgrammaticCamera();
+      const bounds = new google.maps.LatLngBounds();
+      destination.routePath.forEach((point) => bounds.extend(point));
+      mapInstance.fitBounds(bounds, 72);
+    }
+
+    setMockView(getMockCameraView('routeOverview'));
+  };
+
+  const stopNavigation = () => {
+    clearPinchRefocusTimer();
+    clearDestinationPreviewTimer();
+    updateCameraState({
+      activeNavigation: false,
+      followCar: false,
+      userInteractingWithMap: false,
+      cameraMode: 'routeOverview',
+      currentZoom: routeOverviewZoom,
+    });
+    setLastAction('Navigation Stopped');
+    setActivePanel(null);
+    fitRouteOverview('aiRoute');
+    showTransientToast('Navigation stopped', 'Route overview restored', 'slate');
+  };
+
+  const startNavigation = () => {
+    setSheetState('collapsed');
+    setMapMode('aiRoute');
+    setActivePanel(null);
+    setLastAction('Navigation Active');
+    centerNavigationCamera();
+    showTransientToast('Navigation started', `Guidance to ${selectedDestination.name}`, 'blue');
+    addRecentAction({
+      icon: 'navigation',
+      title: 'Navigation Active',
+      description: `Following vehicle toward ${selectedDestination.name}`,
+      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    });
+  };
+
+  const handleRouteVariantApply = (variant: RouteVariant) => {
+    const nextVariant = routeVariants.find((item) => item.key === variant) ?? routeVariants[0];
+    setSelectedRouteVariant(variant);
+    setActivePanel(null);
+    setSheetState('collapsed');
+    setMapMode('aiRoute');
+    setLastAction(`${nextVariant.name} applied`);
+    fitRouteOverview('aiRoute');
+    showTransientToast('Route applied', nextVariant.name, nextVariant.tone);
+  };
+
+  const handleEvStopSelect = (station: (typeof evStations)[number]) => {
+    setSelectedEvStop(station);
+    setActivePanel(null);
+    setSheetState('collapsed');
+    setMapMode('aiRoute');
+    setLastAction(`Charging stop added: ${station.name}`);
+    fitRouteOverview('aiRoute');
+    showTransientToast('Charging stop added', `${station.name} - ${station.detour}`, 'cyan');
+  };
+
+  const handleEvStopRemove = () => {
+    const removedName = selectedEvStop?.name ?? 'Charging stop';
+    setSelectedEvStop(null);
+    setLastAction(`${removedName} removed`);
+    fitRouteOverview('aiRoute');
+    showTransientToast('Charging stop removed', 'Route recalculated', 'slate');
+  };
+
+  const handleFavoriteStopSelect = (stop: FavoriteStop) => {
+    setSelectedFavoriteStop(stop);
+    setActivePanel(null);
+    setSheetState('collapsed');
+    setMapMode('aiRoute');
+    setLastAction(`Favorite stop added: ${stop.name}`);
+    fitRouteOverview('aiRoute');
+    showTransientToast('Favorite stop added', `${stop.name} - ${stop.habit}`, 'emerald');
+  };
+
+  const handleModeAction = (label: string) => {
+    if (label === 'Start Navigation') {
+      startNavigation();
+      return;
+    }
+
+    if (label === 'Stop Navigation') {
+      stopNavigation();
+      return;
+    }
+
+    if (label === 'View Cost Breakdown') {
+      setActivePanel('costBreakdown');
+      setMapMode('cost');
+      setSheetState('expanded');
+      return;
+    }
+
+    if (label === 'Compare Routes' || label === 'Optimize Route') {
+      setActivePanel('routeCompare');
+      setMapMode('aiRoute');
+      setSheetState('expanded');
+      return;
+    }
+
+    if (label === 'Optimize Cost') {
+      setActivePanel('costBreakdown');
+      setMapMode('cost');
+      setSheetState('expanded');
+      return;
+    }
+
+    if (label === 'Add Charging Stop' || label === 'Navigate Directly') {
+      setActivePanel('evStops');
+      setMapMode('evStations');
+      setSheetState('expanded');
+      return;
+    }
+
+    if (label === 'Add Favorite Stop') {
+      handleFavoriteStopSelect(favoriteStops[0]);
+      return;
+    }
+
+    if (label === 'View Stops') {
+      setActivePanel('favoriteStops');
+      setMapMode('parking');
+      setSheetState('expanded');
+      return;
+    }
+
+    setLastAction(label);
+    showTransientToast(label, `${sheet.eyebrow} mock action selected`, visual.tone);
+    addRecentAction({
+      icon: label.includes('Navigate') || label.includes('Navigation') ? 'navigation' : 'explore',
+      title: label,
+      description: `${sheet.eyebrow} mock action selected for ${sheet.title}`,
+      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    });
+  };
+
+  const collapsedActionLabel =
+    activeNavigation && mapMode === 'aiRoute' && sheet.collapsedAction === 'Start Navigation'
+      ? 'Stop Navigation'
+      : sheet.collapsedAction;
+  const expandedPrimaryActionLabel =
+    activeNavigation && mapMode === 'aiRoute' && sheet.primaryAction === 'Start Navigation'
+      ? 'Stop Navigation'
+      : sheet.primaryAction;
+  const primaryActionLabel = sheetState === 'collapsed' ? collapsedActionLabel : expandedPrimaryActionLabel;
+  const PrimaryActionIcon = primaryActionLabel.includes('Charging')
+    ? Plug
+    : primaryActionLabel.includes('Compare') || primaryActionLabel.includes('Cost')
+      ? Banknote
+      : primaryActionLabel.includes('Favorite') || primaryActionLabel.includes('Stop')
+        ? Coffee
+        : Navigation;
+  const SecondaryActionIcon = sheet.secondaryAction.includes('Navigate')
+    ? Navigation
+    : sheet.secondaryAction.includes('Stops')
+      ? Coffee
+      : Sparkles;
+  const isManualExplore = cameraMode === 'manualExplore' || userInteractingWithMap || (activeNavigation && !followCar);
+  const recenterIsPrimary = isManualExplore || (activeNavigation && !followCar);
+  const recenterControlLabel =
+    sheetState === 'expanded'
+      ? undefined
+    : activeNavigation || isManualExplore
+        ? 'Re-center'
+          : undefined;
+  const mapStateLabel = activeNavigation
+    ? followCar
+      ? 'Following'
+      : 'Browsing map'
+    : isManualExplore
+      ? 'Browsing map'
+      : 'Overview';
+  const MapStateIcon = activeNavigation ? Navigation : isManualExplore ? LocateFixed : Route;
+  const controlBottomClass =
+    sheetState === 'expanded'
+      ? 'bottom-[calc(62dvh+env(safe-area-inset-bottom))] sm:bottom-[calc(59dvh+env(safe-area-inset-bottom))] lg:bottom-8'
+      : 'bottom-[calc(12.5rem+env(safe-area-inset-bottom))] sm:bottom-[calc(11rem+env(safe-area-inset-bottom))] lg:bottom-8';
+
+  return (
+    <div
+      className="absolute inset-0 overflow-hidden bg-surface text-on-surface"
+      data-active-navigation={activeNavigation ? 'true' : 'false'}
+      data-camera-mode={cameraMode}
+      data-current-zoom={currentZoom}
+      data-follow-car={followCar ? 'true' : 'false'}
+      data-map-mode={mapMode}
+      data-user-interacting-with-map={userInteractingWithMap ? 'true' : 'false'}
+      onClick={handleBackgroundClick}
+    >
+      {hasValidKey ? (
+        <APIProvider apiKey={API_KEY} version="weekly">
+          <GoogleMap
+            defaultCenter={mapCenter}
+            defaultZoom={10}
+            mapId="DEMO_MAP_ID"
+            style={{ width: '100%', height: '100dvh' }}
+            colorScheme="DARK"
+            styles={reclaimGoogleMapStyles}
+            disableDefaultUI
+            gestureHandling="greedy"
+            clickableIcons={false}
+            internalUsageAttributionIds={['gmp_mcp_codeassist_v1_aistudio']}
+          >
+            <GoogleMapBridge onReady={handleMapReady} />
+            <GoogleRouteOverlay
+              mode={mapMode}
+              path={routePathWithStops}
+              alternativePath={selectedDestination.alternativePath}
+              sheetState={sheetState}
+            />
+            <AdvancedMarker position={vehiclePosition}>
+              <VehicleMarker activeNavigation={activeNavigation} />
+            </AdvancedMarker>
+            <AdvancedMarker position={selectedDestination.position}>
+              <DestinationMarker />
+            </AdvancedMarker>
+            {mapMode === 'aiRoute' && (
               <>
-                {/* Custom numbered markers for optimized stops */}
-                {optimizedRoute.stops.map((stop, index) => (
-                  <AdvancedMarker key={`stop-${index}-${stop.id}`} position={{ lat: stop.lat, lng: stop.lng }}>
-                    <div className="relative flex items-center justify-center group">
-                      <div className="absolute rounded-full bg-blue-500/35 animate-ping w-8 h-8" />
-                      <div className="relative w-8 h-8 rounded-full bg-blue-600 border-[3px] border-slate-900 flex items-center justify-center text-xs font-bold text-white shadow-xl hover:scale-110 transition-transform">
-                        {index + 1}
-                      </div>
-                      {/* Hover text / Floating popup badge */}
-                      <div className="absolute -top-11 bg-slate-900/90 border border-white/10 px-3 py-1 rounded-xl text-[11px] text-white whitespace-nowrap shadow-2xl pointer-events-none font-semibold flex items-center gap-1.5 backdrop-blur-sm transition-all group-hover:scale-105">
-                        <span className="bg-blue-500/20 text-blue-400 w-4.5 h-4.5 rounded-full flex items-center justify-center text-[10px] font-bold">{index + 1}</span>
-                        {stop.title}
-                      </div>
-                    </div>
+                <AdvancedMarker position={{ lat: 37.62, lng: -122.35 }}>
+                  <RouteChoiceMarker label="Best Route" detail="24 min" tone="blue" />
+                </AdvancedMarker>
+                {sheetState === 'expanded' && (
+                  <AdvancedMarker position={{ lat: 37.59, lng: -122.22 }}>
+                    <RouteChoiceMarker label="Alternative" detail="31 min" tone="slate" />
                   </AdvancedMarker>
-                ))}
-
-                {/* Extra Starting/Origin Marker */}
-                <AdvancedMarker position={origin}>
-                  <div className="relative flex items-center justify-center group">
-                    <div className="relative w-7 h-7 rounded-full bg-emerald-500 border-2 border-slate-950 flex items-center justify-center text-xs font-bold text-white shadow-lg">
-                      S
-                    </div>
-                    <div className="absolute -top-10 bg-slate-900/95 border border-white/10 px-2.5 py-1 rounded-lg text-[10px] text-emerald-400 whitespace-nowrap shadow-xl font-bold">
-                      STARTING POINT
-                    </div>
-                  </div>
-                </AdvancedMarker>
-
-                {/* Render dynamic sequential legs connecting the route */}
-                {optimizedRoute.stops.map((stop, index) => {
-                  const legOrigin = index === 0 ? origin : {
-                    lat: optimizedRoute.stops[index - 1].lat,
-                    lng: optimizedRoute.stops[index - 1].lng
-                  };
-                  const legDest = { lat: stop.lat, lng: stop.lng };
-                  return (
-                    <RouteDisplay 
-                      key={`leg-${index}-${stop.id}`} 
-                      origin={legOrigin} 
-                      destination={legDest} 
-                    />
-                  );
-                })}
-              </>
-            ) : !showRoutePlanner ? (
-              <>
-                <AdvancedMarker position={destination}>
-                  <Pin background="#4b8eff" glyphColor="#fff" borderColor="#031427" />
-                </AdvancedMarker>
-                <AdvancedMarker position={origin}>
-                   <Pin background="#4edea3" glyphColor="#003824" borderColor="#003824" />
-                </AdvancedMarker>
-                
-                <RouteDisplay origin={origin} destination={destination} />
-              </>
-            ) : null}
-
-            {/* AI Route Planner custom interactive markers in Google Map */}
-            {showRoutePlanner && (
-              <>
-                {plannerWaypoints.map((wp, idx) => (
-                  <AdvancedMarker
-                    key={`wp-marker-${wp.id}`}
-                    position={{ lat: wp.lat, lng: wp.lng }}
-                  >
-                    <div className="relative flex items-center justify-center group">
-                      <div className="absolute rounded-full bg-indigo-500/35 animate-ping w-8 h-8" />
-                      <div className="relative w-8 h-8 rounded-full bg-indigo-600 border-[3px] border-slate-950 flex items-center justify-center text-xs font-bold text-white shadow-xl hover:scale-110 transition-transform">
-                        {idx + 1}
-                      </div>
-                      <div className="absolute -top-11 bg-slate-900/90 border border-white/10 px-3 py-1 rounded-xl text-[11px] text-white whitespace-nowrap shadow-2xl pointer-events-none font-semibold flex items-center gap-1.5 backdrop-blur-sm transition-all group-hover:scale-105">
-                        <span className="bg-indigo-500/25 text-indigo-400 w-4.5 h-4.5 rounded-full flex items-center justify-center text-[10px] font-bold">{idx + 1}</span>
-                        {wp.name}
-                      </div>
-                    </div>
-                  </AdvancedMarker>
-                ))}
-
-                {plannerWaypoints.slice(0, -1).map((wp, idx) => {
-                  const nextWp = plannerWaypoints[idx + 1];
-                  return (
-                    <RouteDisplay 
-                      key={`planner-leg-${idx}`} 
-                      origin={{ lat: wp.lat, lng: wp.lng }} 
-                      destination={{ lat: nextWp.lat, lng: nextWp.lng }} 
-                    />
-                  );
-                })}
+                )}
               </>
             )}
-
-            {showEVStations && evStations.map((station) => (
-              <AdvancedMarker 
-                key={`ev-marker-${station.id}`} 
-                position={{ lat: station.lat, lng: station.lng }}
-                onClick={() => setSelectedStation(station)}
-              >
-                <div className="relative flex items-center justify-center cursor-pointer group">
-                  <div className={cn(
-                    "absolute rounded-full w-8 h-8 animate-ping opacity-20",
-                    station.status === 'available' ? "bg-emerald-500" : station.status === 'busy' ? "bg-amber-500" : "bg-red-500"
-                  )} />
-                  <div className={cn(
-                    "relative w-7 h-7 rounded-xl border border-slate-950 flex items-center justify-center text-white shadow-2xl hover:scale-115 transition-transform",
-                    station.status === 'available' 
-                      ? "bg-emerald-500 hover:bg-emerald-400" 
-                      : station.status === 'busy' 
-                        ? "bg-amber-500 hover:bg-amber-400" 
-                        : "bg-slate-700 opacity-80"
-                  )}>
-                    <Plug className="w-3.5 h-3.5 text-white" />
-                  </div>
-                  
-                  {/* Floating summary bubble */}
-                  <div className="absolute -top-11 bg-slate-950/95 border border-white/10 px-3 py-1 rounded-xl text-[10px] font-bold text-white whitespace-nowrap shadow-2xl flex items-center gap-2 backdrop-blur-sm pointer-events-none group-hover:scale-105 transition-all">
-                    <span className={cn(
-                      "w-1.5 h-1.5 rounded-full animate-pulse",
-                      station.status === 'available' ? "bg-emerald-400" : station.status === 'busy' ? "bg-amber-400" : "bg-red-500"
-                    )} />
-                    <span>{station.name}</span>
-                    <span className="opacity-40">|</span>
-                    <span className="text-emerald-400 font-mono">{station.portsFree}/{station.totalPorts} Free</span>
-                  </div>
-                </div>
+            {mapMode === 'parking' &&
+              favoriteStops.map((stop) => (
+                <AdvancedMarker key={stop.id} position={stop.position}>
+                  <FavoriteStopMarker stop={stop} />
+                </AdvancedMarker>
+              ))}
+            {mapMode === 'evStations' &&
+              evStations.map((station) => (
+                <AdvancedMarker key={station.id} position={station.position}>
+                  <EVStationMarker station={station} />
+                </AdvancedMarker>
+              ))}
+            {selectedEvStop && mapMode !== 'evStations' && (
+              <AdvancedMarker position={selectedEvStop.position}>
+                <EVStationMarker station={selectedEvStop} />
               </AdvancedMarker>
-            ))}
-
-            {showParkingFinder && parkingLots.map((lot) => (
-              <AdvancedMarker 
-                key={`park-marker-${lot.id}`} 
-                position={{ lat: lot.lat, lng: lot.lng }}
-                onClick={() => setSelectedParkingLot(lot)}
-              >
-                <div className="relative flex items-center justify-center cursor-pointer group">
-                  <div className={cn(
-                    "absolute rounded-full w-8 h-8 animate-ping opacity-20",
-                    lot.currentPredictedOccupancy > 80 ? "bg-red-500" : lot.currentPredictedOccupancy > 55 ? "bg-amber-500" : "bg-emerald-500"
-                  )} />
-                  <div className={cn(
-                    "relative w-7 h-7 rounded-xl border border-slate-950 flex items-center justify-center text-white shadow-2xl hover:scale-115 transition-transform font-bold text-xs",
-                    lot.currentPredictedOccupancy > 80 
-                      ? "bg-red-600 hover:bg-red-500" 
-                      : lot.currentPredictedOccupancy > 55 
-                        ? "bg-amber-500 hover:bg-amber-400" 
-                        : "bg-emerald-500 hover:bg-emerald-400"
-                  )}>
-                    P
-                  </div>
-                  
-                  {/* Floating summary bubble */}
-                  <div className="absolute -top-11 bg-slate-950/95 border border-white/10 px-3 py-1 rounded-xl text-[10px] font-bold text-white whitespace-nowrap shadow-2xl flex items-center gap-2 backdrop-blur-sm pointer-events-none group-hover:scale-105 transition-all">
-                    <span className={cn(
-                      "w-1.5 h-1.5 rounded-full animate-pulse",
-                      lot.currentPredictedOccupancy > 80 ? "bg-red-400" : lot.currentPredictedOccupancy > 55 ? "bg-amber-400" : "bg-emerald-400"
-                    )} />
-                    <span className="font-extrabold">{lot.name}</span>
-                    <span className="opacity-40 font-normal">|</span>
-                    <span className="text-blue-450 font-mono font-extrabold">{lot.freeSpacesPredicted} free</span>
-                  </div>
-                </div>
+            )}
+            {selectedFavoriteStop && mapMode !== 'parking' && (
+              <AdvancedMarker position={selectedFavoriteStop.position}>
+                <FavoriteStopMarker stop={selectedFavoriteStop} />
               </AdvancedMarker>
-            ))}
-          </Map>
+            )}
+            {mapMode === 'cost' &&
+              costMarkers.map((marker) => (
+                <AdvancedMarker key={marker.id} position={marker.position}>
+                  <CostMapMarker marker={marker} />
+                </AdvancedMarker>
+              ))}
+            {mapMode === 'cost' && (
+              <AdvancedMarker position={{ lat: 37.55, lng: -122.255 }}>
+                <RouteChoiceMarker label="$12.80 total" detail="$0.47/mi" tone="amber" />
+              </AdvancedMarker>
+            )}
+            {mapMode === 'cost' && sheetState === 'expanded' && (
+              <AdvancedMarker position={{ lat: 37.69, lng: -122.312 }}>
+                <RouteChoiceMarker label="Eco route" detail="Save $1.10" tone="slate" />
+              </AdvancedMarker>
+            )}
+          </GoogleMap>
         </APIProvider>
       ) : (
-        /* GORGEOUS DESIGNED HAND-CRAFTED DEMO TACTICAL MAP ENVIRONMENT */
-        <div className="absolute inset-0 bg-[#070b16] overflow-hidden select-none flex flex-col font-sans">
-          {/* Grid Background */}
-          <div className="absolute inset-0 opacity-20 bg-[linear-gradient(to_right,#1e293b_1px,transparent_1px),linear-gradient(to_bottom,#1e293b_1px,transparent_1px)] bg-[size:38px_38px]" />
-          <div className="absolute inset-0 bg-radial-gradient from-transparent via-[#090d18]/40 to-[#04060b]" />
+        <MockMapCanvas
+          mode={mapMode}
+          sheetState={sheetState}
+          view={mockView}
+          cameraMode={cameraMode}
+          activeNavigation={activeNavigation}
+          routePath={routePathWithStops}
+          alternativePath={selectedDestination.alternativePath}
+          destination={selectedDestination.position}
+          addedEvStop={selectedEvStop}
+          selectedFavoriteStop={selectedFavoriteStop}
+          onViewChange={setMockView}
+          onManualPan={handleManualMapExplore}
+          onZoomInteraction={handleZoomInteraction}
+        />
+      )}
 
-          {/* Handdrawn SF Stylized Coastlines SVG & Connections */}
-          <svg className="absolute inset-0 w-full h-full text-slate-800" viewBox="0 0 800 600" preserveAspectRatio="none">
-            {/* SF Water Base representation */}
-            <path d="M 0,0 Q 250,70 380,105 T 580,55 T 800,10 H 800 V 600 H 520 Q 440,380 490,240 T 380,150 Z" fill="#0b172a" opacity="0.35" />
-
-            {/* Grid highway markers */}
-            <path d="M 120,600 Q 250,450 380,300 T 500,0" fill="none" stroke="#253552" strokeWidth="2" strokeDasharray="5 5" opacity="0.4" />
-            <path d="M 0,220 C 300,260 400,200 800,180" fill="none" stroke="#1c2b46" strokeWidth="1.5" opacity="0.3" />
-
-            {/* Golden Gate Bridge link */}
-            <line x1="280" y1="80" x2="310" y2="10" stroke="#ef4444" strokeWidth="2.5" opacity="0.3" />
-
-            {/* SVG connected line legs for Route Planner waypoints */}
-            {showRoutePlanner && plannerWaypoints.length >= 2 && (
-              <polyline
-                points={plannerWaypoints.map(wp => {
-                  const { x, y } = mapCoordsToPercent(wp.lat, wp.lng);
-                  return `${parseFloat(x) * 8.0},${parseFloat(y) * 6.0}`;
-                }).join(' ')}
-                fill="none"
-                stroke="#6366f1"
-                strokeWidth="4"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                style={{ filter: 'drop-shadow(0px 0px 8px #6366f1)' }}
-                className="animate-pulse"
-              />
+      <div
+        data-map-ui="true"
+        className={cn(
+          'absolute left-3 right-3 z-30 transition-all duration-300 ease-out sm:left-5 sm:right-5',
+          isManualExplore || activeNavigation ? 'top-[6.25rem] sm:top-[6.5rem]' : 'top-[4.65rem] sm:top-20'
+        )}
+      >
+        <div className="mx-auto max-w-[460px]">
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              handleDestinationSelect(filteredDestinations[0] ?? mockDestinations[0]);
+            }}
+            className="relative"
+          >
+            <span className="pointer-events-none absolute left-1.5 top-1/2 z-10 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full border border-primary/20 bg-surface-container-low text-primary shadow-ambient">
+              <Search className="h-3.5 w-3.5" />
+            </span>
+            <input
+              value={searchQuery}
+              onChange={(event) => {
+                setSearchQuery(event.target.value);
+                setActivePanel('search');
+              }}
+              onFocus={() => setActivePanel('search')}
+              placeholder="Where to?"
+              className="h-11 w-full rounded-full border border-outline-variant/45 bg-surface-container-lowest/88 pl-12 pr-11 text-[13px] font-medium text-on-surface shadow-ambient backdrop-blur-2xl outline-none transition placeholder:text-slate-500 focus:border-primary/35 focus:bg-surface-container-lowest"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchQuery('');
+                  setActivePanel('search');
+                }}
+                aria-label="Clear destination search"
+                className="absolute right-1.5 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full text-slate-300 transition hover:bg-primary/10"
+              >
+                <X className="h-4 w-4" />
+              </button>
             )}
+          </form>
 
-            {/* SVG connected lines for Standard origin/destination leg if planner inactive */}
-            {!showRoutePlanner && !showEVStations && !showParkingFinder && !optimizedRoute && (
-              <line
-                x1={parseFloat(mapCoordsToPercent(origin.lat, origin.lng).x) * 8.0}
-                y1={parseFloat(mapCoordsToPercent(origin.lat, origin.lng).y) * 6.0}
-                x2={parseFloat(mapCoordsToPercent(destination.lat, destination.lng).x) * 8.0}
-                y2={parseFloat(mapCoordsToPercent(destination.lat, destination.lng).y) * 6.0}
-                stroke="#10b981"
-                strokeWidth="3.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                style={{ filter: 'drop-shadow(0px 0px 6px #10b981)' }}
-              />
-            )}
-
-            {/* SVG connected line legs for scheduling optimizedRoute stops */}
-            {optimizedRoute && (
-              <polyline
-                points={[origin, ...optimizedRoute.stops].map(wp => {
-                  const { x, y } = mapCoordsToPercent(wp.lat, wp.lng);
-                  return `${parseFloat(x) * 8.0},${parseFloat(y) * 6.0}`;
-                }).join(' ')}
-                fill="none"
-                stroke="#3b82f6"
-                strokeWidth="3.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                style={{ filter: 'drop-shadow(0px 0px 6px #3b82f6)' }}
-              />
-            )}
-          </svg>
-
-          {/* Sandbox Indicator Overlay */}
-          <div className="absolute top-4 w-full text-center pointer-events-none flex flex-col items-center">
-            <div className="bg-slate-950/90 backdrop-blur-md border border-slate-800 px-4 py-1.5 rounded-full flex items-center gap-2 text-[10px] font-black tracking-widest text-[#4edea3] uppercase shadow-[0_5px_15px_rgba(0,0,0,0.5)]">
-              <span className="w-1.5 h-1.5 rounded-full bg-[#4edea3] animate-pulse" />
-              HUD NAVIGATION SIMULATION GRID
+          {activePanel === 'search' && (
+            <div className="mt-2 overflow-hidden rounded-[22px] border border-outline-variant/45 bg-surface-container-lowest/92 p-1.5 shadow-ambient-lg backdrop-blur-2xl">
+              {filteredDestinations.map((destination) => (
+                <button
+                  key={destination.id}
+                  type="button"
+                  onClick={() => handleDestinationSelect(destination)}
+                  className="flex min-h-12 w-full items-center gap-2.5 rounded-[18px] px-2.5 py-2 text-left transition hover:bg-primary/10 active:scale-[0.99]"
+                >
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-primary/20 bg-primary/10 text-primary">
+                    <MapPin className="h-3.5 w-3.5" />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[13px] font-semibold text-on-surface">{destination.name}</span>
+                    <span className="mt-0.5 block truncate text-[11px] font-medium text-slate-500">
+                      {destination.eta} - {destination.distance} - {destination.traffic}
+                    </span>
+                  </span>
+                </button>
+              ))}
             </div>
-          </div>
+          )}
+        </div>
+      </div>
 
-          {/* Absolute Positioned Markers in Simulator */}
-          <div className="absolute inset-0 pointer-events-none">
-            {/* Standard Origin & Destination */}
-            {!showRoutePlanner && (
-              <>
-                <div 
-                  className="absolute pointer-events-auto transform -translate-x-1/2 -translate-y-1/2 cursor-pointer group"
-                  style={{ 
-                    left: mapCoordsToPercent(destination.lat, destination.lng).x, 
-                    top: mapCoordsToPercent(destination.lat, destination.lng).y 
-                  }}
+      <div
+        className={cn(
+          'pointer-events-none absolute left-3 right-3 z-20 transition-all duration-300 ease-out sm:left-5 sm:right-5',
+          isManualExplore || activeNavigation ? 'top-[9.95rem] sm:top-[10.25rem]' : 'top-[8.35rem] sm:top-36'
+        )}
+      >
+        <div
+          data-map-ui="true"
+          className="pointer-events-auto mx-auto grid w-56 max-w-full grid-cols-4 gap-1 rounded-[22px] border border-outline-variant/45 bg-surface-container-lowest/88 p-1 shadow-ambient backdrop-blur-2xl"
+        >
+          {toolChips.map((tool) => {
+            const Icon = tool.icon;
+            const isActive = mapMode === tool.key;
+
+            return (
+              <button
+                key={tool.key}
+                type="button"
+                aria-label={tool.label}
+                title={tool.label}
+                onClick={() => handleModeChange(tool.key)}
+                className={cn(
+                  'flex h-10 min-w-0 items-center justify-center rounded-[17px] border text-center transition duration-200 ease-out active:scale-[0.98]',
+                  isActive
+                    ? 'border-primary/25 bg-primary/10 text-primary shadow-ambient'
+                    : 'border-transparent bg-transparent text-slate-300 hover:bg-primary/10'
+                )}
+              >
+                <span
+                  className={cn(
+                    'flex h-6 w-6 items-center justify-center rounded-full border',
+                    isActive ? 'border-slate-300/55 bg-white text-blue-600' : 'border-white/[0.08] bg-white/[0.04] text-slate-400'
+                  )}
                 >
-                  <div className="w-7 h-7 rounded-xl bg-blue-600 border border-slate-950 flex items-center justify-center text-white text-[10px] font-black shadow-2xl hover:scale-115 transition-transform">
-                    D
-                  </div>
-                  <div className="absolute -top-9 left-1/2 -translate-x-1/2 bg-slate-950 border border-white/10 px-2 py-0.5 rounded text-[9px] text-blue-300 font-extrabold whitespace-nowrap">
-                    DESTINATION
-                  </div>
-                </div>
+                  <Icon className="h-3.5 w-3.5" />
+                </span>
+                <span className="sr-only">{tool.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
 
-                <div 
-                  className="absolute pointer-events-auto transform -translate-x-1/2 -translate-y-1/2 cursor-pointer group"
-                  style={{ 
-                    left: mapCoordsToPercent(origin.lat, origin.lng).x, 
-                    top: mapCoordsToPercent(origin.lat, origin.lng).y 
-                  }}
-                >
-                  <div className="w-7 h-7 rounded-xl bg-emerald-600 border border-slate-950 flex items-center justify-center text-white text-[10px] font-black shadow-2xl hover:scale-115 transition-transform">
-                    S
-                  </div>
-                  <div className="absolute -top-9 left-1/2 -translate-x-1/2 bg-slate-950 border border-white/10 px-2 py-0.5 rounded text-[9px] text-emerald-300 font-extrabold whitespace-nowrap">
-                    STARTING POINT
-                  </div>
-                </div>
-              </>
-            )}
+      {(isManualExplore || activeNavigation) && (
+        <div
+          data-map-ui="true"
+          className="pointer-events-auto absolute right-3 top-[4.45rem] z-40 transition-all duration-300 ease-out sm:right-5 sm:top-[4.8rem]"
+        >
+          <MapStatePill icon={MapStateIcon} label={mapStateLabel} active={isManualExplore || activeNavigation} />
+        </div>
+      )}
 
-            {/* EV Charging Stations */}
-            {showEVStations && evStations.map(station => (
-              <div 
-                key={`sim-ev-${station.id}`}
-                onClick={() => setSelectedStation(station)}
-                className="absolute pointer-events-auto transform -translate-x-1/2 -translate-y-1/2 cursor-pointer group"
-                style={{ 
-                  left: mapCoordsToPercent(station.lat, station.lng).x, 
-                  top: mapCoordsToPercent(station.lat, station.lng).y 
-                }}
-              >
-                <div className={cn(
-                  "relative w-7 h-7 rounded-xl border border-slate-950 flex items-center justify-center text-white shadow-xl hover:scale-115 transition-transform",
-                  station.status === 'available' ? "bg-emerald-500" : "bg-amber-500"
-                )}>
-                  <Plug className="w-3.5 h-3.5 text-white" />
-                </div>
-                {/* Float-over label */}
-                <div className="absolute -top-11 left-1/2 -translate-x-1/2 bg-slate-950/95 border border-white/10 px-3 py-1 rounded-xl text-[10px] font-bold text-white whitespace-nowrap shadow-2xl flex items-center gap-2 backdrop-blur-sm pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity z-50">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                  <span>{station.name}</span>
-                  <span className="text-emerald-400 font-mono">{station.portsFree}/{station.totalPorts} Free</span>
-                </div>
-              </div>
-            ))}
+      <div
+        data-map-ui="true"
+        className={cn('absolute right-3 z-30 flex flex-col items-end gap-2 transition-all duration-300 ease-out sm:right-5', controlBottomClass)}
+      >
+        <MapControlGroup className={cn(sheetState === 'expanded' && 'hidden sm:block')}>
+          <MapControlButton icon={Plus} ariaLabel="Zoom in" onClick={handleZoomIn} />
+          <MapControlButton icon={Minus} ariaLabel="Zoom out" onClick={handleZoomOut} />
+        </MapControlGroup>
+        <MapControlGroup>
+          <MapControlButton
+            icon={LocateFixed}
+            label={recenterControlLabel}
+            ariaLabel={activeNavigation && !followCar ? 'Center map on vehicle' : 'Center map'}
+            onClick={handleRecenter}
+            active={recenterIsPrimary}
+          />
+        </MapControlGroup>
+      </div>
 
-            {/* Predictive Parking Lots */}
-            {showParkingFinder && parkingLots.map(lot => (
-              <div 
-                key={`sim-park-${lot.id}`}
-                onClick={() => setSelectedParkingLot(lot)}
-                className="absolute pointer-events-auto transform -translate-x-1/2 -translate-y-1/2 cursor-pointer group"
-                style={{ 
-                  left: mapCoordsToPercent(lot.lat, lot.lng).x, 
-                  top: mapCoordsToPercent(lot.lat, lot.lng).y 
-                }}
-              >
-                <div className={cn(
-                  "w-7 h-7 rounded-xl border border-slate-950 flex items-center justify-center text-white font-black text-xs shadow-xl hover:scale-115 transition-transform",
-                  lot.currentPredictedOccupancy > 80 ? "bg-red-600" : lot.currentPredictedOccupancy > 55 ? "bg-amber-500" : "bg-emerald-500"
-                )}>
-                  P
-                </div>
-                <div className="absolute -top-11 left-1/2 -translate-x-1/2 bg-slate-950/95 border border-white/10 px-3 py-1 rounded-xl text-[10px] font-bold text-white whitespace-nowrap shadow-2xl flex items-center gap-2 backdrop-blur-sm pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity z-50">
-                  <span className="font-extrabold">{lot.name}</span>
-                  <span className="text-blue-300 font-mono">{lot.freeSpacesPredicted} free</span>
-                </div>
-              </div>
-            ))}
-
-            {/* AI Route Planner Waypoints */}
-            {showRoutePlanner && plannerWaypoints.map((wp, idx) => (
-              <div 
-                key={`sim-wp-${wp.id}`}
-                className="absolute pointer-events-auto transform -translate-x-1/2 -translate-y-1/2 cursor-pointer group"
-                style={{ 
-                  left: mapCoordsToPercent(wp.lat, wp.lng).x, 
-                  top: mapCoordsToPercent(wp.lat, wp.lng).y 
-                }}
-              >
-                <div className="relative w-8 h-8 rounded-full bg-indigo-600 border-[3px] border-slate-950 flex items-center justify-center text-xs font-black text-white shadow-2xl hover:scale-115 transition-transform">
-                  {idx + 1}
-                </div>
-                <div className="absolute -top-10 left-1/2 -translate-x-1/2 bg-slate-950 border border-white/15 px-2.5 py-1 rounded-xl text-[10px] font-bold text-white whitespace-nowrap shadow-2xl backdrop-blur-sm">
-                  <span className="bg-indigo-500/20 text-indigo-400 px-1 rounded font-mono mr-1">{idx+1}</span>
-                  <span>{wp.name}</span>
-                </div>
-              </div>
-            ))}
-
-            {/* Calendar Stops Optimized */}
-            {optimizedRoute && optimizedRoute.stops.map((stop, idx) => (
-              <div 
-                key={`sim-stop-${stop.id}`}
-                className="absolute pointer-events-auto transform -translate-x-1/2 -translate-y-1/2 cursor-pointer group"
-                style={{ 
-                  left: mapCoordsToPercent(stop.lat, stop.lng).x, 
-                  top: mapCoordsToPercent(stop.lat, stop.lng).y 
-                }}
-              >
-                <div className="relative w-7 h-7 rounded-full bg-blue-600 border-2 border-slate-950 flex items-center justify-center text-[10px] font-bold text-white shadow-xl hover:scale-115 transition-transform">
-                  {idx + 1}
-                </div>
-                <div className="absolute -top-10 left-1/2 -translate-x-1/2 bg-slate-950 border border-white/15 px-2 py-0.5 rounded-lg text-[9.5px] text-white whitespace-nowrap">
-                  {stop.title}
-                </div>
-              </div>
-            ))}
+      {transientToast && (
+        <div className="pointer-events-none absolute inset-0 z-[80] flex items-center justify-center px-6">
+          <div
+            className="max-w-[320px] rounded-3xl border border-outline-variant/45 bg-surface-container-lowest/92 px-5 py-4 text-center shadow-ambient-lg backdrop-blur-2xl"
+            style={{ boxShadow: `var(--shadow-ambient-lg), 0 0 0 1px ${toneAccentColors[transientToast.tone]}22` }}
+          >
+            <div
+              className={cn(
+                'mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-full border',
+                toneClasses[transientToast.tone].icon
+              )}
+            >
+              <Check className="h-5 w-5" />
+            </div>
+            <p className="text-[15px] font-semibold text-white">{transientToast.title}</p>
+            <p className="mt-1 text-[12px] font-medium leading-relaxed text-slate-400">{transientToast.detail}</p>
           </div>
         </div>
       )}
 
-      {/* Floating Action Buttons */}
-      <div className="absolute top-24 right-4 flex flex-col gap-3 z-10">
-        {[Layers, LocateFixed, Plus].map((Icon, idx) => (
-          <button key={idx} className="w-12 h-12 bg-slate-900 rounded-xl flex items-center justify-center border border-white/10 text-slate-400 hover:text-blue-400 transition-colors shadow-lg">
-            <Icon className="w-5 h-5" />
-          </button>
-        ))}
-      </div>
-
-      {/* Primary Dynamic Route Optimizer/Smart Routing advisor triggers container */}
-      <div className="absolute top-24 left-4 right-20 z-10 flex max-w-[calc(100vw-6rem)] flex-col gap-2 md:right-auto md:max-w-[calc(100vw-9rem)]">
-        <div className="flex flex-nowrap gap-2.5 overflow-x-auto pb-2 scrollbar-none [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden xl:flex-wrap xl:overflow-visible">
-          <button 
-            onClick={handleOptimizeRoutes}
-            disabled={isOptimizing}
-            className={cn(
-              "h-12 px-5 bg-slate-900 text-white rounded-2xl flex items-center gap-2.5 border font-semibold shadow-2xl transition-all duration-300 backdrop-blur-md hover:scale-102 flex-shrink-0",
-              isOptimizing ? "border-amber-500/50 text-amber-400 hover:scale-100" : "border-blue-500/20 hover:border-blue-500/50 hover:shadow-[0_0_20px_rgba(59,130,246,0.3)]"
-            )}
-          >
-            {isOptimizing ? (
-              <>
-                <BrainCircuit className="w-5 h-5 text-amber-400 animate-pulse" />
-                <span className="text-sm font-bold tracking-wide uppercase text-amber-400/90">Sequencing stops with AI...</span>
-              </>
-            ) : (
-              <>
-                <div className="w-2.5 h-2.5 rounded-full bg-blue-500 animate-ping absolute -top-0.5 -right-0.5" />
-                <BrainCircuit className="w-5 h-5 text-blue-400" />
-                <span className="text-sm font-bold tracking-wide uppercase">Optimize Multi-stop Commute</span>
-                {routableEventsCount > 0 && (
-                  <span className="bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded-md text-[11px] font-bold ml-1">
-                    {routableEventsCount}
-                  </span>
-                )}
-              </>
-            )}
-          </button>
-
-          {/* AI-driven Predictive Smart Routing Panel Toggle */}
-          <button
-            onClick={() => {
-              const nextVal = !showSmartRouting;
-              setShowSmartRouting(nextVal);
-              setShowCostEstimator(false);
-              setShowEVStations(false);
-              setShowParkingFinder(false);
-              if (nextVal) {
-                setOptimizedRoute(null); // Clear sequence to focus on departure advisory
-                setShowETA(false);
-              } else {
-                setShowETA(true);
-              }
-            }}
-            className={cn(
-              "h-12 px-5 bg-slate-900 text-white rounded-2xl flex items-center gap-2.5 border font-semibold shadow-2xl transition-all duration-300 backdrop-blur-md hover:scale-102 flex-shrink-0",
-              showSmartRouting ? "border-sky-500 text-sky-400" : "border-white/10 text-slate-300 hover:text-white"
-            )}
-          >
-            <Sparkles className="w-4.5 h-4.5 text-sky-450" />
-            <span className="text-sm font-bold uppercase tracking-wider">Predictive Smart Routing</span>
-            {showSmartRouting && <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse ml-0.5" />}
-          </button>
-
-          {/* Trip Cost Estimator Toggle */}
-          <button
-            onClick={() => {
-              const nextVal = !showCostEstimator;
-              setShowCostEstimator(nextVal);
-              setShowSmartRouting(false);
-              setShowEVStations(false);
-              setShowParkingFinder(false);
-              if (nextVal) {
-                setOptimizedRoute(null);
-                setShowETA(false);
-              } else {
-                setShowETA(true);
-              }
-            }}
-            className={cn(
-              "h-12 px-5 bg-slate-900 text-white rounded-2xl flex items-center gap-2.5 border font-semibold shadow-2xl transition-all duration-300 backdrop-blur-md hover:scale-102 flex-shrink-0",
-              showCostEstimator ? "border-emerald-500 text-emerald-400" : "border-white/10 text-slate-300 hover:text-white"
-            )}
-          >
-            <Banknote className="w-4.5 h-4.5 text-emerald-400" />
-            <span className="text-sm font-bold uppercase tracking-wider">Trip Cost Estimator</span>
-            {showCostEstimator && <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse ml-0.5" />}
-          </button>
-
-          {/* EV Station Locator Toggle */}
-          <button
-            onClick={() => {
-              const nextVal = !showEVStations;
-              setShowEVStations(nextVal);
-              setShowSmartRouting(false);
-              setShowCostEstimator(false);
-              setShowParkingFinder(false);
-              if (nextVal) {
-                setOptimizedRoute(null);
-                setShowETA(false);
-              } else {
-                setShowETA(true);
-              }
-            }}
-            className={cn(
-              "h-12 px-5 bg-slate-900 text-white rounded-2xl flex items-center gap-2.5 border font-semibold shadow-2xl transition-all duration-300 backdrop-blur-md hover:scale-102 flex-shrink-0",
-              showEVStations ? "border-blue-500 text-sky-450" : "border-white/10 text-slate-300 hover:text-white"
-            )}
-          >
-            <Plug className="w-4.5 h-4.5 text-blue-405" />
-            <span className="text-sm font-bold uppercase tracking-wider">EV Stations</span>
-            {showEVStations && <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse ml-0.5" />}
-          </button>
-
-          {/* Predictive Parking Finder Toggle */}
-          <button
-            onClick={() => {
-              const nextVal = !showParkingFinder;
-              setShowParkingFinder(nextVal);
-              setShowSmartRouting(false);
-              setShowCostEstimator(false);
-              setShowEVStations(false);
-              setShowRoutePlanner(false);
-              if (nextVal) {
-                setOptimizedRoute(null);
-                setShowETA(false);
-              } else {
-                setShowETA(true);
-              }
-            }}
-            className={cn(
-              "h-12 px-5 bg-slate-900 text-white rounded-2xl flex items-center gap-2.5 border font-semibold shadow-2xl transition-all duration-300 backdrop-blur-md hover:scale-102 flex-shrink-0",
-              showParkingFinder ? "border-indigo-500 text-indigo-400" : "border-white/10 text-slate-300 hover:text-white"
-            )}
-          >
-            <Clock className="w-4.5 h-4.5 text-indigo-400" />
-            <span className="text-sm font-bold uppercase tracking-wider">Predictive Parking</span>
-            {showParkingFinder && <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse ml-0.5" />}
-          </button>
-
-          {/* AI Route Planner Toggle */}
-          <button
-            onClick={() => {
-              const nextVal = !showRoutePlanner;
-              setShowRoutePlanner(nextVal);
-              setShowSmartRouting(false);
-              setShowCostEstimator(false);
-              setShowEVStations(false);
-              setShowParkingFinder(false);
-              if (nextVal) {
-                setOptimizedRoute(null);
-                setShowETA(false);
-              } else {
-                setShowETA(true);
-              }
-            }}
-            className={cn(
-              "h-12 px-5 bg-slate-900 text-white rounded-2xl flex items-center gap-2.5 border font-semibold shadow-2xl transition-all duration-300 backdrop-blur-md hover:scale-102 flex-shrink-0",
-              showRoutePlanner ? "border-indigo-600 text-indigo-400" : "border-white/10 text-slate-300 hover:text-white"
-            )}
-          >
-            <Route className="w-4.5 h-4.5 text-indigo-400" />
-            <span className="text-sm font-bold uppercase tracking-wider">AI Route Planner</span>
-            {showRoutePlanner && <div className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse ml-0.5" />}
-          </button>
-        </div>
-
-        {errorText && (
-          <div className="max-w-sm bg-red-950/80 border border-red-500/30 text-red-400 px-4 py-3 rounded-xl flex items-center gap-2 text-xs font-medium shadow-lg">
-            <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0" />
-            <span>{errorText}</span>
-          </div>
+      <div
+        data-map-ui="true"
+        className={cn(
+          'absolute inset-x-3 z-[60] transition-all duration-300 ease-out sm:inset-x-auto sm:left-1/2 sm:w-[430px] sm:max-w-[calc(100vw-2rem)] sm:-translate-x-1/2',
+          sheetState === 'expanded'
+            ? 'bottom-[calc(5.75rem+env(safe-area-inset-bottom))] sm:bottom-6'
+            : 'bottom-[calc(5.75rem+env(safe-area-inset-bottom))] sm:bottom-6'
         )}
-      </div>
-
-      {/* Smart Routing Side Panel Drawer */}
-      <AnimatePresence>
-        {showSmartRouting && routingData && (
-          <motion.div
-            initial={{ opacity: 0, x: -100 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -100 }}
-            className="absolute left-4 right-4 top-40 bottom-24 z-30 flex w-auto flex-col gap-4 overflow-hidden rounded-3xl border border-white/10 bg-slate-950/95 p-5 text-white shadow-2xl backdrop-blur-md md:right-auto md:w-[420px]"
+      >
+        <section
+          aria-label={`${sheet.eyebrow} route details`}
+          className={cn(
+            'overflow-hidden rounded-[20px] border border-outline-variant/45 bg-surface-container-lowest/92 shadow-ambient-lg backdrop-blur-2xl transition-all duration-300 ease-out',
+            sheetState === 'expanded' ? 'max-h-[58dvh] sm:max-h-[56dvh]' : 'max-h-48'
+          )}
+          style={{ boxShadow: `var(--shadow-ambient-lg), 0 0 0 1px ${visual.routeColor}18` }}
+        >
+          <button
+            type="button"
+            aria-label={sheetState === 'expanded' ? 'Collapse route details' : 'Expand route details'}
+            onClick={() => setSheetState((current) => (current === 'expanded' ? 'collapsed' : 'expanded'))}
+            className="flex w-full justify-center px-4 pb-1 pt-2 transition duration-200 ease-out active:scale-[0.99]"
           >
-            {/* Top Border Glow */}
-            <div className="absolute inset-x-0 -top-px h-px bg-gradient-to-r from-transparent via-sky-500/50 to-transparent" />
-            
-            {/* Header */}
-            <div className="flex justify-between items-start">
-              <div>
-                <span className="text-[10px] font-bold text-sky-400 uppercase tracking-widest block">AI-driven predictive engine</span>
-                <h3 className="text-base font-extrabold flex items-center gap-2 mt-0.5">
-                  <Sparkles className="w-4.5 h-4.5 text-sky-300" /> Smart Routing Advisor
-                </h3>
-              </div>
+            <span className="h-0.5 w-8 rounded-full bg-white/18" />
+          </button>
+
+          {sheetState === 'collapsed' ? (
+            <div className="px-3.5 pb-3.5">
               <button
-                onClick={() => {
-                  setShowSmartRouting(false);
-                  setShowETA(true);
-                }}
-                className="w-7 h-7 rounded-lg bg-white/5 border border-white/5 hover:bg-white/10 flex items-center justify-center transition-colors text-slate-400 hover:text-white"
+                type="button"
+                onClick={() => setSheetState('expanded')}
+                className="block w-full text-left transition duration-200 ease-out active:scale-[0.99]"
               >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* Commute Summary Alert Banner */}
-            <div className="bg-slate-900/60 border border-white/5 p-3 rounded-2xl text-xs text-slate-350 leading-relaxed font-semibold">
-              {isLoadingRouting ? (
-                <div className="flex items-center gap-2 py-1 text-slate-400">
-                  <div className="w-3.5 h-3.5 rounded-full border border-sky-400 border-t-transparent animate-spin shrink-0" />
-                  <span>Computing predictive models...</span>
-                </div>
-              ) : (
-                routingData.commuteSummary
-              )}
-            </div>
-
-            {/* Traffic Condition Preset Selector */}
-            <div className="space-y-1.5">
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Set Predicted Traffic Pressure Profile</span>
-              <div className="grid grid-cols-4 gap-1.5 p-1 bg-slate-900/80 border border-white/5 rounded-xl">
-                {(['light', 'moderate', 'heavy', 'severe'] as const).map((prof) => (
-                  <button
-                    key={prof}
-                    disabled={isLoadingRouting}
-                    onClick={() => setSelectedTrafficProfile(prof)}
-                    className={cn(
-                      "py-1.5 rounded-lg text-[10px] font-extrabold uppercase transition-all tracking-wider shrink-0 text-center",
-                      selectedTrafficProfile === prof
-                        ? prof === 'light'
-                          ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
-                          : prof === 'moderate'
-                            ? "bg-amber-500/20 text-amber-400 border border-amber-500/30"
-                            : prof === 'heavy'
-                              ? "bg-orange-500/20 text-orange-400 border border-orange-500/30"
-                              : "bg-rose-500/25 text-rose-400 border border-rose-500/35"
-                        : "text-slate-400 hover:text-white bg-transparent border border-transparent"
-                    )}
-                  >
-                    {prof}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Scrollable list of advisories */}
-            <div className="flex-1 overflow-y-auto space-y-3 pr-1 custom-scrollbar">
-              {isLoadingRouting ? (
-                <div className="h-44 flex flex-col items-center justify-center gap-3 text-slate-400">
-                  <div className="w-8 h-8 rounded-full border-2 border-sky-500 border-t-transparent animate-spin" />
-                  <p className="text-xs font-semibold">Simulating real-time traffic telemetry...</p>
-                </div>
-              ) : (
-                routingData.advisories.map((adv) => (
-                  <div
-                    key={adv.id}
-                    className="bg-slate-900/40 border border-white/5 p-3 rounded-2xl flex flex-col gap-2 hover:border-white/10 transition-colors"
-                  >
-                    <div className="flex justify-between items-baseline gap-2">
-                      <h4 className="text-xs font-bold text-slate-100 truncate">{adv.title}</h4>
-                      <span className="text-[10px] font-mono text-slate-450 shrink-0 bg-white/5 px-1.5 py-0.5 rounded border border-white/5">
-                        Starts: {adv.time}
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={cn(
+                          'flex h-6 w-6 shrink-0 items-center justify-center rounded-full border',
+                          toneClasses[visual.tone].icon
+                        )}
+                      >
+                        <ActiveModeIcon className="h-3 w-3" />
                       </span>
+                      <p className="text-[8.5px] font-semibold uppercase tracking-[0.15em] text-slate-500">{sheet.eyebrow}</p>
                     </div>
-
-                    <div className="flex items-center gap-1.5 text-[10px] text-slate-400">
-                      <MapPin className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-                      <span className="truncate">{adv.location}</span>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-2 text-[10px] py-1 border-t border-b border-white/5 bg-slate-900/20 px-1 rounded-lg">
-                      <div className="flex justify-between">
-                        <span className="text-slate-500 font-medium">Clear Road:</span>
-                        <span className="text-slate-350 font-semibold">{adv.baseDuration}</span>
-                      </div>
-                      <div className="flex justify-between border-l border-white/5 pl-2">
-                        <span className="text-slate-500 font-medium font-semibold">In Traffic:</span>
-                        <span className={cn(
-                          "font-bold",
-                          selectedTrafficProfile === 'light' ? "text-emerald-400" : selectedTrafficProfile === 'moderate' ? "text-amber-450" : "text-rose-450"
-                        )}>{adv.trafficDuration}</span>
-                      </div>
-                    </div>
-
-                    {/* Highly-highlighted departure badge */}
-                    <div className="flex justify-between items-center bg-slate-900/90 border border-white/5 px-2.5 py-2 rounded-xl">
-                      <div className="flex flex-col">
-                        <span className="text-[8px] font-extrabold text-slate-500 uppercase tracking-wider leading-none">Smart Departure</span>
-                        <span className="text-sm font-black text-sky-400 mt-1 leading-none">{adv.suggestedDeparture}</span>
-                      </div>
-                      <span className={cn(
-                        "text-[9px] font-extrabold uppercase px-2 py-0.5 rounded-md",
-                        selectedTrafficProfile === 'light'
-                          ? "bg-emerald-500/10 text-emerald-405"
-                          : selectedTrafficProfile === 'moderate'
-                            ? "bg-amber-500/10 text-amber-405"
-                            : "bg-red-500/10 text-red-405"
-                      )}>
-                        {adv.trafficStatus}
-                      </span>
-                    </div>
-
-                    <p className="text-[10px] text-slate-400 leading-snug italic px-1 pt-0.5">
-                      💡 {adv.aiRecommendation}
-                    </p>
+                    <h2 className="mt-1.5 truncate text-[15px] font-semibold leading-tight text-white">{sheet.collapsedTitle}</h2>
+                    <p className="mt-1 truncate text-[12px] font-medium text-slate-300">{sheet.collapsedMeta}</p>
+                    <p className="mt-0.5 truncate text-[10.5px] font-medium text-slate-500">{sheet.collapsedStatus}</p>
                   </div>
-                ))
-              )}
-            </div>
+                  <span
+                    className="shrink-0 rounded-full border border-white/[0.075] bg-white/[0.035] px-2.5 py-0.5 text-[9.5px] font-semibold text-slate-200"
+                    style={{ color: visual.routeColor }}
+                  >
+                    {sheet.statusValue}
+                  </span>
+                </div>
+              </button>
 
-            {/* Sync Cockpit directly from Advisor list */}
-            <div className="pt-2 border-t border-white/5">
               <button
-                onClick={() => {
-                  addRecentAction({
-                    icon: 'sync',
-                    title: 'Smart Departures Synced',
-                    description: `Pushed traffic-aware schedules (${selectedTrafficProfile.toUpperCase()}) to MB Navigation`,
-                    time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                  });
-                  setSquareSyncApplied(true);
-                  setTimeout(() => setSquareSyncApplied(false), 3000);
-                }}
-                className={cn(
-                  "w-full h-11 rounded-xl text-xs font-bold uppercase tracking-widest transition-colors flex items-center justify-center gap-2",
-                  squareSyncApplied ? "bg-emerald-600 text-white" : "bg-sky-600 hover:bg-sky-500 text-white"
-                )}
+                type="button"
+                onClick={() => handleModeAction(collapsedActionLabel)}
+                className="mt-3 flex min-h-10 w-full items-center justify-center gap-2 rounded-[16px] bg-primary px-3 text-[10px] font-semibold uppercase tracking-[0.05em] text-on-primary shadow-ambient transition duration-200 ease-out active:scale-[0.98]"
               >
-                {squareSyncApplied ? (
-                  <>
-                    <Check className="w-4 h-4 text-white animate-pulse" />
-                    COCKPIT CALENDAR PREPPED
-                  </>
-                ) : (
-                  <>
-                    <Navigation className="w-4 h-4" />
-                    SYNC SMART DEPARTURES
-                  </>
-                )}
+                <PrimaryActionIcon className="h-3.5 w-3.5 shrink-0" />
+                {collapsedActionLabel}
               </button>
             </div>
-            
-          </motion.div>
-        )}
-
-        {showCostEstimator && (() => {
-          const costChartData = [
-            {
-              name: 'Eco Optimum',
-              cost: costFuelType === 'electricity' 
-                ? Math.round(((costDistance * 135) / 1000) * costUnitPrice * 100) / 100
-                : Math.round(((costDistance * 0.621371) / 38) * costUnitPrice * 100) / 100,
-            },
-            {
-              name: 'Normal Fleet',
-              cost: costFuelType === 'electricity' 
-                ? Math.round(((costDistance * 165) / 1000) * costUnitPrice * 100) / 100
-                : Math.round(((costDistance * 0.621371) / 28) * costUnitPrice * 100) / 100,
-            },
-            {
-              name: 'Demanding Drive',
-              cost: costFuelType === 'electricity' 
-                ? Math.round(((costDistance * 210) / 1000) * costUnitPrice * 100) / 100
-                : Math.round(((costDistance * 0.621371) / 18) * costUnitPrice * 100) / 100,
-            }
-          ];
-
-          return (
-            <motion.div
-              initial={{ opacity: 0, x: -100 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -100 }}
-              className="absolute left-4 right-4 top-40 bottom-24 z-30 flex w-auto flex-col gap-4 overflow-hidden rounded-3xl border border-white/10 bg-slate-950/95 p-5 text-white shadow-2xl backdrop-blur-md md:right-auto md:w-[420px]"
-            >
-              {/* Top Border Glow */}
-              <div className="absolute inset-x-0 -top-px h-px bg-gradient-to-r from-transparent via-emerald-500/50 to-transparent" />
-              
-              {/* Header */}
-              <div className="flex justify-between items-start">
-                <div>
-                  <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-widest block font-mono">MB Intelligent Costing</span>
-                  <h3 className="text-base font-extrabold flex items-center gap-2 mt-0.5">
-                    <Banknote className="w-4.5 h-4.5 text-emerald-350 animate-pulse" /> Powertrain Cost Estimator
-                  </h3>
+          ) : (
+            <div className="flex max-h-[calc(58dvh-1.5rem)] min-h-0 flex-col sm:max-h-[calc(56dvh-1.5rem)]">
+              <div className="border-b border-white/[0.065] px-4 pb-2.5">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={cn(
+                          'flex h-6 w-6 shrink-0 items-center justify-center rounded-full border',
+                          toneClasses[visual.tone].icon
+                        )}
+                      >
+                        <ActiveModeIcon className="h-3 w-3" />
+                      </span>
+                      <p className="text-[8.5px] font-semibold uppercase tracking-[0.15em] text-slate-500">{sheet.eyebrow}</p>
+                    </div>
+                    <h2 className="mt-1.5 truncate text-[17px] font-semibold leading-tight text-white">{sheet.title}</h2>
+                    <p className="mt-1 truncate text-[12px] font-medium text-slate-400">{sheet.subtitle}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setSheetState('collapsed')}
+                    aria-label="Close route details"
+                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-white/[0.075] bg-white/[0.035] text-slate-300 transition duration-200 ease-out active:scale-[0.96] hover:bg-white/[0.06]"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
                 </div>
-                <button
-                  onClick={() => {
-                    setShowCostEstimator(false);
-                    setShowETA(true);
-                  }}
-                  className="w-7 h-7 rounded-lg bg-white/5 border border-white/5 hover:bg-white/10 flex items-center justify-center transition-colors text-slate-400 hover:text-white"
+              </div>
+
+              <div className="min-h-0 flex-1 overflow-y-auto px-4 py-2.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                <div
+                  className={cn(
+                    'grid rounded-[16px] border border-white/[0.05] bg-white/[0.022] p-1',
+                    mapMode === 'aiRoute' ? 'grid-cols-4' : mapMode === 'cost' ? 'grid-cols-3' : 'grid-cols-2'
+                  )}
                 >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-
-              {/* Powertrain Select tabs */}
-              <div className="space-y-1.5">
-                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block font-medium">Select Powertrain Profile</span>
-                <div className="grid grid-cols-2 gap-1.5 p-1 bg-slate-900 border border-white/5 rounded-xl">
-                  <button
-                    onClick={() => handleFuelTypeChange('electricity')}
-                    className={cn(
-                      "py-1.5 rounded-lg text-[10.5px] font-black uppercase transition-all tracking-wider flex items-center justify-center gap-1.5",
-                      costFuelType === 'electricity'
-                        ? "bg-sky-600/20 text-sky-300 border border-sky-500/30"
-                        : "text-slate-400 hover:text-white bg-transparent border border-transparent"
-                    )}
-                  >
-                    <Zap className="w-3.5 h-3.5 text-sky-400" /> Electric (EQ)
-                  </button>
-                  <button
-                    onClick={() => handleFuelTypeChange('gasoline')}
-                    className={cn(
-                      "py-1.5 rounded-lg text-[10.5px] font-black uppercase transition-all tracking-wider flex items-center justify-center gap-1.5",
-                      costFuelType === 'gasoline'
-                        ? "bg-emerald-600/20 text-emerald-300 border border-emerald-500/30"
-                        : "text-slate-400 hover:text-white bg-transparent border border-transparent"
-                    )}
-                  >
-                    <Fuel className="w-3.5 h-3.5 text-emerald-400" /> Petrol / Hybrid
-                  </button>
-                </div>
-              </div>
-
-              {/* Scrollable parameters wrapper */}
-              <div className="flex-1 overflow-y-auto space-y-4 pr-1 custom-scrollbar">
-                
-                {/* Distance settings */}
-                <div className="bg-slate-900/40 p-3 border border-white/5 rounded-2xl space-y-2">
-                  <div className="flex justify-between items-baseline font-semibold text-xs">
-                    <span className="text-slate-400 flex items-center gap-1 uppercase tracking-wider text-[10px]"><Sliders className="w-3 h-3 text-slate-500" /> Trip Distance</span>
-                    <span className="text-white font-mono text-sm font-black">{costDistance} km</span>
-                  </div>
-                  <input 
-                    type="range" 
-                    min="5" 
-                    max="350" 
-                    step="5"
-                    value={costDistance} 
-                    onChange={(e) => setCostDistance(Number(e.target.value))}
-                    className="w-full accent-emerald-500 h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer"
-                  />
-                  
-                  {/* Micro-Presets for Mercedes Commutes */}
-                  <div className="flex gap-1.5 pt-1 overflow-x-auto pb-1">
-                    {[
-                      { label: 'City', val: 15 },
-                      { label: 'Office', val: 45 },
-                      { label: 'Bay Area', val: 110 },
-                      { label: 'Intercity', val: 240 }
-                    ].map((p, idx) => (
-                      <button
-                        key={idx}
-                        onClick={() => setCostDistance(p.val)}
-                        className={cn(
-                          "text-[9px] font-extrabold uppercase px-2 py-1 rounded bg-white/5 border text-slate-350 hover:text-white hover:bg-white/10 shrink-0",
-                          costDistance === p.val ? "border-emerald-500 text-emerald-450 bg-emerald-500/5" : "border-white/5"
-                        )}
-                      >
-                        {p.val}k ({p.label})
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Energy or Fuel Rate Prices */}
-                <div className="bg-slate-900/40 p-3 border border-white/5 rounded-2xl space-y-2">
-                  <div className="flex justify-between items-baseline font-semibold text-xs">
-                    <span className="text-slate-400 flex items-center gap-1 uppercase tracking-wider text-[10px]">
-                      {costFuelType === 'electricity' ? <Coins className="w-3 h-3 text-sky-400" /> : <Fuel className="w-3 h-3 text-emerald-400" />}
-                      {costFuelType === 'electricity' ? 'Utility Rate ($ / kWh)' : 'Gasoline ($ / Gallon)'}
-                    </span>
-                    <span className="text-white font-mono text-sm font-black">${costUnitPrice.toFixed(2)}</span>
-                  </div>
-                  <input 
-                    type="range" 
-                    min={costFuelType === 'electricity' ? '0.10' : '2.00'} 
-                    max={costFuelType === 'electricity' ? '0.90' : '8.00'} 
-                    step="0.01"
-                    value={costUnitPrice} 
-                    onChange={(e) => setCostUnitPrice(Number(e.target.value))}
-                    className="w-full accent-emerald-500 h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer"
-                  />
-                  <div className="flex justify-between text-[9px] text-slate-500 font-bold uppercase px-0.5">
-                    <span>{costFuelType === 'electricity' ? '$0.10 (Off-peak)' : '$2.00'}</span>
-                    <span>{costFuelType === 'electricity' ? '$0.90 (Supercharge)' : '$8.00'}</span>
-                  </div>
-                </div>
-
-                {/* Driving Intensity Profile */}
-                <div className="space-y-1.5">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block font-medium">Driving Efficiency Index</span>
-                  <div className="grid grid-cols-3 gap-1.5 p-1 bg-slate-900 border border-white/5 rounded-xl">
-                    {([
-                      { key: 'eco', label: 'ECO OPT', desc: 'Optimal D--' },
-                      { key: 'nominal', label: 'NORMAL', desc: 'Balanced' },
-                      { key: 'adverse', label: 'SEVERE', desc: 'Headwinds/Ice' }
-                    ] as const).map((p) => (
-                      <button
-                        key={p.key}
-                        onClick={() => setCostPattern(p.key)}
-                        className={cn(
-                          "py-1.5 rounded-lg text-[9.5px] font-black uppercase transition-all tracking-wider text-center flex flex-col",
-                          costPattern === p.key
-                            ? p.key === 'eco'
-                              ? "bg-emerald-600/20 text-emerald-400 border border-emerald-500/30 font-bold"
-                              : p.key === 'nominal'
-                              ? "bg-amber-600/20 text-amber-400 border border-amber-500/30 font-bold"
-                              : "bg-red-600/25 text-red-400 border border-red-500/35 font-bold"
-                            : "text-slate-400 hover:text-white bg-transparent border border-transparent"
-                        )}
-                      >
-                        <span>{p.label}</span>
-                        <span className="text-[7.5px] opacity-60 font-semibold lowercase tracking-none mt-0.5">{p.desc}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Advanced Alternate Comparison Mode Selector */}
-                <div className="bg-slate-900/50 p-3 border border-white/5 rounded-2xl space-y-2">
-                  <div className="flex justify-between items-center">
-                    <span className="text-[10px] font-bold text-slate-350 uppercase tracking-wider flex items-center gap-1.5 leading-none">
-                      <Scale className="w-3.5 h-3.5 text-sky-400" /> Compare Alternate Modes
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setCompareAlternativeModes(!compareAlternativeModes)}
+                  {sheet.metrics.map((metric, index) => (
+                    <div
+                      key={`${sheet.eyebrow}-${metric.label}`}
                       className={cn(
-                        "w-10 h-5.5 rounded-full p-0.5 transition-colors duration-300 relative focus:outline-none",
-                        compareAlternativeModes ? "bg-sky-500" : "bg-slate-800 border border-white/10"
+                        'min-w-0 px-2 py-1.5',
+                        mapMode === 'aiRoute' && index > 0 && 'border-l border-white/[0.06]',
+                        mapMode === 'cost' && index > 2 && 'border-t border-white/[0.06]',
+                        mapMode === 'cost' && index % 3 !== 0 && 'border-l border-white/[0.06]',
+                        mapMode !== 'aiRoute' && mapMode !== 'cost' && index > 1 && 'border-t border-white/[0.06]',
+                        mapMode !== 'aiRoute' && mapMode !== 'cost' && index % 2 === 1 && 'border-l border-white/[0.06]'
                       )}
                     >
-                      <div
-                        className={cn(
-                          "w-4.5 h-4.5 rounded-full bg-white transition-all shadow-md absolute top-0.5",
-                          compareAlternativeModes ? "left-5" : "left-0.5"
-                        )}
-                      />
-                    </button>
-                  </div>
-                  <p className="text-[9px] text-slate-400 leading-relaxed">
-                    Compare your route against live public transit schedules, pricing, and ride-sharing carbon emission indexes.
-                  </p>
-                </div>
-
-                {/* Metric Selector Tabs */}
-                {compareAlternativeModes && (
-                  <div className="grid grid-cols-2 gap-1 p-0.5 bg-slate-900 border border-white/5 rounded-xl">
-                    <button
-                      onClick={() => setCompareMetric('cost')}
-                      className={cn(
-                        "py-1 rounded-lg text-[9px] font-bold uppercase transition-all tracking-wider flex items-center justify-center gap-1.5",
-                        compareMetric === 'cost'
-                          ? "bg-sky-500/10 text-sky-300 border border-sky-500/20"
-                          : "text-slate-400 hover:text-white"
-                      )}
-                    >
-                      <Coins className="w-3 h-3" /> Energy Cost ($)
-                    </button>
-                    <button
-                      onClick={() => setCompareMetric('carbon')}
-                      className={cn(
-                        "py-1 rounded-lg text-[9px] font-bold uppercase transition-all tracking-wider flex items-center justify-center gap-1.5",
-                        compareMetric === 'carbon'
-                          ? "bg-emerald-500/10 text-emerald-300 border border-emerald-500/20"
-                          : "text-slate-400 hover:text-white"
-                      )}
-                    >
-                      <Leaf className="w-3 h-3" /> Carbon Footprint (kg)
-                    </button>
-                  </div>
-                )}
-
-                {/* Dynamic Recharts Comparison Chart */}
-                <div className="space-y-1.5">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block font-mono">
-                    {compareAlternativeModes ? `Comparative ${compareMetric === 'cost' ? 'Energy Cost ($)' : 'CO2 Footprint (kg)'}` : 'Comparative Projection'}
-                  </span>
-                  <div className="h-28 bg-slate-900/60 border border-white/5 rounded-2xl p-2.5 flex items-center justify-center relative">
-                    {compareAlternativeModes && isAlternateComparingLoading ? (
-                      <div className="flex flex-col items-center justify-center gap-1.5">
-                        <div className="w-4 h-4 rounded-full border border-sky-400 border-t-transparent animate-spin" />
-                        <span className="text-[8px] font-bold text-slate-500 uppercase tracking-widest animate-pulse">Syncing mode telemetry...</span>
-                      </div>
-                    ) : (
-                      <ResponsiveContainer width="100%" height="100%">
-                        <BarChart
-                          layout="vertical"
-                          data={compareAlternativeModes ? [
-                            {
-                              name: 'Your Mercedes',
-                              cost: compareMetric === 'cost' 
-                                ? (estimatedData?.totalCost || (costFuelType === 'electricity' ? 2.67 : 7.39))
-                                : (estimatedData?.carbonFootprintKg || (costFuelType === 'electricity' ? 1.1 : 14.3)),
-                              color: '#3b82f6'
-                            },
-                            {
-                              name: 'Public Transit',
-                              cost: compareMetric === 'cost'
-                                ? (alternateCompareData?.transit.cost || 4.25)
-                                : (alternateCompareData?.transit.carbonKg || 0.5),
-                              color: '#10b981'
-                            },
-                            {
-                              name: 'Comfort Rideshare',
-                              cost: compareMetric === 'cost'
-                                ? (alternateCompareData?.rideshare.cost || 22.40)
-                                : (alternateCompareData?.rideshare.carbonKg || 5.85),
-                              color: '#f59e0b'
-                            },
-                            {
-                              name: 'Gas Alternative',
-                              cost: compareMetric === 'cost'
-                                ? (alternateCompareData?.gasolineModel.cost || 14.80)
-                                : (alternateCompareData?.gasolineModel.carbonKg || 12.4),
-                              color: '#ef4444'
-                            }
-                          ] : (costChartData as any[])}
-                          margin={{ top: 5, right: 10, left: -25, bottom: 5 }}
-                        >
-                          <XAxis type="number" hide />
-                          <YAxis dataKey="name" type="category" stroke="#64748b" fontSize={8} width={85} tickLine={false} axisLine={false} />
-                          <Bar dataKey="cost" radius={[0, 4, 4, 0]} maxBarSize={12}>
-                            {(compareAlternativeModes ? [
-                              { color: '#3b82f6' },
-                              { color: '#10b981' },
-                              { color: '#f59e0b' },
-                              { color: '#ef4444' }
-                            ] : costChartData).map((entry: any, index) => (
-                              <Cell 
-                                key={`cell-${index}`} 
-                                fill={compareAlternativeModes ? entry.color : (index === 0 ? '#10b981' : index === 1 ? '#f59e0b' : '#ef4444')}
-                                opacity={compareAlternativeModes ? 1.0 : (costPattern === (index === 0 ? 'eco' : index === 1 ? 'nominal' : 'adverse') ? 1.0 : 0.35)}
-                              />
-                            ))}
-                          </Bar>
-                        </BarChart>
-                      </ResponsiveContainer>
-                    )}
-                  </div>
-                </div>
-
-                {/* Live Alternate Comparison Data Cards */}
-                {compareAlternativeModes && alternateCompareData && (
-                  <div className="grid grid-cols-3 gap-2">
-                    {/* Transit Option */}
-                    <div className="bg-slate-900 border border-white/5 p-2 rounded-xl space-y-1">
-                      <div className="flex items-center gap-1 text-sky-400">
-                        <Bus className="w-3.5 h-3.5 shrink-0" />
-                        <span className="text-[8px] font-black uppercase tracking-wider truncate">{alternateCompareData.transit.name}</span>
-                      </div>
-                      <div className="space-y-0.5 leading-none">
-                        <div className="text-[10px] font-black font-mono text-white">${alternateCompareData.transit.cost.toFixed(2)}</div>
-                        <div className="text-[8px] font-bold text-emerald-400 font-mono">{alternateCompareData.transit.carbonKg}kg CO₂</div>
-                        <div className="text-[8px] font-bold text-slate-400 font-mono">{alternateCompareData.transit.durationMin} mins</div>
-                      </div>
-                    </div>
-
-                    {/* Rideshare Option */}
-                    <div className="bg-slate-900 border border-white/5 p-2 rounded-xl space-y-1">
-                      <div className="flex items-center gap-1 text-amber-400">
-                        <Car className="w-3.5 h-3.5 shrink-0" />
-                        <span className="text-[8px] font-black uppercase tracking-wider truncate">Uber Comfort</span>
-                      </div>
-                      <div className="space-y-0.5 leading-none">
-                        <div className="text-[10px] font-black font-mono text-white">${alternateCompareData.rideshare.cost.toFixed(2)}</div>
-                        <div className="text-[8px] font-bold text-amber-500 font-mono">{alternateCompareData.rideshare.carbonKg}kg CO₂</div>
-                        <div className="text-[8px] font-bold text-slate-400 font-mono">{alternateCompareData.rideshare.durationMin} mins</div>
-                      </div>
-                    </div>
-
-                    {/* Gas Option */}
-                    <div className="bg-slate-900 border border-white/5 p-2 rounded-xl space-y-1">
-                      <div className="flex items-center gap-1 text-red-400">
-                        <Fuel className="w-3.5 h-3.5 shrink-0" />
-                        <span className="text-[8px] font-black uppercase tracking-wider truncate">Gas ICE Car</span>
-                      </div>
-                      <div className="space-y-0.5 leading-none">
-                        <div className="text-[10px] font-black font-mono text-white">${alternateCompareData.gasolineModel.cost.toFixed(2)}</div>
-                        <div className="text-[8px] font-bold text-red-500 font-mono">{alternateCompareData.gasolineModel.carbonKg}kg CO₂</div>
-                        <div className="text-[8px] font-bold text-slate-400 font-mono">{alternateCompareData.gasolineModel.durationMin} mins</div>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* Calculations Outcome Dashboard Callout */}
-                {isEstimatedLoading ? (
-                  <div className="h-32 flex flex-col items-center justify-center bg-slate-900/40 border border-white/5 rounded-3xl gap-2">
-                    <div className="w-5 h-5 rounded-full border-2 border-emerald-500 border-t-transparent animate-spin" />
-                    <span className="text-[10.5px] text-slate-500 font-bold uppercase tracking-widest animate-pulse">Running Gemini Models...</span>
-                  </div>
-                ) : estimatedData ? (
-                  <div className="bg-slate-900 border border-white/15 p-4 rounded-3xl relative overflow-hidden flex flex-col gap-3">
-                    <div className="absolute inset-x-0 -top-px h-px bg-gradient-to-r from-transparent via-emerald-500/30 to-transparent" />
-                    
-                    {/* Cost Display and Unit label */}
-                    <div className="flex justify-between items-center">
-                      <div>
-                        <span className="text-[9px] font-bold text-slate-500 uppercase tracking-widest block leading-none">Estimated Trip Cost</span>
-                        <span className="text-3xl font-black text-emerald-450 font-mono tracking-tight block mt-1 leading-none">
-                          ${estimatedData.totalCost.toFixed(2)}
-                        </span>
-                      </div>
-                      
-                      <div className="text-right bg-white/5 border border-white/5 p-2 rounded-xl shrink-0">
-                        <span className="text-[8px] font-extrabold text-slate-500 uppercase tracking-widest leading-none block">Consumption</span>
-                        <span className="text-xs font-black text-white font-mono mt-0.5 block">
-                          {estimatedData.consumptionAmount} {costFuelType === 'electricity' ? 'kWh' : 'Gal'}
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* CO2 Footprint rating progress underlay */}
-                    <div className="flex justify-between items-center bg-slate-950 p-2.5 rounded-2xl border border-white/5 text-[10.5px]">
-                      <div className="flex items-center gap-1.5 text-slate-400 font-semibold">
-                        <Leaf className={cn(
-                          "w-4 h-4 shrink-0",
-                          costFuelType === 'electricity' ? "text-emerald-400" : "text-amber-400"
-                        )} />
-                        <span>Carbon Footprint:</span>
-                      </div>
-                      <span className={cn(
-                        "font-black font-mono",
-                        estimatedData.carbonFootprintKg < 5 ? "text-emerald-400" : "text-amber-450"
-                      )}>
-                        {estimatedData.carbonFootprintKg} kg CO₂
-                      </span>
-                    </div>
-
-                    {/* Gemini Advice Box */}
-                    <div className="border-t border-white/5 pt-2 flex flex-col gap-1">
-                      <span className="text-[9px] font-black text-emerald-400 uppercase tracking-widest flex items-center gap-1">
-                        {compareAlternativeModes ? "⭐ REAL-TIME MULTI-MODAL EVALUATION" : "⭐ POWERTRAIN RECOMMENDATION"}
-                      </span>
-                      <p className="text-[10px] text-slate-300 leading-relaxed italic font-medium pt-0.5">
-                        "{compareAlternativeModes && alternateCompareData ? alternateCompareData.aiComparisonAdvisory : estimatedData.aiOptimizationAdvisory}"
+                      <p className="text-[8.5px] font-bold uppercase tracking-[0.12em] text-slate-500">{metric.label}</p>
+                      <p className={cn('mt-1 truncate text-[12.5px] font-semibold text-white', metric.tone && toneClasses[metric.tone].text)}>
+                        {metric.value}
                       </p>
                     </div>
-                  </div>
-                ) : (
-                  <div className="h-32 flex flex-col items-center justify-center bg-slate-900/40 border border-white/5 rounded-3xl gap-2">
-                    <div className="w-5 h-5 rounded-full border-2 border-emerald-500 border-t-transparent animate-spin" />
-                    <span className="text-[10.5px] text-slate-500 font-bold uppercase tracking-widest">Evaluating telemetry...</span>
+                  ))}
+                </div>
+
+                {expandedSummaryBars.length > 0 && (
+                  <div
+                    className={cn(
+                      'mt-3 grid gap-2',
+                      expandedSummaryBars.length > 1 ? 'grid-cols-2' : 'grid-cols-1'
+                    )}
+                  >
+                    {expandedSummaryBars.map((bar) => (
+                      <PremiumMetricBar
+                        key={`${sheet.eyebrow}-${bar.label}`}
+                        label={bar.label}
+                        value={bar.value}
+                        percent={bar.percent}
+                        tone={bar.tone}
+                        detail={mapMode === 'cost' ? undefined : bar.detail}
+                        compact
+                      />
+                    ))}
                   </div>
                 )}
 
-              </div>
+                {(selectedEvStop || selectedFavoriteStop || selectedRouteVariant !== 'recommended') && (
+                  <div className="mt-2.5 flex flex-wrap gap-1.5">
+                    {selectedRouteVariant !== 'recommended' && (
+                      <span className="inline-flex min-h-7 items-center gap-1.5 rounded-full border border-blue-100/14 bg-blue-300/8 px-2 text-[8.5px] font-semibold uppercase tracking-[0.09em] text-blue-100">
+                        <Route className="h-3 w-3" />
+                        {activeRouteVariant.name}
+                      </span>
+                    )}
+                    {selectedEvStop && (
+                      <button
+                        type="button"
+                        onClick={handleEvStopRemove}
+                        className="inline-flex min-h-7 items-center gap-1.5 rounded-full border border-cyan-100/14 bg-cyan-300/8 px-2 text-[8.5px] font-semibold uppercase tracking-[0.09em] text-cyan-100"
+                      >
+                        <Plug className="h-3 w-3" />
+                        {selectedEvStop.name}
+                        <X className="h-3 w-3" />
+                      </button>
+                    )}
+                    {selectedFavoriteStop && (
+                      <span className="inline-flex min-h-7 items-center gap-1.5 rounded-full border border-emerald-100/14 bg-emerald-300/8 px-2 text-[8.5px] font-semibold uppercase tracking-[0.09em] text-emerald-100">
+                        <Coffee className="h-3 w-3" />
+                        {selectedFavoriteStop.name}
+                      </span>
+                    )}
+                  </div>
+                )}
 
-              {/* Sync Cockpit directly */}
-              <div className="pt-2 border-t border-white/5">
-                <button
-                  type="button"
-                  onClick={() => {
-                    addRecentAction({
-                      icon: 'sync',
-                      title: 'Cost Profile Synced',
-                      description: `Pushed target cost ($${estimatedData?.totalCost.toFixed(2) || '0.00'}) and ${costPattern.toUpperCase()} recuperation markers to navigator HUD`,
-                      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                    });
-                    setCostSyncApplied(true);
-                    setTimeout(() => setCostSyncApplied(false), 3000);
-                  }}
-                  disabled={isEstimatedLoading || !estimatedData}
-                  className={cn(
-                    "w-full h-11 rounded-xl text-xs font-bold uppercase tracking-widest transition-all flex items-center justify-center gap-2 active:scale-98 disabled:opacity-50",
-                    costSyncApplied ? "bg-emerald-600 text-white" : "bg-emerald-500 hover:bg-emerald-400 text-slate-950 hover:shadow-[0_0_15px_rgba(16,185,129,0.3)]"
-                  )}
-                >
-                  {costSyncApplied ? (
-                    <>
-                      <Check className="w-4 h-4 text-white font-bold animate-pulse" />
-                      HUD ENERGY CRITERIA ARMED
-                    </>
+                <div className="mt-2.5 border-t border-white/[0.065] pt-2.5">
+                  <div className="mb-2 flex items-center justify-between gap-3">
+                    <p className="text-[8.5px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                      {activePanel === 'routeCompare'
+                        ? 'Compare Routes'
+                        : activePanel === 'favoriteStops'
+                          ? 'Favorite Stops'
+                          : activePanel === 'evStops'
+                            ? 'Choose Charging Stop'
+                            : activePanel === 'costBreakdown'
+                              ? 'Cost Breakdown'
+                              : sheet.optionsTitle}
+                    </p>
+                    <span
+                      className="rounded-full border border-white/[0.07] bg-white/[0.035] px-2 py-0.5 text-[8.5px] font-semibold text-slate-300"
+                      style={{ color: visual.routeColor }}
+                    >
+                      {sheet.statusValue}
+                    </span>
+                  </div>
+
+                  {activePanel === 'routeCompare' ? (
+                    <div className="space-y-1.5">
+                      {routeVariants.map((variant, index) => (
+                        <PremiumPanelCard
+                          key={variant.key}
+                          onClick={() => handleRouteVariantApply(variant.key)}
+                          icon={variant.key === 'eco' ? Sparkles : Route}
+                          title={variant.name}
+                          detail={variant.detail}
+                          meta={variant.etaDelta}
+                          tone={variant.tone}
+                          selected={selectedRouteVariant === variant.key}
+                        >
+                          <PremiumMetricBar
+                            label={variant.key === 'eco' ? 'Efficiency gain' : 'Route confidence'}
+                            value={variant.distanceDelta}
+                            percent={[94, 78, 86][index]}
+                            tone={variant.tone}
+                          />
+                        </PremiumPanelCard>
+                      ))}
+                    </div>
+                  ) : activePanel === 'favoriteStops' ? (
+                    <div className="space-y-1.5">
+                      {favoriteStops.map((stop) => (
+                        <PremiumPanelCard
+                          key={stop.id}
+                          onClick={() => handleFavoriteStopSelect(stop)}
+                          icon={Coffee}
+                          title={stop.name}
+                          detail={stop.habit}
+                          meta={stop.detour}
+                          tone="emerald"
+                          selected={selectedFavoriteStop?.id === stop.id}
+                        >
+                          <PremiumMetricBar
+                            label={stop.recommended ? 'Top habit match' : 'Habit match'}
+                            value={stop.confidence}
+                            percent={parsePercent(stop.confidence)}
+                            tone="emerald"
+                            detail={stop.visits}
+                          />
+                        </PremiumPanelCard>
+                      ))}
+                    </div>
+                  ) : activePanel === 'evStops' ? (
+                    <div className="space-y-1.5">
+                      <PremiumMetricBar
+                        label="Arrival battery"
+                        value={mockEvStations.batteryOnArrival}
+                        percent={parsePercent(mockEvStations.batteryOnArrival)}
+                        tone="cyan"
+                        detail="Charging is optional for this route"
+                      />
+                      {evStations.map((station) => (
+                        <PremiumPanelCard
+                          key={station.id}
+                          onClick={() => handleEvStopSelect(station)}
+                          icon={Plug}
+                          title={station.name}
+                          detail={`${station.speed} - ${station.detour}`}
+                          meta={station.recommended ? 'best' : station.availability}
+                          tone="cyan"
+                          selected={selectedEvStop?.id === station.id}
+                        >
+                          <PremiumMetricBar
+                            label="Charger availability"
+                            value={station.availability}
+                            percent={station.id === 'mb-partner' ? 25 : station.id === 'chargepoint-sunnyvale' ? 100 : 50}
+                            tone="cyan"
+                          />
+                        </PremiumPanelCard>
+                      ))}
+                    </div>
+                  ) : activePanel === 'costBreakdown' ? (
+                    <div className="space-y-1.5">
+                      <div className="rounded-[18px] border border-amber-100/10 bg-amber-200/[0.045] px-3.5 py-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.035)]">
+                        <p className="text-[8.5px] font-semibold uppercase tracking-[0.14em] text-amber-100/70">Estimated trip total</p>
+                        <div className="mt-1 flex items-end justify-between gap-3">
+                          <span className="text-xl font-semibold text-white">{mockCost.totalCost}</span>
+                          <span className="pb-1 text-[11px] font-semibold text-amber-100">{mockCost.costPerMile}</span>
+                        </div>
+                      </div>
+                      {costDistribution.map((item) => (
+                        <PremiumMetricBar
+                          key={item.label}
+                          label={item.label}
+                          value={item.value}
+                          percent={item.percent}
+                          tone={item.tone}
+                        />
+                      ))}
+                      <button
+                        type="button"
+                        onClick={() => handleRouteVariantApply('eco')}
+                        className="flex min-h-10 w-full items-center justify-center gap-2 rounded-[16px] border border-emerald-100/16 bg-emerald-300/8 px-3 text-[9.5px] font-semibold uppercase tracking-[0.08em] text-emerald-100 transition active:scale-[0.98]"
+                      >
+                        <Sparkles className="h-3.5 w-3.5" />
+                        Apply Eco Route
+                      </button>
+                    </div>
                   ) : (
-                    <>
-                      <Navigation className="w-4 h-4" />
-                      SYNC TARGET COST TO HUD
-                    </>
+                    <div className="rounded-[18px] border border-white/[0.04] bg-white/[0.022] px-3">
+                      {sheet.options.map((option, index) => (
+                        <div
+                          key={`${sheet.eyebrow}-${option.label}`}
+                          className={cn(
+                            'flex items-center justify-between gap-3 py-2',
+                            index > 0 && 'border-t border-white/[0.055]'
+                          )}
+                        >
+                          <div className="min-w-0">
+                            <p className="truncate text-[12.5px] font-semibold text-white">{option.label}</p>
+                            <p className="mt-0.5 truncate text-[10.5px] font-medium text-slate-500">{option.detail}</p>
+                          </div>
+                          <span className="shrink-0 rounded-full border border-outline-variant/45 bg-surface-container-low px-2.5 py-0.5 text-[9.5px] font-semibold text-slate-200">
+                            {option.value}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
                   )}
-                </button>
-              </div>
-              
-            </motion.div>
-          );
-        })()}
-      </AnimatePresence>
-
-      {/* EV Charging Stations Side Panel Drawer */}
-      <AnimatePresence>
-        {showEVStations && (
-          <motion.div
-            initial={{ opacity: 0, x: -100 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -100 }}
-            className="absolute left-4 right-4 top-40 bottom-24 z-30 flex w-auto flex-col gap-4 overflow-hidden rounded-3xl border border-white/10 bg-slate-950/95 p-5 text-white shadow-2xl backdrop-blur-md md:right-auto md:w-[420px]"
-          >
-            {/* Top Border Glow */}
-            <div className="absolute inset-x-0 -top-px h-px bg-gradient-to-r from-transparent via-blue-500/50 to-transparent" />
-            
-            {/* Header */}
-            <div className="flex justify-between items-start">
-              <div>
-                <span className="text-[10px] font-bold text-blue-400 uppercase tracking-widest block font-sans">MB SENSE Intelligent charging network</span>
-                <h3 className="text-base font-extrabold flex items-center gap-1.5 mt-0.5 font-sans">
-                  <Plug className="w-4.5 h-4.5 text-blue-400" /> EV Charger Locator
-                </h3>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={fetchEVStations}
-                  disabled={evLoading}
-                  className="w-7 h-7 rounded-lg bg-white/5 border border-white/5 hover:bg-white/10 flex items-center justify-center transition-colors text-slate-400 hover:text-white disabled:opacity-50"
-                  title="Refresh Live availability"
-                >
-                  <RefreshCw className={cn("w-3.5 h-3.5", evLoading && "animate-spin")} />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowEVStations(false);
-                    setShowETA(true);
-                  }}
-                  className="w-7 h-7 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10 flex items-center justify-center transition-colors text-slate-400 hover:text-white"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-
-            {/* Vehicle SoC simulation custom slider */}
-            <div className="bg-slate-900/60 border border-white/5 p-3.5 rounded-2xl flex flex-col gap-2">
-              <div className="flex justify-between items-center text-xs">
-                <span className="font-bold text-slate-400 uppercase tracking-wider text-[9.5px]">EQ Virtual State of Charge</span>
-                <span className="font-mono font-black text-blue-400">{evSoc}%</span>
-              </div>
-              <input
-                type="range"
-                min="5"
-                max="95"
-                value={evSoc}
-                onChange={(e) => setEvSoc(Number(e.target.value))}
-                className="w-full accent-blue-500 cursor-pointer h-1.5 rounded-lg bg-slate-950 border border-white/5"
-              />
-              <span className="text-[9px] text-slate-500 leading-normal">
-                Adjusting state of charge dynamically updates the elite Gemini recommendations for proximity vs speed!
-              </span>
-            </div>
-
-            {/* Selection filters */}
-            <div className="grid grid-cols-2 gap-2">
-              <div className="flex flex-col gap-1">
-                <label className="text-[9.5px] font-bold text-slate-400 uppercase tracking-wider font-sans">Provider</label>
-                <select
-                  value={evProviderFilter}
-                  onChange={(e) => setEvProviderFilter(e.target.value)}
-                  className="bg-slate-900 border border-white/10 rounded-xl px-2.5 py-1.5 text-xs text-slate-200 outline-none focus:border-blue-500/50"
-                >
-                  <option value="all">All Networks</option>
-                  <option value="tesla_supercharger">Tesla Supercharger</option>
-                  <option value="chargepoint">ChargePoint</option>
-                  <option value="electrify_america">Electrify America</option>
-                  <option value="evgo">EVgo</option>
-                </select>
-              </div>
-
-              <div className="flex flex-col gap-1">
-                <label className="text-[9.5px] font-bold text-slate-400 uppercase tracking-wider font-sans">Min charging speed</label>
-                <select
-                  value={evMinSpeed}
-                  onChange={(e) => setEvMinSpeed(Number(e.target.value))}
-                  className="bg-slate-900 border border-white/10 rounded-xl px-2.5 py-1.5 text-xs text-slate-200 outline-none focus:border-blue-500/50"
-                >
-                  <option value={0}>Any Speed</option>
-                  <option value={150}>Fast (&gt;= 150 kW)</option>
-                  <option value={250}>Ultra-Fast (&gt;= 250 kW)</option>
-                </select>
-              </div>
-            </div>
-
-            {/* Gemini Live Recommendation */}
-            <div className="bg-slate-900 border border-white/15 p-3.5 rounded-2xl relative overflow-hidden flex flex-col gap-2 min-h-[92px] justify-center">
-              <div className="absolute inset-x-0 -top-px h-px bg-gradient-to-r from-transparent via-blue-500/40 to-transparent" />
-              
-              <span className="text-[9px] font-black text-blue-400 uppercase tracking-widest flex items-center gap-1 font-sans">
-                ⭐ GERMANY MOBILITY MERCEDES-BENZ DIRECTIVE
-              </span>
-              
-              {evLoading ? (
-                <div className="flex items-center gap-2 py-1 text-slate-450 text-xs">
-                  <div className="w-3.5 h-3.5 rounded-full border border-blue-400 border-t-transparent animate-spin shrink-0" />
-                  <span>Analyzing nearby chargers and SoC...</span>
                 </div>
-              ) : evRecommendation ? (
-                <p className="text-[10.5px] text-slate-350 leading-relaxed font-sans italic">
-                  "{evRecommendation}"
-                </p>
-              ) : (
-                <p className="text-[10px] text-slate-500">No telemetry suggestions loaded.</p>
-              )}
-            </div>
 
-            {/* List of stations with active status */}
-            <div className="flex-1 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
-              <div className="flex justify-between items-center text-[10px] font-bold text-slate-400 uppercase tracking-wider pb-1">
-                <span>Nearby nodes ({evStations.length})</span>
-                <span>Proximity / Status</span>
-              </div>
-
-              {evLoading && evStations.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-12 gap-2 text-slate-500">
-                  <div className="w-5 h-5 rounded-full border border-blue-500 border-t-transparent animate-spin" />
-                  <span className="text-[11px] uppercase tracking-wider">Downloading station map...</span>
-                </div>
-              ) : evStations.length === 0 ? (
-                <div className="text-center py-10 bg-slate-900/30 rounded-2xl border border-white/5">
-                  <span className="text-xs text-slate-500">No stations match current filters.</span>
-                </div>
-              ) : (
-                evStations.map((station) => (
-                  <div
-                    key={station.id}
-                    onClick={() => setSelectedStation(station)}
-                    className={cn(
-                      "w-full text-left bg-slate-900/40 hover:bg-slate-900/90 border rounded-2xl p-3 flex flex-col gap-1.5 transition-all cursor-pointer",
-                      selectedStation?.id === station.id 
-                        ? "border-blue-500/60 bg-slate-900/100 shadow-[0_0_15px_rgba(59,130,246,0.15)]" 
-                        : "border-white/5 hover:border-white/10"
-                    )}
-                  >
-                    <div className="flex justify-between items-start w-full">
-                      <div className="flex flex-col gap-0.5">
-                        <span className="text-xs font-extrabold text-slate-100">{station.name}</span>
-                        <span className="text-[10px] text-slate-400 font-semibold">{station.provider}</span>
-                      </div>
-                      
-                      <div className="text-right flex flex-col items-end shrink-0">
-                        <span className="text-[11px] text-blue-405 font-black font-mono">{station.distanceKm} km</span>
-                        <span className={cn(
-                          "text-[9px] px-1.5 py-0.5 rounded-full font-black uppercase tracking-wider mt-1 text-center scale-90 origin-right",
-                          station.status === 'available' 
-                            ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/20" 
-                            : station.status === 'busy' 
-                              ? "bg-amber-500/15 text-amber-400 border border-amber-500/20" 
-                              : "bg-red-500/15 text-red-400 border border-red-500/20"
-                        )}>
-                          {station.status}
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="flex justify-between items-center text-[10px] pt-1.5 border-t border-white/5 text-slate-400 font-medium">
-                      <span className="flex items-center gap-1.5">
-                        <Plug className="w-3 h-3 text-slate-500" />
-                        <span className="font-mono">{station.chargingSpeed} kW • {station.connectorType}</span>
-                      </span>
-                      <span className="text-[10.5px] font-black text-slate-200">
-                        ${station.pricing.toFixed(2)}/kWh
-                      </span>
-                    </div>
-
-                    {/* Rich Details if clicked */}
-                    {selectedStation?.id === station.id && (
-                      <motion.div 
-                        initial={{ opacity: 0, height: 0 }}
-                        animate={{ opacity: 1, height: 'auto' }}
-                        className="pt-2 mt-1 border-t border-white/5 text-[10px] text-slate-350 flex flex-col gap-1.5"
-                      >
-                        <div className="flex justify-between">
-                          <span>Address:</span>
-                          <span className="text-right text-white font-medium">{station.address}</span>
-                        </div>
-                        <div className="flex justify-between items-center">
-                          <span>Connector status:</span>
-                          <span className="font-mono text-white bg-slate-950 px-2 py-0.5 rounded border border-white/5">
-                            {station.totalPorts - station.portsFree} / {station.totalPorts} ports occupied
-                          </span>
-                        </div>
-                        <div className="flex justify-between items-center text-[9.5px]">
-                          <span>Real-time Free Slots:</span>
-                          <span className="text-emerald-450 font-black font-mono">
-                            {station.portsFree} free connect lines
-                          </span>
-                        </div>
-                      </motion.div>
-                    )}
-                  </div>
-                ))
-              )}
-            </div>
-
-            {/* Sync active selected station to the dashboard display */}
-            <div className="pt-2 border-t border-white/5">
-              <button
-                type="button"
-                onClick={() => {
-                  if (selectedStation) {
-                    addRecentAction({
-                      icon: 'sync',
-                      title: 'EQ Charger Set',
-                      description: `Routed MB HUD to ${selectedStation.name} (${selectedStation.chargingSpeed}kW CCS) with ${selectedStation.portsFree} ports available`,
-                      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                    });
-                    setEvSyncApplied(true);
-                    setTimeout(() => setEvSyncApplied(false), 3000);
-                  }
-                }}
-                disabled={!selectedStation || evLoading}
-                className={cn(
-                  "w-full h-11 rounded-xl text-xs font-bold uppercase tracking-widest transition-all flex items-center justify-center gap-2 active:scale-98 disabled:opacity-50",
-                  evSyncApplied ? "bg-emerald-600 text-white" : "bg-blue-600 hover:bg-blue-500 text-white hover:shadow-[0_0_15px_rgba(59,130,246,0.3)]"
-                )}
-              >
-                {evSyncApplied ? (
-                  <>
-                    <Check className="w-4 h-4 text-white font-bold animate-pulse" />
-                    HUD STATION CHARGER ARMED
-                  </>
-                ) : (
-                  <>
-                    <Navigation className="w-4 h-4" />
-                    {selectedStation ? `ROUTE TO ${selectedStation.name.toUpperCase()}` : 'SELECT CHARGER FROM LIST'}
-                  </>
-                )}
-              </button>
-            </div>
-            
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Destination Predictive Parking Side Drawer */}
-      <AnimatePresence>
-        {showParkingFinder && (
-          <motion.div
-            initial={{ opacity: 0, x: -100 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -100 }}
-            className="absolute left-4 right-4 top-40 bottom-24 z-30 flex w-auto flex-col gap-4 overflow-hidden rounded-3xl border border-white/10 bg-slate-950/95 p-5 font-sans text-white shadow-2xl backdrop-blur-md md:right-auto md:w-[420px]"
-          >
-            {/* Top Border Glow */}
-            <div className="absolute inset-x-0 -top-px h-px bg-gradient-to-r from-transparent via-indigo-500/50 to-transparent" />
-            
-            {/* Header */}
-            <div className="flex justify-between items-start">
-              <div>
-                <span className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest block font-sans">MB SENSE Intelligent Telemetry</span>
-                <h3 className="text-base font-extrabold flex items-center gap-1.5 mt-0.5 font-sans">
-                  <Clock className="w-4.5 h-4.5 text-indigo-400" /> Space Predictive Parking
-                </h3>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={fetchParkingPredictions}
-                  disabled={parkingLoading}
-                  className="w-7 h-7 rounded-lg bg-white/5 border border-white/5 hover:bg-white/10 flex items-center justify-center transition-colors text-slate-400 hover:text-white disabled:opacity-50"
-                  title="Refresh Live availability"
-                >
-                  <RefreshCw className={cn("w-3.5 h-3.5", parkingLoading && "animate-spin")} />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowParkingFinder(false);
-                    setShowETA(true);
-                  }}
-                  className="w-7 h-7 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10 flex items-center justify-center transition-colors text-slate-400 hover:text-white"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-
-            {/* Simulated Query controls */}
-            <div className="bg-slate-905/60 border border-white/5 p-3.5 rounded-2xl flex flex-col gap-3">
-              {/* Day selection badges */}
-              <div className="flex flex-col gap-1.5">
-                <span className="font-bold text-slate-400 uppercase tracking-wider text-[9px] font-sans">Scheduled Day</span>
-                <div className="flex gap-1 overflow-x-auto pb-0.5 custom-scrollbar">
-                  {['Monday', 'Wednesday', 'Friday', 'Saturday', 'Sunday'].map((d) => (
-                    <button
-                      key={d}
-                      onClick={() => setParkingDayOfWeek(d)}
-                      className={cn(
-                        "px-2.5 py-1 rounded-xl text-[10px] font-extrabold transition-all shrink-0 uppercase tracking-wider border",
-                        parkingDayOfWeek === d
-                          ? "bg-indigo-600 border-indigo-500 text-white shadow-lg"
-                          : "bg-slate-900 border-white/5 text-slate-400 hover:text-white hover:bg-slate-850"
-                      )}
-                    >
-                      {d.substring(0, 3)}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Hour Selection badges */}
-              <div className="flex flex-col gap-1.5">
-                <span className="font-bold text-slate-400 uppercase tracking-wider text-[9px] font-sans">Simulated Arrival Hour</span>
-                <div className="grid grid-cols-4 gap-1">
-                  {[10, 12, 14, 16, 18, 20, 22].map((h) => (
-                    <button
-                      key={h}
-                      onClick={() => setParkingArrivalHour(h)}
-                      className={cn(
-                        "py-1 rounded-lg text-[10px] font-mono font-bold transition-all border",
-                        parkingArrivalHour === h
-                          ? "bg-indigo-600 border-indigo-500 text-white"
-                          : "bg-slate-900 border-white/5 text-slate-400 hover:text-white"
-                      )}
-                    >
-                      {h}:00
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            {/* Gemini Live Recommendation */}
-            <div className="bg-slate-900 border border-white/15 p-3.5 rounded-2xl relative overflow-hidden flex flex-col gap-2 min-h-[92px] justify-center">
-              <div className="absolute inset-x-0 -top-px h-px bg-gradient-to-r from-transparent via-indigo-500/40 to-transparent" />
-              
-              <span className="text-[9px] font-black text-indigo-400 uppercase tracking-widest flex items-center gap-1 font-sans">
-                ⭐ CO-PILOT ADVISOR IN COOPERATION WITH MERCI VALET
-              </span>
-              
-              {parkingLoading ? (
-                <div className="flex items-center gap-2 py-1 text-slate-450 text-xs">
-                  <div className="w-3.5 h-3.5 rounded-full border border-indigo-400 border-t-transparent animate-spin shrink-0" />
-                  <span>Synthesizing smart parking telemetry...</span>
-                </div>
-              ) : parkingRecommendation ? (
-                <p className="text-[10.5px] text-slate-350 leading-relaxed font-sans italic">
-                  "{parkingRecommendation}"
-                </p>
-              ) : (
-                <p className="text-[10px] text-slate-500 font-sans">Synchronizing telemetry parameters...</p>
-              )}
-            </div>
-
-            {/* Selected Lot Trends / Recharts dual bar chart comparison */}
-            {selectedParkingLot && (
-              <div className="bg-slate-900/45 border border-white/5 p-3 rounded-2xl flex flex-col gap-1.5 shrink-0">
-                <div className="flex justify-between items-center">
-                  <span className="text-[9.5px] font-bold text-slate-400 uppercase tracking-wider truncate max-w-[200px]">
-                    📊 occupancy trends: {selectedParkingLot.name}
-                  </span>
-                  <span className="text-[8.5px] text-indigo-400 font-bold font-mono">
-                    Today vs Historical Benchmark
-                  </span>
-                </div>
-                <div className="h-24 w-full">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={selectedParkingLot.hourlyTrend} margin={{ top: 2, right: 2, left: -28, bottom: 2 }}>
-                      <XAxis dataKey="time" tick={{ fill: '#64748b', fontSize: 8 }} />
-                      <YAxis tick={{ fill: '#64748b', fontSize: 8 }} domain={[0, 100]} />
-                      <Bar dataKey="historical" fill="#475569" radius={[1, 1, 0, 0]} name="Bench" opacity={0.6} />
-                      <Bar dataKey="predictedToday" fill="#6366f1" radius={[1, 1, 0, 0]} name="Today" />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
-            )}
-
-            {/* List of Parking Lots near Destination */}
-            <div className="flex-1 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
-              <div className="flex justify-between items-center text-[10px] font-bold text-slate-400 uppercase tracking-wider pb-1">
-                <span>Destination lots ({parkingLots.length})</span>
-                <span>Proximity / Vacancy Intel</span>
-              </div>
-
-              {parkingLoading && parkingLots.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-12 gap-2 text-slate-500">
-                  <div className="w-5 h-5 rounded-full border border-indigo-500 border-t-transparent animate-spin" />
-                  <span className="text-[11px] uppercase tracking-wider">Downloading parking indices...</span>
-                </div>
-              ) : parkingLots.length === 0 ? (
-                <div className="text-center py-10 bg-slate-900/30 rounded-2xl border border-white/5">
-                  <span className="text-xs text-slate-500">No predictions matching telemetry indices.</span>
-                </div>
-              ) : (
-                parkingLots.map((lot) => (
-                  <div
-                    key={lot.id}
-                    onClick={() => setSelectedParkingLot(lot)}
-                    className={cn(
-                      "w-full text-left bg-slate-900/40 hover:bg-slate-900/90 border rounded-2xl p-3 flex flex-col gap-1.5 transition-all cursor-pointer",
-                      selectedParkingLot?.id === lot.id 
-                        ? "border-indigo-500/60 bg-slate-900/100 shadow-[0_0_15px_rgba(99,102,241,0.15)]" 
-                        : "border-white/5 hover:border-white/10"
-                    )}
-                  >
-                    <div className="flex justify-between items-start w-full">
-                      <div className="flex flex-col gap-0.5">
-                        <span className="text-xs font-extrabold text-slate-100 flex items-center gap-1">
-                          {lot.hasValet && <span className="bg-amber-500/10 text-amber-400 border border-amber-500/20 px-1 py-0.2 rounded-md font-black text-[8px] uppercase tracking-wider shrink-0 scale-90">Valet VIP</span>}
-                          {lot.name}
-                        </span>
-                        <span className="text-[9.5px] text-slate-400 font-semibold">{lot.address}</span>
-                      </div>
-                      
-                      <div className="text-right flex flex-col items-end shrink-0">
-                        <span className="text-[11px] text-indigo-400 font-black font-mono">{lot.distanceKm} km</span>
-                        <span className={cn(
-                          "text-[9px] px-1.5 py-0.5 rounded-full font-black uppercase tracking-wider mt-1 text-center scale-90 origin-right border",
-                          lot.currentPredictedOccupancy > 80 
-                            ? "bg-red-500/15 text-red-400 border-red-500/20" 
-                            : lot.currentPredictedOccupancy > 55 
-                              ? "bg-amber-500/15 text-amber-400 border-amber-500/20" 
-                              : "bg-emerald-500/15 text-emerald-400 border-emerald-500/20"
-                        )}>
-                          {lot.currentPredictedOccupancy}% Occupied
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="flex justify-between items-center text-[10px] pt-1.5 border-t border-white/5 text-slate-400 font-medium">
-                      <span className="flex items-center gap-1.5">
-                        <span className="font-mono text-[10px] text-emerald-455 font-extrabold">{lot.freeSpacesPredicted} Spaces Available</span>
-                      </span>
-                      <span className="text-[10.5px] font-black text-slate-200">
-                        ${lot.pricePerHour.toFixed(2)}/hr
-                      </span>
-                    </div>
-
-                    {/* Rich Details if clicked */}
-                    {selectedParkingLot?.id === lot.id && (
-                      <motion.div 
-                        initial={{ opacity: 0, height: 0 }}
-                        animate={{ opacity: 1, height: 'auto' }}
-                        className="pt-2 mt-1 border-t border-white/5 text-[10px] text-slate-350 flex flex-col gap-1.5 font-sans"
-                      >
-                        <div className="flex flex-wrap gap-1 mt-0.5">
-                          {lot.features.map((feat: string, idx: number) => (
-                            <span key={idx} className="bg-slate-900 border border-white/10 text-slate-300 rounded px-1.5 py-0.5 text-[8.5px] font-bold">
-                              {feat}
-                            </span>
-                          ))}
-                        </div>
-                        <div className="flex justify-between items-center text-[9px] text-slate-400 mt-0.5">
-                          <span>Historical average at this hour:</span>
-                          <span className="font-mono text-slate-300 font-bold">{lot.currentHistoricalOccupancy}% occupancy</span>
-                        </div>
-                      </motion.div>
-                    )}
-                  </div>
-                ))
-              )}
-            </div>
-
-            {/* Sync active selected parking valet routing to the dashboard display */}
-            <div className="pt-2 border-t border-white/5 shrink-0">
-              <button
-                type="button"
-                onClick={() => {
-                  if (selectedParkingLot) {
-                    addRecentAction({
-                      icon: 'sync',
-                      title: 'EQ Commute Parking Reserved',
-                      description: `Routed MB AR HUD to ${selectedParkingLot.name} with ${selectedParkingLot.freeSpacesPredicted} predicted vacant spaces and active valet clearance.`,
-                      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                    });
-                    setParkingSyncApplied(true);
-                    setTimeout(() => setParkingSyncApplied(false), 3000);
-                  }
-                }}
-                disabled={!selectedParkingLot || parkingLoading}
-                className={cn(
-                  "w-full h-11 rounded-xl text-xs font-bold uppercase tracking-widest transition-all flex items-center justify-center gap-2 active:scale-98 disabled:opacity-50",
-                  parkingSyncApplied ? "bg-emerald-600 text-white animate-pulse" : "bg-indigo-650 hover:bg-indigo-600 text-white hover:shadow-[0_0_15px_rgba(99,102,241,0.3)]"
-                )}
-              >
-                {parkingSyncApplied ? (
-                  <>
-                    <Check className="w-4 h-4 text-white font-bold animate-pulse" />
-                    VALET CLEARED & ROUTED HUD
-                  </>
-                ) : (
-                  <>
-                    <Navigation className="w-4 h-4 text-white" />
-                    {selectedParkingLot ? `ROUTE TO ${selectedParkingLot.name.toUpperCase()}` : 'SELECT DESTINATION CAR PARK'}
-                  </>
-                )}
-              </button>
-            </div>
-            
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* AI Route Planner Side Drawer */}
-      <AnimatePresence>
-        {showRoutePlanner && (
-          <motion.div
-            initial={{ opacity: 0, x: -100 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -100 }}
-            className="absolute left-4 right-4 top-40 bottom-24 z-30 flex w-auto flex-col gap-4 overflow-hidden rounded-3xl border border-white/10 bg-slate-950/95 p-5 font-sans text-white shadow-2xl backdrop-blur-md md:right-auto md:w-[420px]"
-          >
-            {/* Top Border Glow */}
-            <div className="absolute inset-x-0 -top-px h-px bg-gradient-to-r from-transparent via-indigo-500/50 to-transparent" />
-            
-            {/* Header */}
-            <div className="flex justify-between items-start">
-              <div>
-                <span className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest block">Gemini-Sequenced Multi-Stop Engine</span>
-                <h3 className="text-base font-extrabold flex items-center gap-1.5 mt-0.5">
-                  <Route className="w-4.5 h-4.5 text-indigo-400 animate-pulse" /> AI Route Planner
-                </h3>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setShowRoutePlanner(false);
-                  setShowETA(true);
-                }}
-                className="w-7 h-7 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10 flex items-center justify-center transition-colors text-slate-400 hover:text-white"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* Quick-add presets */}
-            <div className="flex flex-col gap-1.5">
-              <span className="font-bold text-slate-400 uppercase tracking-wider text-[9px]">Click to Quick-Add scenic waypoints</span>
-              <div className="flex flex-wrap gap-1">
-                {PRESET_WAYPOINTS.map((preset) => (
-                  <button
-                    type="button"
-                    key={preset.name}
-                    onClick={() => handleAddPresetWaypoint(preset)}
-                    className="bg-slate-900 border border-white/5 hover:border-indigo-500/30 text-slate-300 hover:text-white rounded-xl px-2.5 py-1 text-[9.5px] font-bold transition-all text-left"
-                  >
-                    + {preset.name}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Add Custom Coordinate stop input */}
-            <div className="bg-slate-900/60 border border-white/5 p-3 rounded-2xl flex flex-col gap-2">
-              <span className="font-bold text-slate-400 uppercase tracking-wider text-[9px]">Configure custom coordinate waypoint</span>
-              <div className="grid grid-cols-2 gap-2">
-                <input
-                  type="text"
-                  placeholder="Stop label name (e.g. Presidio)"
-                  value={plannerNewName}
-                  onChange={(e) => setPlannerNewName(e.target.value)}
-                  className="col-span-2 bg-slate-950 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
-                />
-                <div className="flex flex-col gap-1">
-                  <span className="text-[8px] text-slate-500 font-bold uppercase pl-1">Latitude</span>
-                  <input
-                    type="text"
-                    value={plannerNewLat}
-                    onChange={(e) => setPlannerNewLat(e.target.value)}
-                    className="bg-slate-950 border border-white/10 rounded-xl px-3 py-1 text-xs text-white font-mono"
-                  />
-                </div>
-                <div className="flex flex-col gap-1">
-                  <span className="text-[8px] text-slate-500 font-bold uppercase pl-1">Longitude</span>
-                  <input
-                    type="text"
-                    value={plannerNewLng}
-                    onChange={(e) => setPlannerNewLng(e.target.value)}
-                    className="bg-slate-950 border border-white/10 rounded-xl px-3 py-1 text-xs text-white font-mono"
-                  />
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={handleAddCustomWaypoint}
-                className="w-full bg-slate-800 hover:bg-slate-750 border border-white/5 hover:border-indigo-500/30 text-white rounded-xl py-1.5 text-[10.5px] font-bold transition-all tracking-wide uppercase"
-              >
-                Insert custom Stop Label
-              </button>
-            </div>
-
-            {/* Config Vehicle Fleet */}
-            <div className="flex justify-between items-center bg-slate-900/40 border border-white/5 p-2.5 rounded-2xl shrink-0">
-              <div className="flex flex-col gap-0.5">
-                <span className="font-bold text-slate-400 uppercase tracking-wider text-[9px]">Simulated Powertrain</span>
-                <span className="text-[10px] text-slate-500">Estimates fuel or battery discharge</span>
-              </div>
-              <div className="flex gap-1 bg-slate-950 p-1 rounded-xl border border-white/5">
-                {(['electric', 'gasoline'] as const).map((vt) => (
-                  <button
-                    type="button"
-                    key={vt}
-                    onClick={() => setPlannerVehicleType(vt)}
-                    className={cn(
-                      "px-3 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all",
-                      plannerVehicleType === vt
-                        ? "bg-indigo-600 text-white shadow shadow-indigo-500/50"
-                        : "text-slate-400 hover:text-white"
-                    )}
-                  >
-                    {vt === 'electric' ? '⚡ Electric' : '⛽ Gas'}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* List of stops in Route Planner */}
-            <div className="flex-1 overflow-y-auto space-y-1.5 pr-1 custom-scrollbar">
-              <div className="flex justify-between items-center text-[10px] font-bold text-slate-400 uppercase tracking-wider pb-1">
-                <span>Waypoint List ({plannerWaypoints.length})</span>
-                <span className="text-[9px] text-[#4edea3] font-bold">Locked Stop 1 is starting point</span>
-              </div>
-
-              {plannerWaypoints.map((wp, idx) => (
                 <div
-                  key={wp.id}
-                  className="bg-slate-900/40 border border-white/5 rounded-2xl p-2.5 flex items-center justify-between gap-2 hover:border-indigo-500/10 transition-colors"
+                  className="mt-2.5 rounded-[18px] border-l-2 bg-white/[0.026] px-3.5 py-2.5 text-[11.5px] font-medium leading-relaxed text-slate-300"
+                  style={{ borderLeftColor: visual.routeColor }}
                 >
-                  <div className="flex items-center gap-2.5 min-w-0 pr-1">
-                    <span className="w-5.5 h-5.5 rounded-full bg-slate-950 border border-white/20 text-indigo-400 text-[10.5px] font-bold flex items-center justify-center shrink-0">
-                      {idx + 1}
-                    </span>
-                    <div className="flex flex-col min-w-0">
-                      <span className="text-[11px] font-bold text-slate-150 truncate">{wp.name}</span>
-                      <span className="text-[8.5px] font-mono text-slate-500">{wp.lat.toFixed(4)}, {wp.lng.toFixed(4)}</span>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-1 shrink-0">
-                    {/* Move Up button */}
-                    <button
-                      type="button"
-                      disabled={idx <= 1} // Lock index 0 AND index 1 can't displace 0
-                      onClick={() => handleMoveWaypoint(idx, 'up')}
-                      className="w-6 h-6 rounded bg-slate-950 border border-white/5 hover:bg-slate-800 disabled:opacity-25 text-slate-400 hover:text-white flex items-center justify-center transition-colors"
-                      title="Move Up"
-                    >
-                      <ArrowUp className="w-3.5 h-3.5" />
-                    </button>
-                    {/* Move Down button */}
-                    <button
-                      type="button"
-                      disabled={idx === 0 || idx === plannerWaypoints.length - 1} // Lock index 0 from moving
-                      onClick={() => handleMoveWaypoint(idx, 'down')}
-                      className="w-6 h-6 rounded bg-slate-950 border border-white/5 hover:bg-slate-800 disabled:opacity-25 text-slate-400 hover:text-white flex items-center justify-center transition-colors"
-                      title="Move Down"
-                    >
-                      <ArrowDown className="w-3.5 h-3.5" />
-                    </button>
-                    {/* Remove stop button */}
-                    <button
-                      type="button"
-                      disabled={idx === 0} // Lock starter destination
-                      onClick={() => handleRemoveWaypoint(wp.id)}
-                      className="w-6 h-6 rounded bg-slate-950 border border-white/5 hover:bg-rose-950/45 disabled:opacity-25 text-slate-400 hover:text-rose-405 flex items-center justify-center transition-colors"
-                      title="Delete Waypoint"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {/* LLM Routing Appraisal / Statistics HUD */}
-            {plannerResult && (
-              <div className="bg-slate-900 border border-white/10 p-3.5 rounded-2xl flex flex-col gap-2 shrink-0 max-h-[145px] overflow-y-auto custom-scrollbar">
-                <span className="text-[8.5px] font-black text-indigo-400 uppercase tracking-widest block">
-                  🧠 AI Route Analysis Narrative
-                </span>
-                
-                {/* Visual statistics badge */}
-                <div className="grid grid-cols-2 gap-2 py-1.5 border-t border-b border-white/5 text-[9.5px]">
-                  <div className="flex flex-col">
-                    <span className="text-slate-500 uppercase tracking-wider text-[8px] font-extrabold leading-none">Est Distance</span>
-                    <span className="text-white font-extrabold font-mono mt-1 text-[11px] h-3.5 flex items-center">{plannerResult.totalDistance ? plannerResult.totalDistance : `${plannerWaypoints.length * 4.5} km`}</span>
-                  </div>
-                  <div className="flex flex-col border-l border-white/10 pl-2">
-                    <span className="text-slate-500 uppercase tracking-wider text-[8px] font-extrabold leading-none">Energy Spent</span>
-                    <span className="text-indigo-305 font-extrabold font-mono mt-1 text-[11px] h-3.5 flex items-center">
-                      {plannerResult.totalEnergyUsed ? plannerResult.totalEnergyUsed : (plannerVehicleType === 'electric' ? `${Math.round(plannerWaypoints.length * 1.45)} kWh` : `${Math.round(plannerWaypoints.length * 0.12 * 10) / 10} gal`)}
-                    </span>
-                  </div>
+                  <p className="mb-1 text-[8.5px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                    {sheet.eyebrow} insight
+                  </p>
+                  <p>{sheet.insight}</p>
                 </div>
 
-                <p className="text-[10px] text-indigo-200 leading-relaxed italic font-sans animate-fade-in">
-                  "{plannerResult.aiExplanation ? plannerResult.aiExplanation : `Optimized sequence of ${plannerWaypoints.length} waypoints via nearest-neighbor indexing. Selected route maintains minimal lateral displacements across high-speed grids, resulting in optimal battery thermals.`}"
-                </p>
+                {lastAction && (
+                  <div className="mt-2.5 rounded-[16px] border border-white/[0.07] bg-white/[0.03] px-3 py-1.5 text-[9px] font-semibold uppercase tracking-[0.10em] text-slate-300">
+                    Selected: {lastAction}
+                  </div>
+                )}
               </div>
-            )}
 
-            {/* Calculate / Sync footer buttons */}
-            <div className="pt-2 border-t border-white/5 flex flex-col gap-2 shrink-0">
-              <button
-                type="button"
-                onClick={calculateAIPlan}
-                disabled={plannerLoading || plannerWaypoints.length < 2}
-                className={cn(
-                  "w-full h-11 rounded-xl text-xs font-bold uppercase tracking-widest transition-all flex items-center justify-center gap-2 active:scale-98 disabled:opacity-50",
-                  plannerLoading ? "bg-amber-650 text-white font-black animate-pulse" : "bg-indigo-605 hover:bg-indigo-600 text-white"
-                )}
-              >
-                {plannerLoading ? (
-                  <>
-                    <RefreshCw className="w-4 h-4 text-white animate-spin" />
-                    Calculating Scenic Sequencing...
-                  </>
-                ) : (
-                  <>
-                    <BrainCircuit className="w-4 h-4 text-white" />
-                    Solve Sequence with AI
-                  </>
-                )}
-              </button>
-
-              {plannerResult && (
+              <div className="grid shrink-0 grid-cols-[repeat(auto-fit,minmax(8.5rem,1fr))] gap-2 border-t border-outline-variant/45 bg-surface-container-low p-2.5">
                 <button
                   type="button"
-                  onClick={() => {
-                    addRecentAction({
-                      icon: 'sync',
-                      title: 'Tour Schedule Synced',
-                      description: `Pushed Scenic optimized waypoints (${plannerWaypoints.length} stops) to cockpit`,
-                      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                    });
-                    setPlannerSyncApplied(true);
-                    setTimeout(() => setPlannerSyncApplied(false), 3000);
+                  onClick={() => handleModeAction(expandedPrimaryActionLabel)}
+                  className="flex min-h-10 min-w-0 items-center justify-center gap-2 rounded-[16px] bg-primary px-3 text-center text-[10px] font-semibold uppercase leading-tight tracking-[0.05em] text-on-primary shadow-ambient transition duration-200 ease-out active:scale-[0.98]"
+                >
+                  <PrimaryActionIcon className="h-4 w-4 shrink-0" />
+                  {expandedPrimaryActionLabel}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleModeAction(sheet.secondaryAction)}
+                  className="flex min-h-10 min-w-0 items-center justify-center gap-2 rounded-[16px] border border-outline-variant/45 bg-surface-container-lowest px-3 text-center text-[10px] font-semibold uppercase leading-tight tracking-[0.05em] text-slate-100 shadow-ambient transition duration-200 ease-out active:scale-[0.98]"
+                  style={{
+                    borderColor: `${visual.routeColor}35`,
                   }}
-                  className={cn(
-                    "w-full h-10 rounded-xl text-[10.5px] font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2 border border-white/10",
-                    plannerSyncApplied ? "bg-emerald-600 border-emerald-500 text-white" : "bg-transparent hover:border-white/20 text-indigo-400 hover:text-indigo-300"
-                  )}
                 >
-                  {plannerSyncApplied ? (
-                    <>
-                      <Check className="w-3.5 h-3.5 text-white animate-bounce" />
-                      COCKPIT WAYPOINTS TRANSFERRED
-                    </>
-                  ) : (
-                    <>
-                      <Navigation className="w-3.5 h-3.5" />
-                      Sync Waypoint Tour to EQ HUD
-                    </>
-                  )}
+                  <SecondaryActionIcon className="h-4 w-4 shrink-0" style={{ color: visual.routeColor }} />
+                  {sheet.secondaryAction}
                 </button>
-              )}
+              </div>
             </div>
-            
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Bottom Interface */}
-      <AnimatePresence>
-        {optimizedRoute ? (
-          /* Multi-stop Timeline Detail Screen */
-          <motion.div
-            initial={{ y: 250, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            exit={{ y: 250, opacity: 0 }}
-            className="absolute bottom-24 left-4 right-4 z-20 md:left-1/2 md:right-auto md:w-[500px] md:-translate-x-1/2"
-          >
-            <div className="bg-slate-950/95 border border-white/10 rounded-3xl p-5 shadow-2xl relative overflow-hidden backdrop-blur-md flex flex-col gap-4">
-              
-              {/* Premium Mercedes-Benz aesthetic progress indicators */}
-              <div className="absolute inset-x-0 -top-px h-px bg-gradient-to-r from-transparent via-blue-500/60 to-transparent" />
-              <div className="absolute inset-x-0 -bottom-px h-px bg-gradient-to-r from-transparent via-emerald-500/40 to-transparent" />
-
-              <div className="flex justify-between items-start">
-                <div className="flex flex-col">
-                  <div className="flex items-center gap-1.5">
-                    <Sparkles className="w-4.5 h-4.5 text-blue-400" />
-                    <span className="text-[10px] font-bold text-blue-400 uppercase tracking-widest">GEMINI COMMUTE INTELLIGENCE</span>
-                  </div>
-                  <h2 className="text-lg font-extrabold text-white mt-1">Optimal Commuting Path</h2>
-                </div>
-                <div className="bg-emerald-500/15 border border-emerald-500/20 px-3 py-1 rounded-full text-[10px] text-emerald-400 font-extrabold tracking-wider">
-                  SAVINGS: ~24 MINS
-                </div>
-              </div>
-
-              {/* Explanatory insights */}
-              <p className="text-xs text-slate-400 leading-relaxed bg-white/5 p-3 rounded-2xl border border-white/5">
-                {optimizedRoute.explanation}
-              </p>
-
-              {/* Optimized Stops Route Timeline list container */}
-              <div className="max-h-[220px] overflow-y-auto space-y-3 pr-1 py-1 custom-scrollbar">
-                {optimizedRoute.stops.map((stop, index) => (
-                  <div key={stop.id} className="relative flex gap-3 pl-2.5">
-                    
-                    {/* Vertical timeline connector */}
-                    {index < optimizedRoute.stops.length - 1 && (
-                      <div className="absolute left-[21px] top-6 bottom-[-22px] w-[2px] bg-slate-800" />
-                    )}
-
-                    <div className="w-5 h-5 rounded-full bg-blue-600/20 border border-blue-500/40 flex items-center justify-center text-[10px] font-bold text-blue-400 shrink-0 mt-1">
-                      {index + 1}
-                    </div>
-
-                    <div className="flex-1 bg-slate-900/60 border border-white/5 p-3 rounded-2xl flex flex-col gap-1 hover:border-white/10 transition-colors">
-                      <div className="flex justify-between items-start">
-                        <h4 className="text-sm font-bold text-slate-100">{stop.title}</h4>
-                        <span className="text-xs text-blue-400 font-bold">{stop.optimizedTime}</span>
-                      </div>
-                      
-                      <div className="flex items-center gap-3.5 text-[11px] text-slate-400 font-medium">
-                        <span className="flex items-center gap-1"><MapPin className="w-3.5 h-3.5 shrink-0" /> {stop.locationName}</span>
-                        <span className="flex items-center gap-1 text-slate-500"><Clock className="w-3.5 h-3.5 shrink-0" /> Drive: {stop.travelDuration}</span>
-                      </div>
-
-                      <div className="mt-1.5 flex items-center justify-between text-[10px] gap-2">
-                        <span className="text-slate-400 font-semibold bg-slate-950 px-2 py-0.5 rounded-md border border-white/5">
-                          Depart: {stop.suggestedDeparture}
-                        </span>
-                        <span className="text-emerald-400 text-right leading-snug font-medium italic">
-                          {stop.insight}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {/* Action Buttons */}
-              <div className="flex gap-3 mt-1 pt-1.5 border-t border-white/5">
-                <button 
-                  onClick={handleSyncToCar}
-                  className={cn(
-                    "flex-1 py-3.5 rounded-xl text-xs font-bold tracking-widest uppercase transition-colors flex items-center justify-center gap-2",
-                    syncApplied 
-                      ? "bg-emerald-600 hover:bg-emerald-500 text-white" 
-                      : "bg-white hover:bg-slate-200 text-slate-950"
-                  )}
-                >
-                  {syncApplied ? (
-                    <>
-                      <Check className="w-4.5 h-4.5 text-white" />
-                      COCKPIT SYNCED
-                    </>
-                  ) : (
-                    <>
-                      <Navigation className="w-4.5 h-4.5" />
-                      SYNC MB COCKPIT
-                    </>
-                  )}
-                </button>
-                <button 
-                  onClick={() => {
-                    setOptimizedRoute(null);
-                    setShowETA(true);
-                  }}
-                  className="bg-white/5 hover:bg-white/10 border border-white/10 text-white px-4 rounded-xl text-xs font-bold tracking-widest uppercase transition-colors flex items-center justify-center"
-                  title="Close Optimized View"
-                >
-                  <X className="w-4.5 h-4.5" />
-                </button>
-              </div>
-
-            </div>
-          </motion.div>
-        ) : (
-          /* Default origin-to-destination ETA overlay */
-          showETA && (
-            <motion.div 
-              initial={{ y: 200, opacity: 0 }}
-              animate={{ y: 0, opacity: 1 }}
-              exit={{ y: 200, opacity: 0 }}
-              className="absolute bottom-24 left-4 right-4 z-20 md:left-1/2 md:right-auto md:w-[480px] md:-translate-x-1/2"
-            >
-              <div className="bg-slate-900 border border-white/10 rounded-3xl p-6 shadow-2xl flex flex-col gap-5 relative overflow-hidden">
-                 {/* Glow effect */}
-                 <div className="absolute inset-x-0 -top-px h-px bg-gradient-to-r from-transparent via-blue-500/50 to-transparent" />
-                 <div className="absolute inset-x-0 -bottom-px h-px bg-gradient-to-r from-transparent via-emerald-500/50 to-transparent" />
-
-                <div className="flex justify-between items-start">
-                  <div className="flex flex-col">
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Current Destination</span>
-                    <h2 className="text-2xl font-bold text-blue-400">Office — 12 min</h2>
-                  </div>
-                  <div className="bg-emerald-500/20 px-3 py-1 rounded-full border border-emerald-500/30">
-                    <span className="text-[10px] font-bold text-emerald-400 tracking-wider">LIVE TRAFFIC</span>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4 py-3 border-y border-white/5">
-                  <div className="flex flex-col gap-1">
-                    <span className="text-xs text-slate-400 font-medium">Suggested Departure</span>
-                    <div className="flex items-center gap-2 text-blue-400">
-                      <span className="font-semibold">8:45 AM</span>
-                    </div>
-                  </div>
-                  <div className="flex flex-col gap-1">
-                    <span className="text-xs text-slate-400 font-medium">Traffic Status</span>
-                    <div className="flex items-center gap-2 text-emerald-400">
-                      <span className="font-semibold uppercase tracking-wider text-sm">Light</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex gap-3 mt-1">
-                  <button className="flex-1 bg-white hover:bg-slate-200 text-slate-950 py-3.5 rounded-xl text-xs font-bold tracking-widest uppercase transition-colors">
-                    Start Navigation
-                  </button>
-                  <button onClick={handleOptimizeRoutes} className="flex-1 bg-white/5 hover:bg-white/10 border border-white/10 text-white py-3.5 rounded-xl text-xs font-bold tracking-widest uppercase transition-colors flex items-center justify-center gap-2">
-                    <BrainCircuit className="w-4 h-4 text-blue-400" />
-                    AI Optimize
-                  </button>
-                </div>
-              </div>
-            </motion.div>
-          )
-        )}
-      </AnimatePresence>
-
+          )}
+        </section>
+      </div>
     </div>
   );
 }

@@ -18,7 +18,7 @@ export default function BottomNav() {
   ];
 
   return (
-    <nav className="fixed inset-x-0 bottom-0 z-40 mx-auto flex w-full max-w-xl items-center justify-around rounded-t-3xl border border-b-0 border-white/10 bg-slate-950/50 px-2 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-2 shadow-[0_-8px_32px_0_rgba(0,0,0,0.36)] backdrop-blur-xl sm:hidden">
+    <nav className="fixed inset-x-0 bottom-0 z-40 mx-auto flex w-full max-w-xl items-center justify-around rounded-t-3xl border border-b-0 border-outline-variant/55 bg-surface-container-lowest/88 px-2 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-2 shadow-ambient-lg backdrop-blur-xl sm:hidden">
       {tabs.map((tab) => {
         const isActive = path === tab.path;
         return (
@@ -27,13 +27,13 @@ export default function BottomNav() {
             to={tab.path}
             className={cn(
               "relative flex flex-1 min-h-[64px] flex-col items-center justify-center p-1.5 transition-all duration-300",
-              isActive ? "text-blue-400 drop-shadow-[0_0_8px_rgba(59,130,246,0.8)]" : "text-slate-400 hover:text-blue-300"
+              isActive ? "text-primary" : "text-on-surface-variant hover:text-primary"
             )}
           >
             {isActive && (
               <motion.div
                 layoutId="mobile-nav-bg"
-                className="absolute inset-1 bg-blue-500/20 backdrop-blur-md rounded-2xl border border-white/20 shadow-[0_4px_16px_rgba(59,130,246,0.3),inset_0_1px_2px_rgba(255,255,255,0.4)]"
+                className="absolute inset-1 bg-primary-container/35 backdrop-blur-md rounded-2xl border border-primary/20 shadow-ambient"
                 transition={{ type: "spring", stiffness: 300, damping: 30 }}
                 style={{ willChange: "transform" }}
               />

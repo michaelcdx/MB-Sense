@@ -190,10 +190,10 @@ export default function VoiceAssistant() {
       {showFab && !isOpen && (
         <button 
           onClick={startVoiceSession}
-          className="fixed bottom-24 right-6 w-14 h-14 bg-blue-500 rounded-full shadow-[0_0_30px_rgba(59,130,246,0.3)] flex items-center justify-center hover:scale-105 active:scale-95 transition-all z-40"
+          className="fixed bottom-24 right-6 w-14 h-14 bg-primary rounded-full shadow-ambient-lg flex items-center justify-center hover:scale-105 active:scale-95 transition-all z-40"
         >
-          <div className="absolute inset-0 rounded-full bg-blue-500/30 animate-ping" />
-          <Mic className="w-6 h-6 text-white relative z-10" />
+          <div className="absolute inset-0 rounded-full bg-primary/30 animate-ping" />
+          <Mic className="w-6 h-6 text-on-primary relative z-10" />
         </button>
       )}
 
@@ -203,11 +203,11 @@ export default function VoiceAssistant() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex flex-col pt-10 pb-6 px-5 bg-slate-950"
+            className="fixed inset-0 z-50 flex flex-col pt-10 pb-6 px-5 bg-surface"
           >
             {/* Top close */}
             <div className="flex justify-end w-full">
-              <button onClick={closeSession} className="w-12 h-12 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-slate-400 hover:text-white transition-colors">
+              <button onClick={closeSession} className="w-12 h-12 rounded-full bg-surface-container-lowest border border-outline-variant/45 shadow-ambient flex items-center justify-center text-slate-400 hover:text-on-surface transition-colors">
                 <X className="w-6 h-6" />
               </button>
             </div>
@@ -217,19 +217,19 @@ export default function VoiceAssistant() {
               <div className="relative mb-12">
                 <div className={cn(
                   "w-24 h-24 rounded-full flex items-center justify-center transition-all duration-500",
-                  status === 'listening' ? "bg-blue-500/20 shadow-[0_0_50px_rgba(59,130,246,0.4)] animate-pulse" : 
-                  status === 'speaking' ? "bg-emerald-500/20 shadow-[0_0_50px_rgba(52,211,153,0.4)]" :
-                  "bg-slate-800"
+                  status === 'listening' ? "bg-primary/15 shadow-ambient-lg animate-pulse" : 
+                  status === 'speaking' ? "bg-emerald-500/15 shadow-ambient-lg" :
+                  "bg-surface-container"
                 )}>
                   <div className={cn(
                     "w-16 h-16 rounded-full flex items-center justify-center transition-all",
-                    status === 'listening' ? "bg-blue-500/40" : 
-                    status === 'speaking' ? "bg-emerald-500/40" :
-                    "bg-slate-700"
+                    status === 'listening' ? "bg-primary/30" : 
+                    status === 'speaking' ? "bg-emerald-500/30" :
+                    "bg-surface-container-high"
                   )}>
                     <div className={cn(
                       "w-8 h-8 rounded-full",
-                      status === 'listening' ? "bg-blue-500" : 
+                      status === 'listening' ? "bg-primary" : 
                       status === 'speaking' ? "bg-emerald-500" :
                       "bg-slate-600"
                     )} />
@@ -241,7 +241,7 @@ export default function VoiceAssistant() {
               <div className="text-center px-4">
                 <p className={cn(
                   "text-2xl font-bold tracking-tight leading-snug transition-colors",
-                  status === 'listening' ? "text-blue-400" : "text-white"
+                  status === 'listening' ? "text-primary" : "text-on-surface"
                 )}>
                   "{transcript}"
                 </p>
@@ -258,7 +258,7 @@ export default function VoiceAssistant() {
                      key={i}
                      animate={{ height: status === 'listening' ? [8, 32, 8] : 8 }}
                      transition={{ repeat: Infinity, duration: 1.2, delay: i * 0.1 }}
-                     className="w-1.5 bg-blue-500 rounded-full opacity-60"
+                     className="w-1.5 bg-primary rounded-full opacity-60"
                    />
                  ))}
                </div>
