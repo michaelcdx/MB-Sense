@@ -42,6 +42,7 @@ interface AppStore {
   };
   vehicle: VehicleState;
   events: CalendarEvent[];
+  calendarRevision: number;
   recentActions: {icon: string, title: string, time: string, description: string}[];
   // Actions
   login: () => void;
@@ -53,6 +54,8 @@ interface AppStore {
   togglePreCool: () => void;
   setBatteryLevel: (level: number) => void;
   addEvent: (event: CalendarEvent) => void;
+  updateEvent: (event: CalendarEvent) => void;
+  deleteEvent: (eventId: string) => void;
   addRecentAction: (action: {icon: string, title: string, time: string, description: string}) => void;
 }
 
@@ -257,8 +260,16 @@ function getEventSortMinutes(time: string) {
   return hour * 60 + minute;
 }
 
+function sortCalendarEvents(events: CalendarEvent[]) {
+  return [...events].sort((a, b) => {
+    const aDate = a.date instanceof Date ? a.date : new Date(a.date);
+    const bDate = b.date instanceof Date ? b.date : new Date(b.date);
+    return aDate.getTime() - bDate.getTime() || getEventSortMinutes(a.time) - getEventSortMinutes(b.time);
+  });
+}
+
 function buildBusinessCalendarEvents(): CalendarEvent[] {
-  return businessCalendarSeeds
+  return sortCalendarEvents(businessCalendarSeeds
     .map((seed) => {
       const date = dateOf(seed.day, seed.monthIndex);
       return makeEvent(
@@ -270,8 +281,7 @@ function buildBusinessCalendarEvents(): CalendarEvent[] {
         seed.location,
         seed.options
       );
-    })
-    .sort((a, b) => a.date.getTime() - b.date.getTime() || getEventSortMinutes(a.time) - getEventSortMinutes(b.time));
+    }));
 }
 
 export const useAppStore = create<AppStore>((set) => ({
@@ -298,6 +308,7 @@ export const useAppStore = create<AppStore>((set) => ({
     preCooling: false
   },
   events: buildBusinessCalendarEvents(),
+  calendarRevision: 0,
   recentActions: [
     { icon: 'battery_charging_full', title: 'Charging Window Planned', description: 'Tonight 8:30 PM-10:00 PM', time: '18:45' },
     { icon: 'warning', title: 'Battery Risk Predicted', description: 'Thursday travel may drop below reserve', time: '16:20' },
@@ -338,7 +349,18 @@ export const useAppStore = create<AppStore>((set) => ({
     vehicle: { ...state.vehicle, batteryLevel: Math.max(0, Math.min(100, Math.round(level))) }
   })),
 
-  addEvent: (event) => set((state) => ({ events: [...state.events, event] })),
+  addEvent: (event) => set((state) => ({
+    events: sortCalendarEvents([...state.events, event]),
+    calendarRevision: state.calendarRevision + 1
+  })),
+  updateEvent: (event) => set((state) => ({
+    events: sortCalendarEvents(state.events.map((item) => item.id === event.id ? event : item)),
+    calendarRevision: state.calendarRevision + 1
+  })),
+  deleteEvent: (eventId) => set((state) => ({
+    events: state.events.filter((event) => event.id !== eventId),
+    calendarRevision: state.calendarRevision + 1
+  })),
   addRecentAction: (action) => set((state) => ({ recentActions: [action, ...state.recentActions].slice(0, 5) })),
   login: () => set({ isAuthenticated: true }),
   logout: () => set({ isAuthenticated: false }),

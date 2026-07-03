@@ -1,7 +1,8 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { motion } from 'motion/react';
 import {
   AlertTriangle,
+  ArrowRight,
   Battery,
   BatteryCharging,
   BrainCircuit,
@@ -12,17 +13,24 @@ import {
   Gauge,
   MapPin,
   MessageCircle,
+  Minus,
   PlugZap,
+  Plus,
   Route,
   Timer
 } from 'lucide-react';
 import Chatbot from '../components/Chatbot';
 import VoiceAssistant from '../components/VoiceAssistant';
 import { buildChargingPlan, formatPlanDateTime, formatPlanTimeRange } from '../lib/chargingAgents';
+import { buildScheduleDistanceResults } from '../lib/scheduleDistanceAgent';
 import { cn } from '../lib/utils';
 import { useAppStore } from '../store/useAppStore';
+import { useCalendarViewStore } from '../store/useCalendarViewStore';
 
 const agentIcons = [CalendarClock, Gauge, Clock3, PlugZap, CheckCircle2, MessageCircle];
+const targetChargeOptions = [60, 70, 80, 90, 100];
+const minTargetCharge = 50;
+const maxTargetCharge = 100;
 
 function statusClass(status: 'ready' | 'watch' | 'action') {
   if (status === 'action') return 'border-amber-500/25 bg-amber-950/60 text-amber-500';
@@ -36,11 +44,31 @@ function trafficClass(traffic: string) {
   return 'text-emerald-500 bg-emerald-950/70 border-emerald-300/25';
 }
 
+function formatChargeDuration(minutes: number | null) {
+  if (minutes === null) return 'Not modeled';
+  if (minutes < 60) return `${minutes}m`;
+
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  return remainder ? `${hours}h ${remainder}m` : `${hours}h`;
+}
+
+function routeSourceLabel(source: string) {
+  if (source === 'known-real-world') return 'Real route';
+  if (source === 'coordinate-estimated') return 'Live estimate';
+  return 'Estimate';
+}
+
 export default function AI() {
-  const { events, vehicle, weather } = useAppStore();
-  const plan = useMemo(() => buildChargingPlan(events, vehicle, weather), [events, vehicle, weather]);
+  const { events, vehicle, weather, calendarRevision } = useAppStore();
+  const selectedDate = useCalendarViewStore((state) => state.selectedDate);
+  const [targetCharge, setTargetCharge] = useState(80);
+  const plan = useMemo(() => buildChargingPlan(events, vehicle, weather, targetCharge, selectedDate), [events, vehicle, weather, targetCharge, selectedDate, calendarRevision]);
+  const scheduleDistances = useMemo(() => buildScheduleDistanceResults(events, plan.planningStart), [events, plan.planningStart, calendarRevision]);
+  const highlightedDistance = scheduleDistances.find((result) => result.source === 'known-real-world') ?? scheduleDistances.find((result) => result.source === 'coordinate-estimated') ?? scheduleDistances[0];
   const bestWindowLabel = formatPlanTimeRange(plan.decision.start, plan.decision.end);
   const projectedRisk = plan.energy.projectedBattery < plan.energy.reserveTarget;
+  const updateTargetCharge = (value: number) => setTargetCharge(Math.max(minTargetCharge, Math.min(maxTargetCharge, Math.round(value / 5) * 5)));
 
   return (
     <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} className="flex flex-col gap-5 pb-24 sm:pb-8">
@@ -94,11 +122,13 @@ export default function AI() {
               <Gauge className="mb-2 h-5 w-5 text-rose-500" />
               <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">After Trips</p>
               <p className="mt-1 text-2xl font-black text-on-surface">{plan.energy.projectedBattery}%</p>
+              <p className="mt-1 text-[10px] font-bold text-slate-500">from {plan.energy.plannedStartBattery}% target/current</p>
             </div>
             <div className="rounded-2xl border border-outline-variant/45 bg-surface-container-low p-4">
               <Timer className="mb-2 h-5 w-5 text-emerald-500" />
               <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Charge Time</p>
-              <p className="mt-1 text-2xl font-black text-on-surface">{plan.charging.minutesNeeded}m</p>
+              <p className="mt-1 text-xl font-black text-on-surface">AC {formatChargeDuration(plan.charging.ac.minutesNeeded)}</p>
+              <p className="mt-1 text-[10px] font-bold text-slate-500">DC {formatChargeDuration(plan.charging.dcFast.minutesNeeded)}{plan.charging.dcFast.validToTarget ? '' : ` to ${plan.charging.dcFast.targetBattery}%`}</p>
             </div>
           </div>
         </div>
@@ -112,21 +142,113 @@ export default function AI() {
             <PlugZap className="h-6 w-6 text-primary" />
           </div>
           <div className="mt-5 space-y-3">
-            <div className="flex items-center justify-between rounded-2xl border border-outline-variant/45 bg-surface-container-low p-4">
-              <span className="text-xs font-bold uppercase tracking-widest text-slate-500">Target</span>
-              <span className="text-lg font-black text-on-surface">{plan.charging.targetBattery}%</span>
+            <div className="rounded-2xl border border-primary/20 bg-primary/10 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-xs font-bold uppercase tracking-widest text-primary">Target charge</span>
+                <div className="flex items-center gap-2">
+                  <button type="button" onClick={() => updateTargetCharge(targetCharge - 5)} className="flex h-8 w-8 items-center justify-center rounded-xl border border-primary/20 bg-surface-container-lowest text-primary transition hover:bg-surface-container" aria-label="Decrease target charge">
+                    <Minus className="h-3.5 w-3.5" />
+                  </button>
+                  <span className="min-w-12 text-center text-lg font-black text-on-surface">{targetCharge}%</span>
+                  <button type="button" onClick={() => updateTargetCharge(targetCharge + 5)} className="flex h-8 w-8 items-center justify-center rounded-xl border border-primary/20 bg-surface-container-lowest text-primary transition hover:bg-surface-container" aria-label="Increase target charge">
+                    <Plus className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </div>
+              <input
+                type="range"
+                min={minTargetCharge}
+                max={maxTargetCharge}
+                step={5}
+                value={targetCharge}
+                onChange={(event) => updateTargetCharge(Number(event.target.value))}
+                className="mt-4 w-full accent-primary"
+                aria-label="Target charge"
+              />
+              <div className="mt-3 grid grid-cols-5 gap-1.5">
+                {targetChargeOptions.map((value) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => updateTargetCharge(value)}
+                    className={cn('h-8 rounded-xl border text-[10px] font-black transition', targetCharge === value ? 'border-primary bg-primary text-on-primary' : 'border-outline-variant/45 bg-surface-container-lowest text-on-surface-variant hover:border-primary/35 hover:text-primary')}
+                  >
+                    {value}%
+                  </button>
+                ))}
+              </div>
             </div>
             <div className="flex items-center justify-between rounded-2xl border border-outline-variant/45 bg-surface-container-low p-4">
-              <span className="text-xs font-bold uppercase tracking-widest text-slate-500">Top up</span>
+              <span className="text-xs font-bold uppercase tracking-widest text-slate-500">Charge needed</span>
               <span className="text-lg font-black text-on-surface">+{plan.energy.topUpPercent}%</span>
             </div>
             <div className="flex items-center justify-between rounded-2xl border border-outline-variant/45 bg-surface-container-low p-4">
-              <span className="text-xs font-bold uppercase tracking-widest text-slate-500">Rate</span>
-              <span className="text-lg font-black text-on-surface">{plan.charging.chargeRatePercentPerHour}%/hr</span>
+              <div>
+                <span className="text-xs font-bold uppercase tracking-widest text-slate-500">AC estimate</span>
+                <p className="mt-1 text-[10px] font-bold text-slate-500">{plan.charging.ac.chargeRatePercentPerHour}%/hr · trained 10-100%</p>
+              </div>
+              <span className="text-lg font-black text-on-surface">{formatChargeDuration(plan.charging.ac.minutesNeeded)}</span>
+            </div>
+            <div className="flex items-center justify-between rounded-2xl border border-outline-variant/45 bg-surface-container-low p-4">
+              <div>
+                <span className="text-xs font-bold uppercase tracking-widest text-slate-500">DC fast estimate</span>
+                <p className="mt-1 text-[10px] font-bold text-slate-500">
+                  {plan.charging.dcFast.validToTarget
+                    ? 'trained 10-80%'
+                    : `${plan.charging.dcFast.unsupportedTopUpPercent}% above 80% not modeled`}
+                </p>
+              </div>
+              <span className="text-lg font-black text-on-surface">
+                {formatChargeDuration(plan.charging.dcFast.minutesNeeded)}
+                {!plan.charging.dcFast.validToTarget && plan.charging.dcFast.minutesNeeded !== null ? ` to ${plan.charging.dcFast.targetBattery}%` : ''}
+              </span>
             </div>
           </div>
         </div>
       </section>
+
+      {highlightedDistance ? (
+        <section className="rounded-3xl border border-outline-variant/45 bg-surface-container-lowest p-5 shadow-ambient-lg sm:p-6">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 text-[11px] font-black uppercase tracking-[0.24em] text-primary">
+                <Route className="h-4 w-4" />
+                Schedule Distance Agent
+              </div>
+              <h2 className="mt-2 text-2xl font-black tracking-tight text-on-surface">Between schedules</h2>
+              <div className="mt-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] md:items-center">
+                <div className="rounded-2xl border border-outline-variant/45 bg-surface-container-low p-4">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">{highlightedDistance.fromTime}</p>
+                  <p className="mt-1 text-sm font-black text-on-surface">{highlightedDistance.fromTitle}</p>
+                  <p className="mt-1 text-xs font-semibold text-slate-500">{highlightedDistance.fromLocation}</p>
+                </div>
+                <div className="hidden h-10 w-10 items-center justify-center rounded-full border border-primary/20 bg-primary/10 text-primary md:flex">
+                  <ArrowRight className="h-5 w-5" />
+                </div>
+                <div className="rounded-2xl border border-outline-variant/45 bg-surface-container-low p-4">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">{highlightedDistance.toTime}</p>
+                  <p className="mt-1 text-sm font-black text-on-surface">{highlightedDistance.toTitle}</p>
+                  <p className="mt-1 text-xs font-semibold text-slate-500">{highlightedDistance.toLocation}</p>
+                </div>
+              </div>
+            </div>
+            <div className="grid grid-cols-3 gap-2 lg:min-w-[360px]">
+              <div className="rounded-2xl border border-primary/20 bg-primary/10 p-4 text-center">
+                <p className="text-[9px] font-black uppercase tracking-widest text-primary">{routeSourceLabel(highlightedDistance.source)}</p>
+                <p className="mt-1 text-xl font-black text-on-surface">{highlightedDistance.distanceKm} km</p>
+              </div>
+              <div className="rounded-2xl border border-outline-variant/45 bg-surface-container-low p-4 text-center">
+                <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">Drive</p>
+                <p className="mt-1 text-xl font-black text-on-surface">{highlightedDistance.durationMinutes ? `${highlightedDistance.durationMinutes}m` : 'Est.'}</p>
+              </div>
+              <div className="rounded-2xl border border-outline-variant/45 bg-surface-container-low p-4 text-center">
+                <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">Buffer</p>
+                <p className="mt-1 text-xl font-black text-on-surface">{highlightedDistance.bufferMinutes}m</p>
+              </div>
+            </div>
+          </div>
+        </section>
+      ) : null}
 
       <section className="grid grid-cols-1 gap-3 lg:grid-cols-3 xl:grid-cols-6">
         {plan.agents.map((agent, index) => {
@@ -165,12 +287,14 @@ export default function AI() {
                     <span className={cn('rounded-full border px-2 py-1 text-[9px] font-black uppercase tracking-widest', trafficClass(trip.traffic))}>{trip.traffic}</span>
                   </div>
                   <p className="mt-1 flex items-center gap-1.5 text-xs font-semibold text-slate-500"><MapPin className="h-3.5 w-3.5" />{trip.location}</p>
+                  <p className="mt-1 text-xs font-semibold text-slate-500">From {trip.originLocation}</p>
                   <p className="mt-1 text-xs font-semibold text-slate-500">Depart {trip.departureTime} for {formatPlanDateTime(trip.date)}</p>
                 </div>
                 <div className="flex gap-2 sm:justify-end">
                   <div className="rounded-xl border border-outline-variant/45 bg-surface-container-lowest px-3 py-2 text-center">
-                    <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">Route</p>
+                    <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">{routeSourceLabel(trip.routeDistanceSource)}</p>
                     <p className="mt-1 text-sm font-black text-on-surface">{trip.distanceKm} km</p>
+                    {trip.routeDurationMinutes ? <p className="mt-0.5 text-[10px] font-bold text-slate-500">{trip.routeDurationMinutes} min</p> : null}
                   </div>
                   <div className="rounded-xl border border-outline-variant/45 bg-surface-container-lowest px-3 py-2 text-center">
                     <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">Battery</p>
@@ -186,7 +310,7 @@ export default function AI() {
           <div className="mb-4 flex items-center justify-between gap-3">
             <div>
               <p className="text-[10px] font-black uppercase tracking-widest text-primary">Availability Agent</p>
-              <h2 className="mt-1 text-xl font-black text-on-surface">Parked windows</h2>
+              <h2 className="mt-1 text-xl font-black text-on-surface">Free parked slots</h2>
             </div>
             <Clock3 className="h-6 w-6 text-primary" />
           </div>
