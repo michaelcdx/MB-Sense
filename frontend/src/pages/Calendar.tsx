@@ -1,9 +1,10 @@
 import { motion } from 'motion/react';
 import { CalendarEvent, useAppStore } from '../store/useAppStore';
-import { AlertTriangle, BatteryCharging, BrainCircuit, CalendarDays, Car, ChevronLeft, ChevronRight, Save, Trash2, Video, X, Zap } from 'lucide-react';
+import { AlertTriangle, BatteryCharging, BrainCircuit, Car, Save, Trash2, Video, X, Zap } from 'lucide-react';
 import { cn } from '../lib/utils';
 import GlassButton from '../components/GlassButton';
 import { FormEvent, PointerEvent as ReactPointerEvent, useMemo, useRef, useState } from 'react';
+import { useCalendarViewStore } from '../store/useCalendarViewStore';
 
 type EventMode = 'create' | 'edit';
 
@@ -249,44 +250,6 @@ function sortEvents(events: CalendarEvent[]) {
   return [...events].sort((a, b) => getEventStart(a) - getEventStart(b));
 }
 
-function CalendarHeader({ userInitials, weekStart, weeks, onPrevious, onNext, onToday, onWeekChange }: {
-  userInitials: string;
-  weekStart: Date;
-  weeks: Date[];
-  onPrevious: () => void;
-  onNext: () => void;
-  onToday: () => void;
-  onWeekChange: (week: Date) => void;
-}) {
-  return (
-    <header className="flex h-12 shrink-0 items-center justify-between border-b border-outline-variant/45 bg-surface-container-low px-3 text-on-surface">
-      <div className="flex min-w-0 items-center gap-3">
-        <div className="flex items-center gap-2 text-sm font-semibold">
-          <CalendarDays className="h-4 w-4 text-on-surface-variant" />
-          <span>Calendar</span>
-        </div>
-        <div className="hidden h-5 w-px bg-outline-variant/45 sm:block" />
-        <div className="hidden min-w-0 items-baseline gap-2 sm:flex">
-          <span className="truncate text-sm font-semibold">Week schedule</span>
-          <span className="text-xs font-medium text-slate-500">{monthHeaderFormatter.format(weekStart)}</span>
-        </div>
-      </div>
-
-      <div className="flex items-center gap-1.5">
-        <select value={toDateInputValue(weekStart)} onChange={(event) => onWeekChange(fromDateInputValue(event.target.value))} className="hidden h-8 rounded-md border border-outline-variant/45 bg-surface-container-lowest px-2 text-xs font-semibold text-on-surface outline-none sm:block" aria-label="Select week">
-          {weeks.map((week) => <option key={week.toISOString()} value={toDateInputValue(week)}>Week {getWeekRangeLabel(week)}</option>)}
-        </select>
-        <button onClick={onToday} className="h-8 rounded-md border border-outline-variant/45 bg-surface-container-lowest px-3 text-xs font-semibold text-on-surface transition hover:bg-surface-container">Today</button>
-        <div className="flex overflow-hidden rounded-md border border-outline-variant/45">
-          <button onClick={onPrevious} className="flex h-8 w-8 items-center justify-center bg-surface-container-lowest text-on-surface-variant transition hover:bg-surface-container" aria-label="Previous week"><ChevronLeft className="h-4 w-4" /></button>
-          <button onClick={onNext} className="flex h-8 w-8 items-center justify-center border-l border-outline-variant/45 bg-surface-container-lowest text-on-surface-variant transition hover:bg-surface-container" aria-label="Next week"><ChevronRight className="h-4 w-4" /></button>
-        </div>
-        <div className="ml-1 flex h-8 w-8 items-center justify-center rounded-full border border-outline-variant/45 bg-surface-container text-xs font-black text-on-surface">{userInitials}</div>
-      </div>
-    </header>
-  );
-}
-
 function TimeColumn() {
   return (
     <div className="sticky left-0 z-20 border-r border-outline-variant/30 bg-surface-container-lowest" style={{ height: calendarHeight }}>
@@ -494,12 +457,10 @@ function EventSidePanel({ mode, form, editingEvent, onChange, onClose, onDelete,
 }
 
 export default function Calendar() {
-  const { events, user } = useAppStore();
-  const initialDate = useMemo(() => getInitialCalendarDate(), []);
-  const weeks = useMemo(() => getAvailableWeeks(), []);
+  const { events } = useAppStore();
+  const { selectedDate, weekStart, setSelectedDate, setActiveWeek } = useCalendarViewStore();
+  const initialDate = useMemo(() => selectedDate, []);
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>(events);
-  const [selectedDate, setSelectedDate] = useState(() => startOfDay(initialDate));
-  const [weekStart, setWeekStart] = useState(() => startOfWeek(initialDate));
   const [dragSelection, setDragSelection] = useState<DragSelection | null>(null);
   const dragStartRef = useRef<DragStartState | null>(null);
   const [panelMode, setPanelMode] = useState<EventMode | null>(null);
@@ -545,13 +506,6 @@ export default function Calendar() {
   }, [draftEvent, weekEvents, weekStart]);
 
   const selectedEventId = panelMode === 'create' ? draftEventId : editingEvent?.id;
-  const userInitials = user.name.split(' ').map((part) => part[0]).join('').slice(0, 2).toUpperCase();
-
-  const setActiveWeek = (date: Date) => {
-    const nextWeek = startOfWeek(date);
-    setWeekStart(nextWeek);
-    setSelectedDate(startOfDay(date));
-  };
 
   const openPanelForCreate = (date: Date, start = 9 * 60, end = 10 * 60) => {
     setEditingEvent(null);
@@ -632,8 +586,7 @@ export default function Calendar() {
     };
 
     setCalendarEvents((current) => editingEvent ? current.map((item) => item.id === editingEvent.id ? nextEvent : item) : [...current, nextEvent]);
-    setSelectedDate(startOfDay(date));
-    setWeekStart(startOfWeek(date));
+    setActiveWeek(date);
     setEditingEvent(nextEvent);
     setForm(formFromEvent(nextEvent));
     setPanelMode('edit');
@@ -647,16 +600,6 @@ export default function Calendar() {
 
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex h-full min-h-0 flex-col overflow-hidden bg-surface text-on-surface">
-      <CalendarHeader
-        userInitials={userInitials}
-        weekStart={weekStart}
-        weeks={weeks}
-        onPrevious={() => setActiveWeek(addDays(weekStart, -7))}
-        onNext={() => setActiveWeek(addDays(weekStart, 7))}
-        onToday={() => setActiveWeek(getInitialCalendarDate())}
-        onWeekChange={setActiveWeek}
-      />
-
       <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_minmax(240px,34vh)] overflow-hidden lg:grid-cols-[minmax(0,1fr)_300px] lg:grid-rows-1">
         <CalendarWeekView
           weekDays={weekDays}

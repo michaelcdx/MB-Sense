@@ -2,8 +2,11 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { MouseEvent, PointerEvent, ReactNode, WheelEvent } from 'react';
 import { APIProvider, AdvancedMarker, Map as GoogleMap, useMap } from '@vis.gl/react-google-maps';
 import {
+  AlertTriangle,
   Banknote,
+  BatteryCharging,
   Check,
+  CloudRain,
   Coffee,
   LocateFixed,
   MapPin,
@@ -102,6 +105,11 @@ const modeVisuals: Record<MapMode, { routeColor: string; glow: string; tone: Map
 };
 
 type ActivePanel = null | 'search' | 'routeCompare' | 'favoriteStops' | 'evStops' | 'costBreakdown';
+type DriveExperienceMode = 'driveNow' | 'futureDrivePreview';
+type FutureDriveAction = 'Optimize Selected Plan' | 'Compare Rescue Routes' | 'Set Charging Reminder';
+type FutureDrivePlanId = 'planA' | 'planB' | 'planC';
+type FutureDriveWhatIfId = 'skipChargingTonight' | 'rainTomorrow' | 'heavyTraffic' | 'useEcoRoute';
+type FutureDriveRiskTone = 'safe' | 'watch' | 'high' | 'critical';
 type RouteVariant = 'recommended' | 'comfort' | 'eco';
 
 type MockDestination = {
@@ -239,6 +247,45 @@ type FavoriteStop = {
   recommended?: boolean;
 };
 
+type FutureDriveStop = {
+  id: string;
+  name: string;
+  shortName: string;
+  batteryPercent: number;
+  position: Coordinates;
+  markerTone: FutureDriveRiskTone;
+};
+
+type FutureDriveSegment = {
+  id: string;
+  fromIndex: number;
+  toIndex: number;
+  tone: FutureDriveRiskTone;
+};
+
+type FutureDriveRescuePlan = {
+  id: FutureDrivePlanId;
+  title: string;
+  action: string;
+  resultBattery: number;
+  label: string;
+  tone: MapTone;
+};
+
+type FutureDriveWhatIf = {
+  id: FutureDriveWhatIfId;
+  label: string;
+  effect: number;
+};
+
+type FutureDrivePrediction = {
+  finalBattery: number;
+  lowestBattery: number;
+  riskTone: FutureDriveRiskTone;
+  riskLabel: string;
+  explanation: string;
+};
+
 const favoriteStops: FavoriteStop[] = [
   {
     id: 'morning-coffee',
@@ -292,6 +339,159 @@ const favoriteStops: FavoriteStop[] = [
     position: { lat: 37.472, lng: -122.176 },
   },
 ];
+
+const futureDriveRiskVisuals: Record<FutureDriveRiskTone, { label: string; color: string; glow: string }> = {
+  safe: { label: 'Safe', color: '#4647d3', glow: 'rgba(70, 71, 211, 0.28)' },
+  watch: { label: 'Watch', color: '#f3b51b', glow: 'rgba(243, 181, 27, 0.30)' },
+  high: { label: 'High', color: '#fb7a21', glow: 'rgba(251, 122, 33, 0.30)' },
+  critical: { label: 'Critical', color: '#dc2626', glow: 'rgba(220, 38, 38, 0.34)' },
+};
+
+const futureDriveRescuePlans: FutureDriveRescuePlan[] = [
+  {
+    id: 'planA',
+    title: 'Plan A',
+    action: 'Charge tonight 9 PM - 11 PM',
+    resultBattery: 36,
+    label: 'Recommended',
+    tone: 'blue',
+  },
+  {
+    id: 'planB',
+    title: 'Plan B',
+    action: 'Charge near MB Office during lunch',
+    resultBattery: 25,
+    label: 'Backup',
+    tone: 'cyan',
+  },
+  {
+    id: 'planC',
+    title: 'Plan C',
+    action: 'Use Eco Route',
+    resultBattery: 18,
+    label: 'Energy Saver',
+    tone: 'emerald',
+  },
+];
+
+const futureDriveWhatIfChips: FutureDriveWhatIf[] = [
+  { id: 'skipChargingTonight', label: 'Skip charging tonight', effect: 0 },
+  { id: 'rainTomorrow', label: 'Rain tomorrow', effect: -4 },
+  { id: 'heavyTraffic', label: 'Heavy traffic', effect: -5 },
+  { id: 'useEcoRoute', label: 'Use Eco Route', effect: 6 },
+];
+
+const futureDrivePreview = {
+  title: 'FutureDrive Preview',
+  subtitle: "Tomorrow's Energy Forecast",
+  currentBattery: 52,
+  reserveLimit: 15,
+  riskLevel: 'Critical',
+  lowestBattery: 9,
+  riskPoint: 'After Investor Event',
+  rootCause: 'Rain + heavy traffic after 5 PM',
+  recommendation: 'Charge tonight 9 PM - 11 PM',
+  stops: [
+    {
+      id: 'home',
+      name: 'Home',
+      shortName: 'Home',
+      batteryPercent: 52,
+      position: { lat: 37.775, lng: -122.465 },
+      markerTone: 'safe',
+    },
+    {
+      id: 'mb-office',
+      name: 'MB Office',
+      shortName: 'Office',
+      batteryPercent: 39,
+      position: { lat: 37.686, lng: -122.342 },
+      markerTone: 'safe',
+    },
+    {
+      id: 'client-lunch',
+      name: 'Client Lunch',
+      shortName: 'Lunch',
+      batteryPercent: 28,
+      position: { lat: 37.606, lng: -122.246 },
+      markerTone: 'watch',
+    },
+    {
+      id: 'investor-event',
+      name: 'Investor Event',
+      shortName: 'Event',
+      batteryPercent: 14,
+      position: { lat: 37.528, lng: -122.145 },
+      markerTone: 'critical',
+    },
+    {
+      id: 'dinner',
+      name: 'Dinner',
+      shortName: 'Dinner',
+      batteryPercent: 9,
+      position: { lat: 37.482, lng: -122.07 },
+      markerTone: 'critical',
+    },
+  ] satisfies FutureDriveStop[],
+  segments: [
+    { id: 'home-office', fromIndex: 0, toIndex: 1, tone: 'safe' },
+    { id: 'office-lunch', fromIndex: 1, toIndex: 2, tone: 'watch' },
+    { id: 'lunch-event', fromIndex: 2, toIndex: 3, tone: 'high' },
+    { id: 'event-dinner', fromIndex: 3, toIndex: 4, tone: 'critical' },
+  ] satisfies FutureDriveSegment[],
+  ecoRoutePath: [
+    { lat: 37.775, lng: -122.465 },
+    { lat: 37.718, lng: -122.418 },
+    { lat: 37.636, lng: -122.31 },
+    { lat: 37.556, lng: -122.19 },
+    { lat: 37.482, lng: -122.07 },
+  ] satisfies Coordinates[],
+  suggestedCharger: {
+    name: 'Suggested Charger',
+    detail: 'near MB Office',
+    position: { lat: 37.665, lng: -122.315 } satisfies Coordinates,
+  },
+};
+
+const futureDriveCriticalStop =
+  futureDrivePreview.stops.find((stop) => stop.batteryPercent < futureDrivePreview.reserveLimit) ?? null;
+
+function classifyFutureDriveRisk(batteryPercent: number): FutureDriveRiskTone {
+  if (batteryPercent >= 25) return 'safe';
+  if (batteryPercent >= 18) return 'watch';
+  if (batteryPercent >= 15) return 'high';
+  return 'critical';
+}
+
+function clampBatteryPercent(value: number) {
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+function getFutureDrivePrediction(
+  selectedPlan: FutureDriveRescuePlan,
+  activeWhatIfs: FutureDriveWhatIf[]
+): FutureDrivePrediction {
+  const skipsCharging = activeWhatIfs.some((chip) => chip.id === 'skipChargingTonight');
+  const finalBattery = skipsCharging
+    ? futureDrivePreview.lowestBattery
+    : clampBatteryPercent(selectedPlan.resultBattery + activeWhatIfs.reduce((total, chip) => total + chip.effect, 0));
+  const riskTone = skipsCharging ? 'critical' : classifyFutureDriveRisk(finalBattery);
+  const riskLabel = futureDriveRiskVisuals[riskTone].label;
+
+  const explanation = skipsCharging
+    ? `Skipping tonight keeps the original forecast: battery reaches ${futureDrivePreview.lowestBattery}% by dinner, below the ${futureDrivePreview.reserveLimit}% reserve.`
+    : activeWhatIfs.length === 0
+      ? `${selectedPlan.title} turns tomorrow's low-battery risk into a ${finalBattery}% evening arrival.`
+      : `${selectedPlan.title} recalculates with ${activeWhatIfs.map((chip) => chip.label.toLowerCase()).join(', ')} and ends tomorrow at ${finalBattery}%.`;
+
+  return {
+    finalBattery,
+    lowestBattery: finalBattery,
+    riskTone,
+    riskLabel,
+    explanation,
+  };
+}
 
 const costDistribution = [
   { label: 'Energy/Fuel', value: mockCost.energyFuel, percent: 66, tone: 'cyan' as const },
@@ -522,6 +722,84 @@ function GoogleRouteOverlay({
       polylinesRef.current = [];
     };
   }, [alternativePath, map, mode, path, sheetState]);
+
+  return null;
+}
+
+function GoogleFutureDriveOverlay({ emphasizeEcoRoute }: { emphasizeEcoRoute: boolean }) {
+  const map = useMap();
+  const polylinesRef = useRef<google.maps.Polyline[]>([]);
+
+  useEffect(() => {
+    if (!map || typeof google === 'undefined') return;
+
+    polylinesRef.current.forEach((line) => line.setMap(null));
+    const nextPolylines: google.maps.Polyline[] = [];
+
+    futureDrivePreview.segments.forEach((segment, index) => {
+      const fromStop = futureDrivePreview.stops[segment.fromIndex];
+      const toStop = futureDrivePreview.stops[segment.toIndex];
+      const visual = futureDriveRiskVisuals[segment.tone];
+      const path = [fromStop.position, toStop.position];
+
+      const routeHalo = new google.maps.Polyline({
+        clickable: false,
+        geodesic: true,
+        path,
+        strokeColor: '#ffffff',
+        strokeOpacity: 0.82,
+        strokeWeight: 10,
+        zIndex: 2 + index,
+      });
+
+      const routeSegment = new google.maps.Polyline({
+        clickable: false,
+        geodesic: true,
+        path,
+        strokeColor: visual.color,
+        strokeOpacity: 0.98,
+        strokeWeight: 4.8,
+        zIndex: 8 + index,
+      });
+
+      routeHalo.setMap(map);
+      routeSegment.setMap(map);
+      nextPolylines.push(routeHalo, routeSegment);
+    });
+
+    if (emphasizeEcoRoute) {
+      const ecoHalo = new google.maps.Polyline({
+        clickable: false,
+        geodesic: true,
+        path: futureDrivePreview.ecoRoutePath,
+        strokeColor: '#ffffff',
+        strokeOpacity: 0.76,
+        strokeWeight: 9,
+        zIndex: 16,
+      });
+
+      const ecoRoute = new google.maps.Polyline({
+        clickable: false,
+        geodesic: true,
+        path: futureDrivePreview.ecoRoutePath,
+        strokeColor: toneAccentColors.emerald,
+        strokeOpacity: 0.9,
+        strokeWeight: 4.2,
+        zIndex: 17,
+      });
+
+      ecoHalo.setMap(map);
+      ecoRoute.setMap(map);
+      nextPolylines.push(ecoHalo, ecoRoute);
+    }
+
+    polylinesRef.current = nextPolylines;
+
+    return () => {
+      polylinesRef.current.forEach((line) => line.setMap(null));
+      polylinesRef.current = [];
+    };
+  }, [emphasizeEcoRoute, map]);
 
   return null;
 }
@@ -797,6 +1075,113 @@ function RouteChoiceMarker({ label, detail, tone }: { label: string; detail: str
   return <MapModeBadge icon="route" label={label} detail={detail} tone={tone} />;
 }
 
+function FutureDriveStopMarker({ stop, emphasized = false }: { stop: FutureDriveStop; emphasized?: boolean }) {
+  const visual = futureDriveRiskVisuals[stop.markerTone];
+  const isCritical = stop.batteryPercent < futureDrivePreview.reserveLimit;
+
+  return (
+    <div data-map-marker={`future-drive-${stop.id}`} className={cn('relative flex items-center gap-1.5', emphasized && 'scale-110')}>
+      {emphasized && <div className="absolute -left-1 h-9 w-9 rounded-full bg-primary/18 blur-md" />}
+      <div
+        className="relative flex h-5 w-5 items-center justify-center rounded-full border shadow-[0_6px_18px_rgba(0,0,0,0.22)]"
+        style={{
+          borderColor: emphasized ? `${toneAccentColors.blue}66` : `${visual.color}44`,
+          backgroundColor: emphasized ? `${toneAccentColors.blue}24` : `${visual.color}1c`,
+          color: emphasized ? toneAccentColors.blue : visual.color,
+        }}
+      >
+        {isCritical ? (
+          <AlertTriangle className="h-2.5 w-2.5" />
+        ) : (
+          <span className="h-2 w-2 rounded-full" style={{ backgroundColor: emphasized ? toneAccentColors.blue : visual.color }} />
+        )}
+      </div>
+      <div
+        className="relative min-w-max rounded-full border bg-surface-container-lowest/92 px-1.5 py-0.5 shadow-[0_8px_20px_rgba(0,0,0,0.18)] backdrop-blur-xl"
+        style={{
+          borderColor: emphasized ? `${toneAccentColors.blue}40` : `${visual.color}30`,
+          boxShadow: `0 8px 20px rgba(0,0,0,0.18), 0 0 12px ${emphasized ? 'rgba(70, 71, 211, 0.36)' : visual.glow}`,
+        }}
+      >
+        <div className="text-[7.5px] font-semibold uppercase leading-none tracking-[0.08em] text-slate-100">
+          {emphasized ? 'Night Charge' : stop.name}
+        </div>
+        <div className="mt-0.5 text-[7.5px] font-semibold leading-none" style={{ color: emphasized ? toneAccentColors.blue : visual.color }}>
+          {emphasized ? 'Plan A at home' : `${stop.batteryPercent}% predicted`}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FutureDriveChargerMarker({ emphasized = false }: { emphasized?: boolean }) {
+  return (
+    <div data-map-marker="future-drive-charger" className={cn('relative flex items-center gap-1.5', emphasized && 'scale-110')}>
+      <div className={cn('absolute h-8 w-8 rounded-full bg-cyan-300/18 blur-md', emphasized && 'h-10 w-10 bg-cyan-300/28')} />
+      <div className="relative flex h-7 w-7 items-center justify-center rounded-full border border-cyan-100/20 bg-cyan-300/12 text-cyan-100 shadow-ambient">
+        <Plug className="h-3.5 w-3.5" />
+      </div>
+      <div
+        className="relative min-w-max rounded-full border border-cyan-100/18 bg-surface-container-lowest/92 px-2 py-1 shadow-ambient backdrop-blur-xl"
+        style={{ boxShadow: emphasized ? 'var(--shadow-ambient), 0 0 18px rgba(103, 232, 249, 0.26)' : undefined }}
+      >
+        <div className="text-[7.5px] font-semibold uppercase leading-none tracking-[0.08em] text-cyan-100">
+          {emphasized ? 'Plan B Lunch Charge' : futureDrivePreview.suggestedCharger.name}
+        </div>
+        <div className="mt-0.5 text-[7.5px] font-medium leading-none text-slate-400">
+          {emphasized ? 'End with 25%' : futureDrivePreview.suggestedCharger.detail}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FutureDrivePlanEmphasisMarker({
+  icon: Icon,
+  label,
+  detail,
+  tone,
+}: {
+  icon: LucideIcon;
+  label: string;
+  detail: string;
+  tone: MapTone;
+}) {
+  const accent = toneAccentColors[tone];
+
+  return (
+    <div data-map-marker="future-drive-plan-emphasis" className="relative flex items-center gap-1.5">
+      <div className="absolute h-9 w-9 rounded-full blur-md" style={{ backgroundColor: `${accent}2a` }} />
+      <div
+        className="relative flex h-7 w-7 items-center justify-center rounded-full border shadow-ambient"
+        style={{ borderColor: `${accent}40`, backgroundColor: `${accent}18`, color: accent }}
+      >
+        <Icon className="h-3.5 w-3.5" />
+      </div>
+      <div
+        className="relative min-w-max rounded-full border bg-surface-container-lowest/92 px-2 py-1 shadow-ambient backdrop-blur-xl"
+        style={{ borderColor: `${accent}2e`, boxShadow: `var(--shadow-ambient), 0 0 16px ${accent}22` }}
+      >
+        <div className="text-[7.5px] font-semibold uppercase leading-none tracking-[0.08em]" style={{ color: accent }}>
+          {label}
+        </div>
+        <div className="mt-0.5 text-[7.5px] font-medium leading-none text-slate-400">{detail}</div>
+      </div>
+    </div>
+  );
+}
+
+function FutureDriveCriticalMarker({ stop }: { stop: FutureDriveStop }) {
+  return (
+    <div data-map-marker="future-drive-critical" className="relative -translate-y-10">
+      <div className="flex min-w-max items-center gap-1.5 rounded-full border border-red-200/25 bg-red-500/14 px-2 py-1 text-[7.5px] font-semibold uppercase tracking-[0.08em] text-red-100 shadow-ambient backdrop-blur-xl">
+        <AlertTriangle className="h-3 w-3" />
+        Critical below {futureDrivePreview.reserveLimit}% at {stop.name}
+      </div>
+    </div>
+  );
+}
+
 function MapControlGroup({ children, className }: { children: ReactNode; className?: string }) {
   return (
     <div
@@ -869,8 +1254,275 @@ function MapStatePill({
   );
 }
 
+function FutureDrivePreviewSheet({
+  selectedPlan,
+  selectedPlanId,
+  activeWhatIfIds,
+  prediction,
+  onPlanSelect,
+  onWhatIfToggle,
+  onAction,
+}: {
+  selectedPlan: FutureDriveRescuePlan;
+  selectedPlanId: FutureDrivePlanId;
+  activeWhatIfIds: FutureDriveWhatIfId[];
+  prediction: FutureDrivePrediction;
+  onPlanSelect: (planId: FutureDrivePlanId) => void;
+  onWhatIfToggle: (whatIfId: FutureDriveWhatIfId) => void;
+  onAction: (action: FutureDriveAction) => void;
+}) {
+  const riskVisual = futureDriveRiskVisuals[prediction.riskTone];
+
+  return (
+    <section
+      aria-label="FutureDrive Preview details"
+      className="flex h-full min-h-0 flex-col overflow-hidden rounded-[20px] border border-outline-variant/45 bg-surface-container-lowest/92 shadow-ambient-lg backdrop-blur-2xl"
+      style={{ boxShadow: `var(--shadow-ambient-lg), 0 0 0 1px ${riskVisual.color}18` }}
+    >
+      <div className="border-b border-white/[0.065] px-4 pb-3 pt-3.5">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-primary/25 bg-primary/10 text-primary">
+                <Sparkles className="h-3.5 w-3.5" />
+              </span>
+              <p className="text-[8.5px] font-semibold uppercase tracking-[0.15em] text-primary">{futureDrivePreview.title}</p>
+            </div>
+            <h2 className="mt-1.5 text-[17px] font-semibold leading-tight text-white">{futureDrivePreview.subtitle}</h2>
+            <p className="mt-1 text-[11.5px] font-medium text-slate-400">Tomorrow risk detected</p>
+          </div>
+          <span
+            className="shrink-0 rounded-full border px-2.5 py-1 text-[8.5px] font-semibold uppercase tracking-[0.08em]"
+            style={{ borderColor: `${riskVisual.color}30`, backgroundColor: `${riskVisual.color}14`, color: riskVisual.color }}
+          >
+            {prediction.riskLabel}
+          </span>
+        </div>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <div className="grid grid-cols-2 gap-2">
+          <div className="rounded-[16px] border border-white/[0.055] bg-white/[0.022] px-3 py-2.5">
+            <p className="text-[8.5px] font-bold uppercase tracking-[0.12em] text-slate-500">Current Battery</p>
+            <p className="mt-1 text-[16px] font-semibold text-white">{futureDrivePreview.currentBattery}%</p>
+          </div>
+          <div
+            className="rounded-[16px] border px-3 py-2.5"
+            style={{ borderColor: `${riskVisual.color}24`, backgroundColor: `${riskVisual.color}0f` }}
+          >
+            <p className="text-[8.5px] font-bold uppercase tracking-[0.12em]" style={{ color: `${riskVisual.color}` }}>Lowest Battery</p>
+            <p className="mt-1 text-[16px] font-semibold text-white">{prediction.lowestBattery}%</p>
+          </div>
+          <div className="rounded-[16px] border border-white/[0.055] bg-white/[0.022] px-3 py-2.5">
+            <p className="text-[8.5px] font-bold uppercase tracking-[0.12em] text-slate-500">Reserve Limit</p>
+            <p className="mt-1 text-[16px] font-semibold text-white">{futureDrivePreview.reserveLimit}%</p>
+          </div>
+          <div
+            className="rounded-[16px] border px-3 py-2.5"
+            style={{ borderColor: `${riskVisual.color}24`, backgroundColor: `${riskVisual.color}0f` }}
+          >
+            <p className="text-[8.5px] font-bold uppercase tracking-[0.12em]" style={{ color: riskVisual.color }}>Risk Level</p>
+            <p className="mt-1 text-[16px] font-semibold text-white">{prediction.riskLabel}</p>
+          </div>
+        </div>
+
+        <div className="mt-2 rounded-[18px] border border-orange-200/14 bg-orange-300/[0.045] px-3.5 py-2.5">
+          <div className="flex items-start gap-2.5">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-orange-100/16 bg-orange-200/10 text-orange-100">
+              <CloudRain className="h-4 w-4" />
+            </span>
+            <div className="min-w-0">
+              <p className="text-[8.5px] font-semibold uppercase tracking-[0.14em] text-orange-100/75">Cause</p>
+              <p className="mt-1 text-[12px] font-medium leading-relaxed text-slate-200">
+                Rain + heavy traffic after 5 PM may push battery below reserve.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div
+          className="mt-2 rounded-[18px] border px-3.5 py-2.5"
+          style={{ borderColor: `${riskVisual.color}22`, backgroundColor: `${riskVisual.color}0c` }}
+        >
+          <p className="text-[8.5px] font-semibold uppercase tracking-[0.14em]" style={{ color: riskVisual.color }}>
+            Selected Plan Result
+          </p>
+          <p className="mt-1 text-[12px] font-medium leading-relaxed text-slate-200">
+            {selectedPlan.title} selected: {selectedPlan.action}. Expected battery tomorrow evening: {prediction.finalBattery}%.
+          </p>
+          <p className="mt-1 text-[11px] font-medium leading-relaxed text-slate-500">{prediction.explanation}</p>
+        </div>
+
+        <div className="mt-3">
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <p className="text-[8.5px] font-semibold uppercase tracking-[0.14em] text-slate-500">Rescue Plans</p>
+            <span className="rounded-full border border-white/[0.07] bg-white/[0.035] px-2 py-0.5 text-[8.5px] font-semibold text-slate-300">
+              Final {prediction.finalBattery}%
+            </span>
+          </div>
+          <div className="grid gap-1.5">
+            {futureDriveRescuePlans.map((plan) => {
+              const isSelected = selectedPlanId === plan.id;
+              const accent = toneAccentColors[plan.tone];
+
+              return (
+                <button
+                  key={plan.id}
+                  type="button"
+                  onClick={() => onPlanSelect(plan.id)}
+                  className={cn(
+                    'w-full rounded-[18px] border px-3 py-2.5 text-left transition duration-200 ease-out active:scale-[0.99]',
+                    isSelected ? 'bg-white/[0.045]' : 'border-white/[0.055] bg-white/[0.022] hover:bg-white/[0.035]'
+                  )}
+                  style={{
+                    borderColor: isSelected ? `${accent}42` : undefined,
+                    boxShadow: isSelected ? `0 0 0 1px ${accent}24, 0 12px 26px rgba(0,0,0,0.15)` : undefined,
+                  }}
+                >
+                  <span className="flex items-start justify-between gap-3">
+                    <span className="min-w-0">
+                      <span className="flex items-center gap-2">
+                        <span className="text-[12px] font-semibold text-white">{plan.title}</span>
+                        <span
+                          className="rounded-full border px-2 py-0.5 text-[8px] font-semibold uppercase tracking-[0.08em]"
+                          style={{ borderColor: `${accent}30`, backgroundColor: `${accent}10`, color: accent }}
+                        >
+                          {plan.label}
+                        </span>
+                      </span>
+                      <span className="mt-1 block text-[11px] font-medium leading-relaxed text-slate-400">{plan.action}</span>
+                    </span>
+                    <span className="shrink-0 text-right">
+                      <span className="block text-[8.5px] font-semibold uppercase tracking-[0.12em] text-slate-500">End</span>
+                      <span className="mt-0.5 block text-[13px] font-semibold" style={{ color: accent }}>
+                        {plan.resultBattery}%
+                      </span>
+                    </span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="mt-3">
+          <p className="mb-2 text-[8.5px] font-semibold uppercase tracking-[0.14em] text-slate-500">What-If Simulation</p>
+          <div className="flex flex-wrap gap-1.5">
+            {futureDriveWhatIfChips.map((chip) => {
+              const isActive = activeWhatIfIds.includes(chip.id);
+
+              return (
+                <button
+                  key={chip.id}
+                  type="button"
+                  onClick={() => onWhatIfToggle(chip.id)}
+                  className={cn(
+                    'inline-flex min-h-8 items-center gap-1.5 rounded-full border px-2.5 text-[9px] font-semibold transition duration-200 ease-out active:scale-[0.98]',
+                    isActive
+                      ? 'border-primary/30 bg-primary/14 text-primary'
+                      : 'border-white/[0.075] bg-white/[0.026] text-slate-300 hover:bg-white/[0.045]'
+                  )}
+                >
+                  {isActive && <Check className="h-3 w-3" />}
+                  {chip.label}
+                  {chip.effect !== 0 && (
+                    <span className={cn('text-[8px]', chip.effect > 0 ? 'text-emerald-300' : 'text-orange-200')}>
+                      {chip.effect > 0 ? `+${chip.effect}%` : `${chip.effect}%`}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="mt-3 rounded-[18px] border border-white/[0.05] bg-white/[0.022] px-3.5 py-3">
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <p className="text-[8.5px] font-semibold uppercase tracking-[0.14em] text-slate-500">Timeline Prediction</p>
+            <span className="text-[8.5px] font-semibold uppercase tracking-[0.08em] text-red-100">
+              Reserve {futureDrivePreview.reserveLimit}%
+            </span>
+          </div>
+
+          <div className="grid grid-cols-4 overflow-hidden rounded-full bg-white/[0.07]">
+            {futureDrivePreview.segments.map((segment) => {
+              const visual = futureDriveRiskVisuals[segment.tone];
+              return (
+                <span
+                  key={`timeline-${segment.id}`}
+                  className="h-2"
+                  style={{ backgroundColor: visual.color, boxShadow: `0 0 10px ${visual.glow}` }}
+                />
+              );
+            })}
+          </div>
+          <div className="mt-1 grid grid-cols-5 gap-1 text-[8px] font-semibold uppercase tracking-[0.05em] text-slate-500">
+            {futureDrivePreview.stops.map((stop) => (
+              <span key={`timeline-label-${stop.id}`} className="truncate">
+                {stop.shortName}
+              </span>
+            ))}
+          </div>
+
+          <div className="mt-2 divide-y divide-white/[0.055]">
+            {futureDrivePreview.stops.map((stop) => {
+              const visual = futureDriveRiskVisuals[stop.markerTone];
+              return (
+                <div key={`timeline-row-${stop.id}`} className="flex items-center justify-between gap-3 py-2">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span
+                      className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border"
+                      style={{ borderColor: `${visual.color}38`, backgroundColor: `${visual.color}18` }}
+                    >
+                      <span className="h-2 w-2 rounded-full" style={{ backgroundColor: visual.color }} />
+                    </span>
+                    <span className="truncate text-[12px] font-semibold text-white">{stop.name}</span>
+                  </div>
+                  <span className="shrink-0 text-[12px] font-semibold" style={{ color: visual.color }}>
+                    {stop.batteryPercent}%
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      <div className="grid shrink-0 grid-cols-[repeat(auto-fit,minmax(7.5rem,1fr))] gap-2 border-t border-outline-variant/45 bg-surface-container-low p-2.5">
+        <button
+          type="button"
+          onClick={() => onAction('Optimize Selected Plan')}
+          className="flex min-h-10 min-w-0 items-center justify-center gap-2 rounded-[16px] bg-primary px-3 text-center text-[10px] font-semibold uppercase leading-tight tracking-[0.05em] text-on-primary shadow-ambient transition duration-200 ease-out active:scale-[0.98]"
+        >
+          <Check className="h-4 w-4 shrink-0" />
+          Optimize Selected Plan
+        </button>
+        <button
+          type="button"
+          onClick={() => onAction('Compare Rescue Routes')}
+          className="flex min-h-10 min-w-0 items-center justify-center gap-2 rounded-[16px] border border-red-100/22 bg-surface-container-lowest px-3 text-center text-[10px] font-semibold uppercase leading-tight tracking-[0.05em] text-slate-100 shadow-ambient transition duration-200 ease-out active:scale-[0.98]"
+        >
+          <Route className="h-4 w-4 shrink-0 text-red-100" />
+          Compare Rescue Routes
+        </button>
+        <button
+          type="button"
+          onClick={() => onAction('Set Charging Reminder')}
+          className="flex min-h-10 min-w-0 items-center justify-center gap-2 rounded-[16px] border border-cyan-100/18 bg-surface-container-lowest px-3 text-center text-[10px] font-semibold uppercase leading-tight tracking-[0.05em] text-slate-100 shadow-ambient transition duration-200 ease-out active:scale-[0.98]"
+        >
+          <BatteryCharging className="h-4 w-4 shrink-0 text-cyan-100" />
+          Set Charging Reminder
+        </button>
+      </div>
+    </section>
+  );
+}
+
 function MockMapCanvas({
   mode,
+  driveMode,
+  selectedFuturePlanId,
+  emphasizeFutureEcoRoute,
   sheetState,
   view,
   cameraMode,
@@ -885,6 +1537,9 @@ function MockMapCanvas({
   onZoomInteraction,
 }: {
   mode: MapMode;
+  driveMode: DriveExperienceMode;
+  selectedFuturePlanId: FutureDrivePlanId;
+  emphasizeFutureEcoRoute: boolean;
   sheetState: SheetState;
   view: MockMapView;
   cameraMode: CameraMode;
@@ -927,6 +1582,13 @@ function MockMapCanvas({
   const vehicle = coordsToPercent(vehiclePosition);
   const destinationPoint = coordsToPercent(destination);
   const visual = modeVisuals[mode];
+  const isFutureDrivePreview = driveMode === 'futureDrivePreview';
+  const futureEcoRoutePoints = futureDrivePreview.ecoRoutePath
+    .map((point) => {
+      const { x, y } = coordsToPercent(point);
+      return `${parseFloat(x) * 10},${parseFloat(y) * 10}`;
+    })
+    .join(' ');
 
   const getPointerDistance = () => {
     const pointers = Array.from(activePointersRef.current.values());
@@ -1070,39 +1732,100 @@ function MockMapCanvas({
             strokeLinecap="round"
             opacity="0.72"
           />
-          {mode === 'aiRoute' && (
-            <polyline
-              points={alternativeRoutePoints}
-              fill="none"
-              stroke="#abadaf"
-              strokeWidth="5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeDasharray="18 16"
-              opacity={sheetState === 'expanded' ? '0.32' : '0.18'}
-            />
+          {isFutureDrivePreview ? (
+            <>
+              {futureDrivePreview.segments.map((segment) => {
+                const fromStop = futureDrivePreview.stops[segment.fromIndex];
+                const toStop = futureDrivePreview.stops[segment.toIndex];
+                const fromPoint = coordsToPercent(fromStop.position);
+                const toPoint = coordsToPercent(toStop.position);
+                const segmentPoints = `${parseFloat(fromPoint.x) * 10},${parseFloat(fromPoint.y) * 10} ${parseFloat(toPoint.x) * 10},${parseFloat(toPoint.y) * 10}`;
+                const segmentVisual = futureDriveRiskVisuals[segment.tone];
+
+                return (
+                  <g key={`future-segment-${segment.id}`}>
+                    <polyline
+                      points={segmentPoints}
+                      fill="none"
+                      stroke="#ffffff"
+                      strokeWidth="15"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      opacity="0.86"
+                    />
+                    <polyline
+                      points={segmentPoints}
+                      fill="none"
+                      stroke={segmentVisual.color}
+                      strokeWidth="5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      style={{ filter: `drop-shadow(0 0 8px ${segmentVisual.glow})` }}
+                    />
+                  </g>
+                );
+              })}
+              {emphasizeFutureEcoRoute && (
+                <>
+                  <polyline
+                    points={futureEcoRoutePoints}
+                    fill="none"
+                    stroke="#ffffff"
+                    strokeWidth="13"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    opacity="0.78"
+                  />
+                  <polyline
+                    points={futureEcoRoutePoints}
+                    fill="none"
+                    stroke={toneAccentColors.emerald}
+                    strokeWidth="4.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeDasharray="14 10"
+                    style={{ filter: 'drop-shadow(0 0 8px rgba(16, 168, 108, 0.28))' }}
+                  />
+                </>
+              )}
+            </>
+          ) : (
+            <>
+              {mode === 'aiRoute' && (
+                <polyline
+                  points={alternativeRoutePoints}
+                  fill="none"
+                  stroke="#abadaf"
+                  strokeWidth="5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeDasharray="18 16"
+                  opacity={sheetState === 'expanded' ? '0.32' : '0.18'}
+                />
+              )}
+              <polyline
+                points={routePoints}
+                fill="none"
+                stroke="#ffffff"
+                strokeWidth="15"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                opacity="0.86"
+              />
+              <polyline
+                points={routePoints}
+                fill="none"
+                stroke={visual.routeColor}
+                strokeWidth="5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                style={{ filter: `drop-shadow(0 0 8px ${visual.glow})` }}
+              />
+            </>
           )}
-          <polyline
-            points={routePoints}
-            fill="none"
-            stroke="#ffffff"
-            strokeWidth="15"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            opacity="0.86"
-          />
-          <polyline
-            points={routePoints}
-            fill="none"
-            stroke={visual.routeColor}
-            strokeWidth="5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            style={{ filter: `drop-shadow(0 0 8px ${visual.glow})` }}
-          />
         </svg>
 
-        {mode === 'aiRoute' && (
+        {!isFutureDrivePreview && mode === 'aiRoute' && (
           <>
             <div
               className="absolute -translate-x-1/2 -translate-y-1/2"
@@ -1121,7 +1844,7 @@ function MockMapCanvas({
           </>
         )}
 
-        {mode === 'parking' &&
+        {!isFutureDrivePreview && mode === 'parking' &&
           favoriteStops.map((stop) => {
             const pos = coordsToPercent(stop.position);
             return (
@@ -1135,7 +1858,7 @@ function MockMapCanvas({
             );
           })}
 
-        {mode === 'evStations' &&
+        {!isFutureDrivePreview && mode === 'evStations' &&
           evStations.map((station) => {
             const pos = coordsToPercent(station.position);
             const isAdded = addedEvStop?.id === station.id;
@@ -1150,7 +1873,7 @@ function MockMapCanvas({
             );
           })}
 
-        {addedEvStop && mode !== 'evStations' && (
+        {!isFutureDrivePreview && addedEvStop && mode !== 'evStations' && (
           <div
             className="absolute -translate-x-1/2 -translate-y-1/2 scale-110"
             style={{ left: coordsToPercent(addedEvStop.position).x, top: coordsToPercent(addedEvStop.position).y }}
@@ -1159,7 +1882,7 @@ function MockMapCanvas({
           </div>
         )}
 
-        {selectedFavoriteStop && mode !== 'parking' && (
+        {!isFutureDrivePreview && selectedFavoriteStop && mode !== 'parking' && (
           <div
             className="absolute -translate-x-1/2 -translate-y-1/2 scale-110"
             style={{ left: coordsToPercent(selectedFavoriteStop.position).x, top: coordsToPercent(selectedFavoriteStop.position).y }}
@@ -1168,7 +1891,7 @@ function MockMapCanvas({
           </div>
         )}
 
-        {mode === 'cost' &&
+        {!isFutureDrivePreview && mode === 'cost' &&
           costMarkers.map((marker) => {
             const pos = coordsToPercent(marker.position);
             return (
@@ -1182,7 +1905,7 @@ function MockMapCanvas({
             );
           })}
 
-        {mode === 'cost' && (
+        {!isFutureDrivePreview && mode === 'cost' && (
           <div
             className="absolute -translate-x-1/2 -translate-y-1/2"
             style={{ left: coordsToPercent({ lat: 37.55, lng: -122.255 }).x, top: coordsToPercent({ lat: 37.55, lng: -122.255 }).y }}
@@ -1191,7 +1914,7 @@ function MockMapCanvas({
           </div>
         )}
 
-        {mode === 'cost' && sheetState === 'expanded' && (
+        {!isFutureDrivePreview && mode === 'cost' && sheetState === 'expanded' && (
           <div
             className="absolute -translate-x-1/2 -translate-y-1/2 opacity-80"
             style={{ left: coordsToPercent({ lat: 37.69, lng: -122.312 }).x, top: coordsToPercent({ lat: 37.69, lng: -122.312 }).y }}
@@ -1200,18 +1923,86 @@ function MockMapCanvas({
           </div>
         )}
 
-        <div
-          className="absolute -translate-x-1/2 -translate-y-1/2"
-          style={{ left: vehicle.x, top: vehicle.y }}
-        >
-          <VehicleMarker activeNavigation={activeNavigation} />
-        </div>
-        <div
-          className="absolute -translate-x-1/2 -translate-y-1/2"
-          style={{ left: destinationPoint.x, top: destinationPoint.y }}
-        >
-          <DestinationMarker />
-        </div>
+        {isFutureDrivePreview ? (
+          <>
+            <div
+              className="absolute -translate-x-1/2 -translate-y-1/2"
+              style={{
+                left: coordsToPercent(futureDrivePreview.suggestedCharger.position).x,
+                top: coordsToPercent(futureDrivePreview.suggestedCharger.position).y,
+              }}
+            >
+              <FutureDriveChargerMarker emphasized={selectedFuturePlanId === 'planB'} />
+            </div>
+            {futureDrivePreview.stops.map((stop) => {
+              const stopPosition = coordsToPercent(stop.position);
+              return (
+                <div
+                  key={`mock-future-stop-${stop.id}`}
+                  className="absolute -translate-x-1/2 -translate-y-1/2"
+                  style={{ left: stopPosition.x, top: stopPosition.y }}
+                >
+                  <FutureDriveStopMarker stop={stop} emphasized={selectedFuturePlanId === 'planA' && stop.id === 'home'} />
+                </div>
+              );
+            })}
+            {selectedFuturePlanId === 'planA' && (
+              <div
+                className="absolute -translate-x-1/2 -translate-y-[185%]"
+                style={{
+                  left: coordsToPercent(futureDrivePreview.stops[0].position).x,
+                  top: coordsToPercent(futureDrivePreview.stops[0].position).y,
+                }}
+              >
+                <FutureDrivePlanEmphasisMarker
+                  icon={BatteryCharging}
+                  label="Home Night Charge"
+                  detail="Ends tomorrow at 36%"
+                  tone="blue"
+                />
+              </div>
+            )}
+            {emphasizeFutureEcoRoute && (
+              <div
+                className="absolute -translate-x-1/2 -translate-y-1/2"
+                style={{ left: coordsToPercent({ lat: 37.61, lng: -122.276 }).x, top: coordsToPercent({ lat: 37.61, lng: -122.276 }).y }}
+              >
+                <FutureDrivePlanEmphasisMarker
+                  icon={Sparkles}
+                  label="Eco Route"
+                  detail="Energy saving path"
+                  tone="emerald"
+                />
+              </div>
+            )}
+            {futureDriveCriticalStop && (
+              <div
+                className="absolute -translate-x-1/2 -translate-y-1/2"
+                style={{
+                  left: coordsToPercent(futureDriveCriticalStop.position).x,
+                  top: coordsToPercent(futureDriveCriticalStop.position).y,
+                }}
+              >
+                <FutureDriveCriticalMarker stop={futureDriveCriticalStop} />
+              </div>
+            )}
+          </>
+        ) : (
+          <>
+            <div
+              className="absolute -translate-x-1/2 -translate-y-1/2"
+              style={{ left: vehicle.x, top: vehicle.y }}
+            >
+              <VehicleMarker activeNavigation={activeNavigation} />
+            </div>
+            <div
+              className="absolute -translate-x-1/2 -translate-y-1/2"
+              style={{ left: destinationPoint.x, top: destinationPoint.y }}
+            >
+              <DestinationMarker />
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
@@ -1220,6 +2011,9 @@ function MockMapCanvas({
 export default function MapView() {
   const { addRecentAction } = useAppStore();
   const [mapMode, setMapMode] = useState<MapMode>('aiRoute');
+  const [driveExperienceMode, setDriveExperienceMode] = useState<DriveExperienceMode>('driveNow');
+  const [selectedFuturePlanId, setSelectedFuturePlanId] = useState<FutureDrivePlanId>('planA');
+  const [activeFutureWhatIfIds, setActiveFutureWhatIfIds] = useState<FutureDriveWhatIfId[]>([]);
   const [sheetState, setSheetState] = useState<SheetState>('collapsed');
   const [mapInstance, setMapInstance] = useState<google.maps.Map | null>(null);
   const [mockView, setMockView] = useState<MockMapView>(defaultMockView);
@@ -1246,7 +2040,16 @@ export default function MapView() {
   const programmaticCameraRef = useRef(false);
   const initialCameraFlowRef = useRef(false);
   const cameraStateRef = useRef<MapCameraState>(cameraState);
-  const visual = modeVisuals[mapMode];
+  const isFutureDrivePreview = driveExperienceMode === 'futureDrivePreview';
+  const selectedFuturePlan =
+    futureDriveRescuePlans.find((plan) => plan.id === selectedFuturePlanId) ?? futureDriveRescuePlans[0];
+  const activeFutureWhatIfs = futureDriveWhatIfChips.filter((chip) => activeFutureWhatIfIds.includes(chip.id));
+  const futureDrivePrediction = getFutureDrivePrediction(selectedFuturePlan, activeFutureWhatIfs);
+  const futureDriveEmphasizeEcoRoute = selectedFuturePlanId === 'planC' || activeFutureWhatIfIds.includes('useEcoRoute');
+  const futureDriveVisual = futureDriveRiskVisuals[futureDrivePrediction.riskTone];
+  const visual = isFutureDrivePreview
+    ? { routeColor: futureDriveVisual.color, glow: futureDriveVisual.glow, tone: 'blue' as const }
+    : modeVisuals[mapMode];
   const activeTool = toolChips.find((tool) => tool.key === mapMode) ?? toolChips[0];
   const ActiveModeIcon = activeTool.icon;
   const { activeNavigation, cameraMode, currentZoom, followCar, userInteractingWithMap } = cameraState;
@@ -1449,6 +2252,41 @@ export default function MapView() {
     updateCameraState,
   ]);
 
+  const fitFutureDrivePreview = useCallback(() => {
+    clearPinchRefocusTimer();
+    clearDestinationPreviewTimer();
+    markProgrammaticCamera();
+
+    updateCameraState({
+      activeNavigation: false,
+      cameraMode: 'routeOverview',
+      followCar: false,
+      userInteractingWithMap: false,
+      currentZoom: routeOverviewZoom,
+    });
+
+    if (mapInstance && typeof google !== 'undefined') {
+      const bounds = new google.maps.LatLngBounds();
+      futureDrivePreview.stops.forEach((stop) => bounds.extend(stop.position));
+      bounds.extend(futureDrivePreview.suggestedCharger.position);
+      mapInstance.fitBounds(bounds, 76);
+      window.setTimeout(() => {
+        const fittedZoom = mapInstance.getZoom() ?? routeOverviewZoom;
+        const nextZoom = Math.min(fittedZoom, routeOverviewZoom);
+        mapInstance.setZoom(nextZoom);
+        updateCameraState({ currentZoom: nextZoom });
+      }, 260);
+    }
+
+    setMockView(getMockCameraView('routeOverview'));
+  }, [
+    clearDestinationPreviewTimer,
+    clearPinchRefocusTimer,
+    mapInstance,
+    markProgrammaticCamera,
+    updateCameraState,
+  ]);
+
   const getDestinationPreviewMockView = useCallback(() => {
     return createMockFocusView({
       point: coordsToUnitPoint(selectedDestination.position),
@@ -1633,10 +2471,40 @@ export default function MapView() {
   }, [clearDestinationPreviewTimer, clearPinchRefocusTimer]);
 
   const handleModeChange = (nextMode: MapMode) => {
+    setDriveExperienceMode('driveNow');
     setMapMode(nextMode);
     setSheetState('collapsed');
     setLastAction(null);
     setActivePanel(null);
+  };
+
+  const handleDriveExperienceChange = (nextMode: DriveExperienceMode) => {
+    if (nextMode === driveExperienceMode) return;
+
+    setDriveExperienceMode(nextMode);
+    setActivePanel(null);
+    setLastAction(null);
+
+    if (nextMode === 'futureDrivePreview') {
+      setSheetState('expanded');
+      fitFutureDrivePreview();
+      return;
+    }
+
+    setSheetState('collapsed');
+    fitRouteOverview(mapMode);
+  };
+
+  const handleFuturePlanSelect = (planId: FutureDrivePlanId) => {
+    const nextPlan = futureDriveRescuePlans.find((plan) => plan.id === planId) ?? futureDriveRescuePlans[0];
+    setSelectedFuturePlanId(planId);
+    setLastAction(`${nextPlan.title} selected`);
+  };
+
+  const handleFutureWhatIfToggle = (whatIfId: FutureDriveWhatIfId) => {
+    setActiveFutureWhatIfIds((current) =>
+      current.includes(whatIfId) ? current.filter((id) => id !== whatIfId) : [...current, whatIfId]
+    );
   };
 
   const handleBackgroundClick = (event: MouseEvent<HTMLDivElement>) => {
@@ -1645,12 +2513,18 @@ export default function MapView() {
     if (activePanel === 'search') {
       setActivePanel(null);
     }
+    if (isFutureDrivePreview) return;
     if (sheetState !== 'expanded') return;
     setSheetState('collapsed');
   };
 
   const handleRecenter = () => {
     updateCameraState({ userInteractingWithMap: false });
+    if (isFutureDrivePreview) {
+      fitFutureDrivePreview();
+      return;
+    }
+
     if (cameraStateRef.current.activeNavigation) {
       centerNavigationCamera();
       return;
@@ -1722,6 +2596,7 @@ export default function MapView() {
   };
 
   const handleDestinationSelect = (destination: MockDestination) => {
+    setDriveExperienceMode('driveNow');
     setSelectedDestination(destination);
     setSearchQuery(destination.name);
     setActivePanel(null);
@@ -1881,6 +2756,18 @@ export default function MapView() {
     });
   };
 
+  const handleFutureDriveAction = (action: FutureDriveAction) => {
+    const detail =
+      action === 'Optimize Selected Plan'
+        ? `${selectedFuturePlan.title} optimized locally - expected ${futureDrivePrediction.finalBattery}% tomorrow evening.`
+        : action === 'Compare Rescue Routes'
+          ? `${futureDriveRescuePlans.length} rescue plans compared locally. ${selectedFuturePlan.title} is selected.`
+          : `Local reminder preview for ${selectedFuturePlan.action}.`;
+
+    setLastAction(action);
+    showTransientToast(action, detail, action === 'Set Charging Reminder' ? 'cyan' : action === 'Compare Rescue Routes' ? 'amber' : 'blue');
+  };
+
   const collapsedActionLabel =
     activeNavigation && mapMode === 'aiRoute' && sheet.collapsedAction === 'Start Navigation'
       ? 'Stop Navigation'
@@ -1918,8 +2805,9 @@ export default function MapView() {
       ? 'Browsing map'
       : 'Overview';
   const MapStateIcon = activeNavigation ? Navigation : isManualExplore ? LocateFixed : Route;
-  const controlBottomClass =
-    sheetState === 'expanded'
+  const controlBottomClass = isFutureDrivePreview
+    ? 'bottom-[calc(12.5rem+env(safe-area-inset-bottom))] md:bottom-auto md:top-[18.5rem] lg:top-[19rem]'
+    : sheetState === 'expanded'
       ? 'bottom-[calc(62dvh+env(safe-area-inset-bottom))] sm:bottom-[calc(59dvh+env(safe-area-inset-bottom))] lg:bottom-8'
       : 'bottom-[calc(12.5rem+env(safe-area-inset-bottom))] sm:bottom-[calc(11rem+env(safe-area-inset-bottom))] lg:bottom-8';
 
@@ -1949,19 +2837,63 @@ export default function MapView() {
             internalUsageAttributionIds={['gmp_mcp_codeassist_v1_aistudio']}
           >
             <GoogleMapBridge onReady={handleMapReady} />
-            <GoogleRouteOverlay
-              mode={mapMode}
-              path={routePathWithStops}
-              alternativePath={selectedDestination.alternativePath}
-              sheetState={sheetState}
-            />
-            <AdvancedMarker position={vehiclePosition}>
-              <VehicleMarker activeNavigation={activeNavigation} />
-            </AdvancedMarker>
-            <AdvancedMarker position={selectedDestination.position}>
-              <DestinationMarker />
-            </AdvancedMarker>
-            {mapMode === 'aiRoute' && (
+            {isFutureDrivePreview ? (
+              <GoogleFutureDriveOverlay emphasizeEcoRoute={futureDriveEmphasizeEcoRoute} />
+            ) : (
+              <GoogleRouteOverlay
+                mode={mapMode}
+                path={routePathWithStops}
+                alternativePath={selectedDestination.alternativePath}
+                sheetState={sheetState}
+              />
+            )}
+            {isFutureDrivePreview ? (
+              <>
+                {futureDrivePreview.stops.map((stop) => (
+                  <AdvancedMarker key={`future-google-stop-${stop.id}`} position={stop.position}>
+                    <FutureDriveStopMarker stop={stop} emphasized={selectedFuturePlanId === 'planA' && stop.id === 'home'} />
+                  </AdvancedMarker>
+                ))}
+                <AdvancedMarker position={futureDrivePreview.suggestedCharger.position}>
+                  <FutureDriveChargerMarker emphasized={selectedFuturePlanId === 'planB'} />
+                </AdvancedMarker>
+                {selectedFuturePlanId === 'planA' && (
+                  <AdvancedMarker position={futureDrivePreview.stops[0].position}>
+                    <FutureDrivePlanEmphasisMarker
+                      icon={BatteryCharging}
+                      label="Home Night Charge"
+                      detail="Ends tomorrow at 36%"
+                      tone="blue"
+                    />
+                  </AdvancedMarker>
+                )}
+                {futureDriveEmphasizeEcoRoute && (
+                  <AdvancedMarker position={{ lat: 37.61, lng: -122.276 }}>
+                    <FutureDrivePlanEmphasisMarker
+                      icon={Sparkles}
+                      label="Eco Route"
+                      detail="Energy saving path"
+                      tone="emerald"
+                    />
+                  </AdvancedMarker>
+                )}
+                {futureDriveCriticalStop && (
+                  <AdvancedMarker position={futureDriveCriticalStop.position}>
+                    <FutureDriveCriticalMarker stop={futureDriveCriticalStop} />
+                  </AdvancedMarker>
+                )}
+              </>
+            ) : (
+              <>
+                <AdvancedMarker position={vehiclePosition}>
+                  <VehicleMarker activeNavigation={activeNavigation} />
+                </AdvancedMarker>
+                <AdvancedMarker position={selectedDestination.position}>
+                  <DestinationMarker />
+                </AdvancedMarker>
+              </>
+            )}
+            {!isFutureDrivePreview && mapMode === 'aiRoute' && (
               <>
                 <AdvancedMarker position={{ lat: 37.62, lng: -122.35 }}>
                   <RouteChoiceMarker label="Best Route" detail="24 min" tone="blue" />
@@ -1973,40 +2905,40 @@ export default function MapView() {
                 )}
               </>
             )}
-            {mapMode === 'parking' &&
+            {!isFutureDrivePreview && mapMode === 'parking' &&
               favoriteStops.map((stop) => (
                 <AdvancedMarker key={stop.id} position={stop.position}>
                   <FavoriteStopMarker stop={stop} />
                 </AdvancedMarker>
               ))}
-            {mapMode === 'evStations' &&
+            {!isFutureDrivePreview && mapMode === 'evStations' &&
               evStations.map((station) => (
                 <AdvancedMarker key={station.id} position={station.position}>
                   <EVStationMarker station={station} />
                 </AdvancedMarker>
               ))}
-            {selectedEvStop && mapMode !== 'evStations' && (
+            {!isFutureDrivePreview && selectedEvStop && mapMode !== 'evStations' && (
               <AdvancedMarker position={selectedEvStop.position}>
                 <EVStationMarker station={selectedEvStop} />
               </AdvancedMarker>
             )}
-            {selectedFavoriteStop && mapMode !== 'parking' && (
+            {!isFutureDrivePreview && selectedFavoriteStop && mapMode !== 'parking' && (
               <AdvancedMarker position={selectedFavoriteStop.position}>
                 <FavoriteStopMarker stop={selectedFavoriteStop} />
               </AdvancedMarker>
             )}
-            {mapMode === 'cost' &&
+            {!isFutureDrivePreview && mapMode === 'cost' &&
               costMarkers.map((marker) => (
                 <AdvancedMarker key={marker.id} position={marker.position}>
                   <CostMapMarker marker={marker} />
                 </AdvancedMarker>
               ))}
-            {mapMode === 'cost' && (
+            {!isFutureDrivePreview && mapMode === 'cost' && (
               <AdvancedMarker position={{ lat: 37.55, lng: -122.255 }}>
                 <RouteChoiceMarker label="$12.80 total" detail="$0.47/mi" tone="amber" />
               </AdvancedMarker>
             )}
-            {mapMode === 'cost' && sheetState === 'expanded' && (
+            {!isFutureDrivePreview && mapMode === 'cost' && sheetState === 'expanded' && (
               <AdvancedMarker position={{ lat: 37.69, lng: -122.312 }}>
                 <RouteChoiceMarker label="Eco route" detail="Save $1.10" tone="slate" />
               </AdvancedMarker>
@@ -2016,6 +2948,9 @@ export default function MapView() {
       ) : (
         <MockMapCanvas
           mode={mapMode}
+          driveMode={driveExperienceMode}
+          selectedFuturePlanId={selectedFuturePlanId}
+          emphasizeFutureEcoRoute={futureDriveEmphasizeEcoRoute}
           sheetState={sheetState}
           view={mockView}
           cameraMode={cameraMode}
@@ -2034,17 +2969,23 @@ export default function MapView() {
       <div
         data-map-ui="true"
         className={cn(
-          'absolute left-3 right-3 z-30 transition-all duration-300 ease-out sm:left-5 sm:right-5',
-          isManualExplore || activeNavigation ? 'top-[6.25rem] sm:top-[6.5rem]' : 'top-[4.65rem] sm:top-20'
+          'absolute z-30 transition-all duration-300 ease-out',
+          isFutureDrivePreview
+            ? 'left-3 right-3 top-[4.65rem] md:left-auto md:right-5 md:top-[5.35rem] md:w-[330px] lg:right-8 lg:top-[5.65rem] lg:w-[350px]'
+            : cn(
+                'left-3 right-3 sm:left-5 sm:right-5',
+                isManualExplore || activeNavigation ? 'top-[5.15rem] sm:top-[5.25rem]' : 'top-[3.75rem] sm:top-[3.75rem]'
+              )
         )}
       >
-        <div className="mx-auto max-w-[460px]">
+        <div className={cn(isFutureDrivePreview ? 'mx-auto max-w-[390px] md:mx-0 md:max-w-none' : 'mx-auto max-w-[410px]')}>
+          <div className="flex items-center gap-1">
           <form
             onSubmit={(event) => {
               event.preventDefault();
               handleDestinationSelect(filteredDestinations[0] ?? mockDestinations[0]);
             }}
-            className="relative"
+            className="relative min-w-0 flex-1"
           >
             <span className="pointer-events-none absolute left-1.5 top-1/2 z-10 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full border border-primary/20 bg-surface-container-low text-primary shadow-ambient">
               <Search className="h-3.5 w-3.5" />
@@ -2053,10 +2994,16 @@ export default function MapView() {
               value={searchQuery}
               onChange={(event) => {
                 setSearchQuery(event.target.value);
-                setActivePanel('search');
+                if (!isFutureDrivePreview) {
+                  setActivePanel('search');
+                }
               }}
-              onFocus={() => setActivePanel('search')}
-              placeholder="Where to?"
+              onFocus={() => {
+                if (!isFutureDrivePreview) {
+                  setActivePanel('search');
+                }
+              }}
+              placeholder={isFutureDrivePreview ? 'Where to tomorrow?' : 'Where to?'}
               className="h-11 w-full rounded-full border border-outline-variant/45 bg-surface-container-lowest/88 pl-12 pr-11 text-[13px] font-medium text-on-surface shadow-ambient backdrop-blur-2xl outline-none transition placeholder:text-slate-500 focus:border-primary/35 focus:bg-surface-container-lowest"
             />
             {searchQuery && (
@@ -2064,7 +3011,7 @@ export default function MapView() {
                 type="button"
                 onClick={() => {
                   setSearchQuery('');
-                  setActivePanel('search');
+                  setActivePanel(isFutureDrivePreview ? null : 'search');
                 }}
                 aria-label="Clear destination search"
                 className="absolute right-1.5 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full text-slate-300 transition hover:bg-primary/10"
@@ -2074,7 +3021,26 @@ export default function MapView() {
             )}
           </form>
 
-          {activePanel === 'search' && (
+            <button
+              type="button"
+              onClick={() => handleDriveExperienceChange(isFutureDrivePreview ? 'driveNow' : 'futureDrivePreview')}
+              aria-label={isFutureDrivePreview ? 'Switch to Drive Now' : 'Switch to FutureDrive Preview'}
+              title={isFutureDrivePreview ? 'Drive Now' : 'FutureDrive Preview'}
+              className={cn(
+                'flex h-11 shrink-0 items-center justify-center gap-1.5 rounded-full border px-3 text-[9px] font-semibold uppercase tracking-[0.08em] shadow-ambient backdrop-blur-2xl transition duration-200 ease-out active:scale-[0.97]',
+                isFutureDrivePreview
+                  ? 'border-outline-variant/45 bg-surface-container-lowest/88 text-slate-200 hover:bg-primary/10'
+                  : 'border-primary/25 bg-primary text-on-primary hover:bg-primary/90'
+              )}
+            >
+              {isFutureDrivePreview ? <Navigation className="h-3.5 w-3.5 shrink-0" /> : <Sparkles className="h-3.5 w-3.5 shrink-0" />}
+              <span className={cn('hidden sm:inline', !isFutureDrivePreview && 'md:hidden lg:inline')}>
+                {isFutureDrivePreview ? 'Drive Now' : 'Future'}
+              </span>
+            </button>
+          </div>
+
+          {activePanel === 'search' && !isFutureDrivePreview && (
             <div className="mt-2 overflow-hidden rounded-[22px] border border-outline-variant/45 bg-surface-container-lowest/92 p-1.5 shadow-ambient-lg backdrop-blur-2xl">
               {filteredDestinations.map((destination) => (
                 <button
@@ -2099,48 +3065,50 @@ export default function MapView() {
         </div>
       </div>
 
-      <div
-        className={cn(
-          'pointer-events-none absolute left-3 right-3 z-20 transition-all duration-300 ease-out sm:left-5 sm:right-5',
-          isManualExplore || activeNavigation ? 'top-[9.95rem] sm:top-[10.25rem]' : 'top-[8.35rem] sm:top-36'
-        )}
-      >
+      {!isFutureDrivePreview && (
         <div
-          data-map-ui="true"
-          className="pointer-events-auto mx-auto grid w-56 max-w-full grid-cols-4 gap-1 rounded-[22px] border border-outline-variant/45 bg-surface-container-lowest/88 p-1 shadow-ambient backdrop-blur-2xl"
+          className={cn(
+            'pointer-events-none absolute right-3 z-20 transition-all duration-300 ease-out sm:right-5',
+            isManualExplore || activeNavigation ? 'top-[9.25rem] sm:top-[9.5rem]' : 'top-[8.35rem] sm:top-[8.65rem]'
+          )}
         >
-          {toolChips.map((tool) => {
-            const Icon = tool.icon;
-            const isActive = mapMode === tool.key;
+          <div
+            data-map-ui="true"
+            className="pointer-events-auto grid w-13 gap-1 rounded-[22px] border border-outline-variant/45 bg-surface-container-lowest/88 p-1 shadow-ambient backdrop-blur-2xl"
+          >
+            {toolChips.map((tool) => {
+              const Icon = tool.icon;
+              const isActive = mapMode === tool.key;
 
-            return (
-              <button
-                key={tool.key}
-                type="button"
-                aria-label={tool.label}
-                title={tool.label}
-                onClick={() => handleModeChange(tool.key)}
-                className={cn(
-                  'flex h-10 min-w-0 items-center justify-center rounded-[17px] border text-center transition duration-200 ease-out active:scale-[0.98]',
-                  isActive
-                    ? 'border-primary/25 bg-primary/10 text-primary shadow-ambient'
-                    : 'border-transparent bg-transparent text-slate-300 hover:bg-primary/10'
-                )}
-              >
-                <span
+              return (
+                <button
+                  key={tool.key}
+                  type="button"
+                  aria-label={tool.label}
+                  title={tool.label}
+                  onClick={() => handleModeChange(tool.key)}
                   className={cn(
-                    'flex h-6 w-6 items-center justify-center rounded-full border',
-                    isActive ? 'border-slate-300/55 bg-white text-blue-600' : 'border-white/[0.08] bg-white/[0.04] text-slate-400'
+                    'flex h-11 w-11 min-w-0 items-center justify-center rounded-[17px] border text-center transition duration-200 ease-out active:scale-[0.98]',
+                    isActive
+                      ? 'border-primary/25 bg-primary/10 text-primary shadow-ambient'
+                      : 'border-transparent bg-transparent text-slate-300 hover:bg-primary/10'
                   )}
                 >
-                  <Icon className="h-3.5 w-3.5" />
-                </span>
-                <span className="sr-only">{tool.label}</span>
-              </button>
-            );
-          })}
+                  <span
+                    className={cn(
+                      'flex h-6 w-6 items-center justify-center rounded-full border',
+                      isActive ? 'border-slate-300/55 bg-white text-blue-600' : 'border-white/[0.08] bg-white/[0.04] text-slate-400'
+                    )}
+                  >
+                    <Icon className="h-3.5 w-3.5" />
+                  </span>
+                  <span className="sr-only">{tool.label}</span>
+                </button>
+              );
+            })}
+          </div>
         </div>
-      </div>
+      )}
 
       {(isManualExplore || activeNavigation) && (
         <div
@@ -2193,20 +3161,36 @@ export default function MapView() {
       <div
         data-map-ui="true"
         className={cn(
-          'absolute inset-x-3 z-[60] transition-all duration-300 ease-out sm:inset-x-auto sm:left-1/2 sm:w-[430px] sm:max-w-[calc(100vw-2rem)] sm:-translate-x-1/2',
-          sheetState === 'expanded'
-            ? 'bottom-[calc(5.75rem+env(safe-area-inset-bottom))] sm:bottom-6'
-            : 'bottom-[calc(5.75rem+env(safe-area-inset-bottom))] sm:bottom-6'
+          'absolute z-[60] transition-all duration-300 ease-out',
+          isFutureDrivePreview
+            ? 'inset-x-3 bottom-[calc(5.75rem+env(safe-area-inset-bottom))] h-[min(72dvh,43rem)] md:inset-x-auto md:left-5 md:top-[9.5rem] md:bottom-6 md:h-auto md:w-[360px] md:max-w-[calc(48vw-2rem)] lg:left-8 lg:top-[9.75rem] lg:w-[380px]'
+            : cn(
+                'inset-x-3 sm:inset-x-auto sm:left-1/2 sm:w-[430px] sm:max-w-[calc(100vw-2rem)] sm:-translate-x-1/2',
+                sheetState === 'expanded'
+                  ? 'bottom-[calc(5.75rem+env(safe-area-inset-bottom))] sm:bottom-6'
+                  : 'bottom-[calc(5.75rem+env(safe-area-inset-bottom))] sm:bottom-6'
+              )
         )}
       >
-        <section
-          aria-label={`${sheet.eyebrow} route details`}
-          className={cn(
-            'overflow-hidden rounded-[20px] border border-outline-variant/45 bg-surface-container-lowest/92 shadow-ambient-lg backdrop-blur-2xl transition-all duration-300 ease-out',
-            sheetState === 'expanded' ? 'max-h-[58dvh] sm:max-h-[56dvh]' : 'max-h-48'
-          )}
-          style={{ boxShadow: `var(--shadow-ambient-lg), 0 0 0 1px ${visual.routeColor}18` }}
-        >
+        {isFutureDrivePreview ? (
+          <FutureDrivePreviewSheet
+            selectedPlan={selectedFuturePlan}
+            selectedPlanId={selectedFuturePlanId}
+            activeWhatIfIds={activeFutureWhatIfIds}
+            prediction={futureDrivePrediction}
+            onPlanSelect={handleFuturePlanSelect}
+            onWhatIfToggle={handleFutureWhatIfToggle}
+            onAction={handleFutureDriveAction}
+          />
+        ) : (
+          <section
+            aria-label={`${sheet.eyebrow} route details`}
+            className={cn(
+              'overflow-hidden rounded-[20px] border border-outline-variant/45 bg-surface-container-lowest/92 shadow-ambient-lg backdrop-blur-2xl transition-all duration-300 ease-out',
+              sheetState === 'expanded' ? 'max-h-[58dvh] sm:max-h-[56dvh]' : 'max-h-48'
+            )}
+            style={{ boxShadow: `var(--shadow-ambient-lg), 0 0 0 1px ${visual.routeColor}18` }}
+          >
           <button
             type="button"
             aria-label={sheetState === 'expanded' ? 'Collapse route details' : 'Expand route details'}
@@ -2549,7 +3533,8 @@ export default function MapView() {
               </div>
             </div>
           )}
-        </section>
+          </section>
+        )}
       </div>
     </div>
   );

@@ -11,6 +11,10 @@
     ],
     "skipLibCheck": true,
     "moduleResolution": "bundler",
+    "types": [
+      "node",
+      "google.maps"
+    ],
     "isolatedModules": true,
     "moduleDetection": "force",
     "allowJs": true,
