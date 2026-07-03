@@ -1,10 +1,11 @@
 import { useMemo } from 'react';
-import { MapPin, Home, Calendar, Map as MapIcon, Car, BrainCircuit, SlidersHorizontal } from 'lucide-react';
+import { Home, Calendar, Map as MapIcon, Car, BrainCircuit, SlidersHorizontal } from 'lucide-react';
 import { useAppStore } from '../store/useAppStore';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { cn } from '../lib/utils';
 import { motion } from 'motion/react';
 import GlassButton from './GlassButton';
+import Logo from './Logo';
 import {
   fromCalendarDateInputValue,
   getAvailableCalendarWeeks,
@@ -42,8 +43,8 @@ export default function TopBar() {
     <header className="pointer-events-none fixed inset-x-0 top-0 z-50 flex h-16 items-center justify-between px-3 sm:px-5 lg:px-8">
       <div className="pointer-events-auto flex flex-1 items-center justify-start gap-3">
         <GlassButton onClick={() => navigate('/')} wrapClassName="text-[13px]" className="glass-brand-button">
-          <MapPin className="h-4 w-4" />
-          MB Sense
+          <Logo className="h-5 w-auto" />
+          MB SENSE
         </GlassButton>
 
       </div>
