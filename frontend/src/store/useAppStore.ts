@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import type { ChargingPlanResult } from '../types/chargingPlanner';
 
 export interface CalendarEvent {
   id: string;
@@ -15,6 +16,8 @@ export interface CalendarEvent {
   notes?: string;
   aiReason?: string;
   chargingMeta?: ChargingCalendarMeta;
+  aiChargingPlan?: ChargingPlanResult;
+  isAiRecommendationPreview?: boolean;
 }
 
 export type ChargingCalendarMeta = {
@@ -84,6 +87,8 @@ interface AppStore {
   };
   vehicle: VehicleState;
   events: CalendarEvent[];
+  aiChargingPlan: ChargingPlanResult | null;
+  aiChargingPlanStatus: 'idle' | 'loading' | 'ready' | 'fallback' | 'error';
   calendarRevision: number;
   recentActions: {icon: string, title: string, time: string, description: string}[];
   // Actions
@@ -95,6 +100,8 @@ interface AppStore {
   toggleEngine: () => void;
   togglePreCool: () => void;
   setBatteryLevel: (level: number) => void;
+  setAiChargingPlan: (plan: ChargingPlanResult | null, status?: AppStore['aiChargingPlanStatus']) => void;
+  setAiChargingPlanStatus: (status: AppStore['aiChargingPlanStatus']) => void;
   addEvent: (event: CalendarEvent) => void;
   updateEvent: (event: CalendarEvent) => void;
   deleteEvent: (eventId: string) => void;
@@ -232,9 +239,10 @@ const businessCalendarSeeds: BusinessCalendarSeed[] = [
   { day: 3, monthIndex: 6, suffix: 'gov-briefing', title: 'Government EV briefing', time: '09:30 AM', endTime: '10:45 AM', location: businessLocations.putrajaya, options: { status: 'Important', departureTime: '08:40 AM' } },
   { day: 3, monthIndex: 6, suffix: 'pitch-dry-run', title: 'MB Sense pitch dry run', time: '12:00 PM', endTime: '01:00 PM', location: businessLocations.mbTech, options: { status: 'Important', departureTime: '11:30 AM' } },
   { day: 3, monthIndex: 6, suffix: 'pipeline-review', title: 'Corporate sales pipeline review', time: '03:15 PM', endTime: '04:00 PM', location: businessLocations.hq, options: { carNeeded: false, status: 'Office' } },
-  { day: 3, monthIndex: 6, suffix: 'family', title: 'Family dinner', time: '07:30 PM', endTime: '09:00 PM', location: businessLocations.damansara, options: { category: 'personal', status: 'Personal' } },
-  { day: 4, monthIndex: 6, suffix: 'wellness', title: 'Executive wellness session', time: '08:15 AM', endTime: '09:15 AM', location: businessLocations.royalLake, options: { category: 'fitness', status: 'Personal' } },
-  { day: 4, monthIndex: 6, suffix: 'delivery-lounge', title: 'Customer delivery lounge walkthrough', time: '11:00 AM', endTime: '12:00 PM', location: businessLocations.dealerService, options: { status: 'Vehicle Required', departureTime: '10:30 AM' } },
+  { day: 3, monthIndex: 6, suffix: 'home-parking', title: 'Parked at home', time: '08:00 PM', endTime: '11:30 PM', location: businessLocations.home, options: { carNeeded: false, category: 'personal', status: 'Home parked', notes: 'Usual parked-at-home window. Home charging is available after 8:00 PM.' } },
+  { day: 4, monthIndex: 6, suffix: 'class', title: 'AI systems class', time: '09:00 AM', endTime: '10:30 AM', location: businessLocations.mbTech, options: { category: 'study', status: 'Vehicle Required', departureTime: '08:15 AM', notes: 'Rain and morning traffic increase the energy forecast.' } },
+  { day: 4, monthIndex: 6, suffix: 'meeting', title: 'Startup partner meeting', time: '01:00 PM', endTime: '02:00 PM', location: businessLocations.trx, options: { status: 'Vehicle Required', departureTime: '12:20 PM', notes: 'Midday cross-city trip with limited charging time before evening.' } },
+  { day: 4, monthIndex: 6, suffix: 'evening-event', title: 'Vibathon networking event', time: '06:00 PM', endTime: '08:30 PM', location: businessLocations.klcc, options: { category: 'important', status: 'Important', departureTime: '05:10 PM', notes: 'Heavy evening traffic makes this the mobility risk peak.' } },
   { day: 5, monthIndex: 6, suffix: 'prepitch-charge', title: 'AI charging recommendation', time: '08:00 PM', endTime: '09:45 PM', location: businessLocations.charger, options: { carNeeded: false, category: 'charging', status: 'AI CHARGING RECOMMENDATION', notes: 'Charge before Vibathon pitch day.', aiReason: 'Monday has a long pitch block and judge networking, so charging tonight prevents next-day reserve risk.' } },
 
   // Week Jul 6 - Jul 12: pitch day and post-demo follow-through.
@@ -338,18 +346,20 @@ export const useAppStore = create<AppStore>((set) => ({
   },
   location: 'Kuala Lumpur',
   weather: {
-    temp: 31,
-    condition: 'partly_cloudy_day'
+    temp: 29,
+    condition: 'rain'
   },
   vehicle: {
     locked: true,
     engineOn: false,
     cabinTemp: 28,
-    batteryLevel: 50,
+    batteryLevel: 52,
     tirePressure: 'OK',
     preCooling: false
   },
   events: buildBusinessCalendarEvents(),
+  aiChargingPlan: null,
+  aiChargingPlanStatus: 'idle',
   calendarRevision: 0,
   recentActions: [
     { icon: 'battery_charging_full', title: 'Charging Window Planned', description: 'Tonight 8:30 PM-10:00 PM', time: '18:45' },
@@ -390,6 +400,8 @@ export const useAppStore = create<AppStore>((set) => ({
   setBatteryLevel: (level) => set((state) => ({
     vehicle: { ...state.vehicle, batteryLevel: Math.max(0, Math.min(100, Math.round(level))) }
   })),
+  setAiChargingPlan: (plan, status = 'ready') => set({ aiChargingPlan: plan, aiChargingPlanStatus: status }),
+  setAiChargingPlanStatus: (status) => set({ aiChargingPlanStatus: status }),
 
   addEvent: (event) => set((state) => ({
     events: sortCalendarEvents([...state.events, event]),

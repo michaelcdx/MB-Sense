@@ -21,7 +21,7 @@ import {
 } from 'lucide-react';
 import Chatbot from '../components/Chatbot';
 import VoiceAssistant from '../components/VoiceAssistant';
-import { buildChargingPlan, buildGeminiChargingPredictionPayload, buildManagedChargingCalendarEvent, formatPlanDateTime, formatPlanTimeRange, managedChargingEventId, type ChargingModePreference, type ChargingOptionPlan, type GeminiChargingDecision } from '../lib/chargingAgents';
+import { buildChargingPlan, buildGeminiChargingPredictionPayload, formatPlanDateTime, formatPlanTimeRange, type ChargingModePreference, type ChargingOptionPlan, type GeminiChargingDecision } from '../lib/chargingAgents';
 import { buildScheduleDistanceResults } from '../lib/scheduleDistanceAgent';
 import { cn } from '../lib/utils';
 import { useAppStore } from '../store/useAppStore';
@@ -59,27 +59,12 @@ function routeSourceLabel(source: string) {
   return 'Estimate';
 }
 
-function calendarEventChanged(current: ReturnType<typeof buildManagedChargingCalendarEvent>, next: ReturnType<typeof buildManagedChargingCalendarEvent>) {
-  if (!current || !next) return true;
-  const currentDate = current.date instanceof Date ? current.date : new Date(current.date);
-  const nextDate = next.date instanceof Date ? next.date : new Date(next.date);
-
-  return current.title !== next.title
-    || current.location !== next.location
-    || current.time !== next.time
-    || current.endTime !== next.endTime
-    || currentDate.getTime() !== nextDate.getTime()
-    || current.aiReason !== next.aiReason
-    || current.notes !== next.notes
-    || JSON.stringify(current.chargingMeta) !== JSON.stringify(next.chargingMeta);
-}
-
 function optionLabel(option: ChargingOptionPlan) {
   return option.start && option.end ? formatPlanTimeRange(option.start, option.end) : 'No matching free slot';
 }
 
 export default function AI() {
-  const { events, vehicle, weather, calendarRevision, addEvent, updateEvent } = useAppStore();
+  const { events, vehicle, weather, calendarRevision } = useAppStore();
   const selectedDate = useCalendarViewStore((state) => state.selectedDate);
   const [targetCharge, setTargetCharge] = useState(80);
   const [chargingPreference, setChargingPreference] = useState<ChargingModePreference>('auto');
@@ -89,7 +74,6 @@ export default function AI() {
   const geminiPayload = useMemo(() => buildGeminiChargingPredictionPayload(candidatePlan, chargingPreference), [candidatePlan, chargingPreference]);
   const geminiPayloadSignature = useMemo(() => JSON.stringify(geminiPayload), [geminiPayload]);
   const plan = useMemo(() => buildChargingPlan(events, vehicle, weather, targetCharge, selectedDate, chargingPreference, geminiDecision), [events, vehicle, weather, targetCharge, selectedDate, chargingPreference, geminiDecision, calendarRevision]);
-  const managedChargingEvent = useMemo(() => events.find((event) => event.id === managedChargingEventId) ?? null, [events, calendarRevision]);
   const scheduleDistances = useMemo(() => buildScheduleDistanceResults(events, plan.planningStart), [events, plan.planningStart, calendarRevision]);
   const highlightedDistance = scheduleDistances.find((result) => result.source === 'known-real-world') ?? scheduleDistances.find((result) => result.source === 'coordinate-estimated') ?? scheduleDistances[0];
   const bestWindowLabel = formatPlanTimeRange(plan.decision.start, plan.decision.end);
@@ -127,19 +111,6 @@ export default function AI() {
     };
   }, [geminiPayloadSignature]);
 
-  useEffect(() => {
-    const nextEvent = buildManagedChargingCalendarEvent(plan);
-    if (!nextEvent) return;
-
-    if (!managedChargingEvent) {
-      addEvent(nextEvent);
-      return;
-    }
-
-    if (calendarEventChanged(managedChargingEvent, nextEvent)) {
-      updateEvent({ ...managedChargingEvent, ...nextEvent });
-    }
-  }, [addEvent, managedChargingEvent, plan, updateEvent]);
 
   return (
     <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} className="flex flex-col gap-5 pb-24 sm:pb-8">
@@ -438,6 +409,7 @@ export default function AI() {
     </motion.div>
   );
 }
+
 
 
 

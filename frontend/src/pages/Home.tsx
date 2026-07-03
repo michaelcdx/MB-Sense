@@ -2,11 +2,15 @@ import { motion } from 'motion/react';
 import { useAppStore } from '../store/useAppStore';
 import { BatteryCharging, Clock, Gauge, Zap, Battery, AlertTriangle } from 'lucide-react';
 import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { cn } from '../lib/utils';
+import { buildCalendarEventFromChargingPlan, fallbackChargingPlan, formatChargingWindowWithDate } from '../lib/chargingPlanner';
+import { useCalendarViewStore } from '../store/useCalendarViewStore';
 
 export default function Home() {
-  const { user, location, weather, vehicle, events } = useAppStore();
+  const { user, location, weather, vehicle, events, aiChargingPlan, aiChargingPlanStatus, addEvent, updateEvent } = useAppStore();
+  const setActiveWeek = useCalendarViewStore((state) => state.setActiveWeek);
+  const navigate = useNavigate();
   const [time, setTime] = useState('');
   
 
@@ -19,40 +23,24 @@ export default function Home() {
     return () => clearInterval(interval);
   }, []);
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const upcomingEvent = [...events]
-    .filter((event) => event.carNeeded && new Date(event.date).getTime() >= today.getTime())
-    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())[0] ?? events.find((event) => event.carNeeded) ?? events[0] ?? null;
-  const currentBattery = vehicle.batteryLevel;
+  const plan = aiChargingPlan ?? fallbackChargingPlan;
+  const plannedEvent = buildCalendarEventFromChargingPlan(plan);
+  const existingPlannedEvent = plannedEvent ? events.find((event) => event.id === plannedEvent.id) : undefined;
+  const currentBattery = plan.currentBatteryPercent || vehicle.batteryLevel;
   const idealMinBattery = 20;
   const idealMaxBattery = 80;
-  const recommendedTarget = 80;
-  const estimatedTomorrowUse = 16;
-  const dayAfterTomorrowUse = 40;
-  const estimatedEnergyUsePercent = estimatedTomorrowUse + dayAfterTomorrowUse;
-  const projectedBatteryAfterTrips = currentBattery - estimatedEnergyUsePercent;
-  const minimumBatteryNeeded = estimatedEnergyUsePercent + idealMinBattery;
-  const recommendedTopUp = Math.max(recommendedTarget - currentBattery, 0);
-  const isChargeRecommended = currentBattery < minimumBatteryNeeded;
-  const chargeStart = new Date();
-  chargeStart.setDate(chargeStart.getDate() + 1);
-  chargeStart.setHours(20, 30, 0, 0);
-  const chargeEnd = new Date(chargeStart);
-  chargeEnd.setHours(22, 0, 0, 0);
-  const highDemandDate = new Date();
-  highDemandDate.setDate(highDemandDate.getDate() + 2);
-  const formatPlanDate = (date: Date) => date.toLocaleDateString([], {
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric'
-  });
-  const formatPlanTime = (date: Date) => date.toLocaleTimeString([], {
-    hour: '2-digit',
-    minute: '2-digit'
-  });
-  const chargeWindow = `${formatPlanDate(chargeStart)}, ${formatPlanTime(chargeStart)}-${formatPlanTime(chargeEnd)}`;
-  const highDemandLabel = formatPlanDate(highDemandDate);
+  const recommendedTarget = plan.targetBatteryPercent ?? 80;
+  const isChargeRecommended = plan.shouldCharge;
+  const chargeWindow = formatChargingWindowWithDate(plan);
+  const riskLevelLabel = plan.riskLevel.charAt(0).toUpperCase() + plan.riskLevel.slice(1);
+  const addChargingPlanToCalendar = () => {
+    if (!plannedEvent) return;
+    const confirmedEvent = { ...plannedEvent, isAiRecommendationPreview: false, status: 'AI CHARGING CONFIRMED' };
+    if (existingPlannedEvent) updateEvent({ ...existingPlannedEvent, ...confirmedEvent });
+    else addEvent(confirmedEvent);
+    setActiveWeek(confirmedEvent.date);
+    navigate('/calendar?aiPlan=1');
+  };
 
   return (
     <motion.div 
@@ -89,9 +77,9 @@ export default function Home() {
                     : "bg-emerald-950/70 text-emerald-500 border-emerald-500/25"
                 )}>
                   <Zap className="w-3.5 h-3.5" />
-                  {isChargeRecommended ? 'Charge recommended' : 'Battery ready'}
+                  {aiChargingPlanStatus === 'loading' ? 'AI evaluating' : isChargeRecommended ? 'Charge recommended' : 'Battery ready'}
                 </span>
-                <h2 className="mt-3 text-2xl font-extrabold text-slate-100 leading-tight">Predictive EV charging</h2>
+                <h2 className="mt-3 text-2xl font-extrabold text-slate-100 leading-tight">AI Charging Recommendation</h2>
                 <p className="mt-1 text-xs font-semibold text-slate-400 leading-relaxed">
                   MB Sense predicts charging before the battery becomes a problem.
                 </p>
@@ -135,13 +123,13 @@ export default function Home() {
               </div>
               <div className="rounded-2xl bg-surface-container-low border border-outline-variant/45 p-3">
                 <Gauge className="w-4 h-4 text-amber-500 mb-2" />
-                <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Need by {highDemandLabel}</p>
-                <p className="mt-1 text-xs font-extrabold text-slate-100 leading-snug">{minimumBatteryNeeded}% incl. reserve</p>
+                <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Risk level</p>
+                <p className="mt-1 text-xs font-extrabold text-slate-100 leading-snug">{riskLevelLabel}</p>
               </div>
               <div className="rounded-2xl bg-surface-container-low border border-outline-variant/45 p-3">
                 <BatteryCharging className="w-4 h-4 text-emerald-500 mb-2" />
                 <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Charge target</p>
-                <p className="mt-1 text-xs font-extrabold text-slate-100 leading-snug">{recommendedTarget}% daily target</p>
+                <p className="mt-1 text-xs font-extrabold text-slate-100 leading-snug">{recommendedTarget}% at {plan.chargingLocationName ?? 'charger'}</p>
               </div>
             </div>
 
@@ -158,22 +146,22 @@ export default function Home() {
               <div>
                 <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Reason to charge</p>
                 <p className="mt-1 text-sm font-semibold text-slate-100 leading-relaxed">
-                  {upcomingEvent ? `${upcomingEvent.title} is part of the forecast. ` : ''}
-                  The next two days are estimated to use {estimatedEnergyUsePercent}% battery, including a {dayAfterTomorrowUse}% high-demand day after tomorrow ({highDemandLabel}). At {currentBattery}%, you would finish near {Math.max(projectedBatteryAfterTrips, 0)}%, below the {idealMinBattery}% reserve target.
+                  {plan.reason}
                 </p>
+                <p className="mt-2 text-xs font-bold text-slate-400">Mobility Confidence: {plan.mobilityConfidenceScore}%</p>
               </div>
             </div>
 
             <div className="grid grid-cols-2 gap-3">
-              <Link to="/vehicle" className="bg-primary text-on-primary py-3.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all active:scale-98 flex items-center justify-center gap-2 shadow-ambient">
+              <button type="button" onClick={() => navigate('/calendar?aiPlan=1')} className="bg-primary text-on-primary py-3.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all active:scale-98 flex items-center justify-center gap-2 shadow-ambient">
                 <BatteryCharging className="w-4 h-4" />
-                Plan charge
-              </Link>
-              <div className="bg-surface-container-low border border-outline-variant/45 rounded-xl px-3 py-2 flex items-center justify-center text-center">
-                <p className="text-[10px] font-bold text-slate-500 leading-snug">
-                  Add {recommendedTopUp}% to reach the battery-friendly {recommendedTarget}% daily target.
-                </p>
-              </div>
+                View details
+              </button>
+              {plan.calendarAction.shouldCreateEvent && (
+                <button type="button" onClick={addChargingPlanToCalendar} className="bg-surface-container-low border border-outline-variant/45 rounded-xl px-3 py-2 text-center text-[10px] font-black uppercase tracking-widest text-slate-200 transition hover:border-primary/35 hover:text-primary">
+                  {existingPlannedEvent ? 'Update calendar' : 'Add to calendar'}
+                </button>
+              )}
             </div>
           </div>
         </div>

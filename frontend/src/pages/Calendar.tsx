@@ -5,6 +5,8 @@ import { cn } from '../lib/utils';
 import GlassButton from '../components/GlassButton';
 import { FormEvent, PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { useCalendarViewStore } from '../store/useCalendarViewStore';
+import { useLocation } from 'react-router-dom';
+import { buildCalendarEventFromChargingPlan } from '../lib/chargingPlanner';
 
 type EventMode = 'create' | 'edit';
 type EventColor = 'graphite' | 'blue' | 'green' | 'amber' | 'rose' | 'violet' | 'cream' | 'general' | 'study' | 'assignment' | 'urgent' | 'charging' | 'risk';
@@ -499,10 +501,18 @@ function getEventTone(_event: CalendarEvent) {
 }
 
 function getEventColorStyle(event: CalendarEvent) {
+  if (event.aiChargingPlan) {
+    const amber = event.aiChargingPlan.riskLevel === 'high' || event.aiChargingPlan.calendarAction.colorType === 'battery-risk';
+    return { backgroundColor: amber ? '#7C4A03' : '#14532D' };
+  }
   return eventColorStyles[getEventColor(event)];
 }
 
 function getEventTextColorStyle(event: CalendarEvent) {
+  if (event.aiChargingPlan) {
+    const amber = event.aiChargingPlan.riskLevel === 'high' || event.aiChargingPlan.calendarAction.colorType === 'battery-risk';
+    return { color: amber ? '#FFFBEB' : '#ECFDF5' };
+  }
   return defaultEventTextStyle;
 }
 
@@ -741,7 +751,7 @@ function LocationModeButton({ active, icon: Icon, label, onClick }: {
   );
 }
 
-function EventSidePanel({ mode, form, editingEvent, onChange, onClose, onDelete, onSubmit, onStationSelect }: {
+function EventSidePanel({ mode, form, editingEvent, onChange, onClose, onDelete, onSubmit, onStationSelect, onAddChargingPlan }: {
   mode: EventMode | null;
   form: ScheduleForm;
   editingEvent: CalendarEvent | null;
@@ -750,6 +760,7 @@ function EventSidePanel({ mode, form, editingEvent, onChange, onClose, onDelete,
   onDelete: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onStationSelect: (station: ChargingStationCalendarOption) => void;
+  onAddChargingPlan: (event: CalendarEvent) => void;
 }) {
   const formRef = useRef(form);
   const onChangeRef = useRef(onChange);
@@ -881,8 +892,15 @@ function EventSidePanel({ mode, form, editingEvent, onChange, onClose, onDelete,
     ? isChargingEvent(editingEvent) || isRiskEvent(editingEvent)
     : form.category === 'charging' || form.category === 'risk' || form.title.toLowerCase().includes('charge');
   const chargingMeta = editingEvent?.chargingMeta;
+  const aiPlan = editingEvent?.aiChargingPlan;
   const sortedChargingChoices = useMemo(() => [...(chargingMeta?.choiceOptions ?? [])].sort((a, b) => a.rank - b.rank), [chargingMeta?.choiceOptions]);
   const travelStatus = getTravelStatus(form.carNeeded);
+  const formatAiPlanDateTime = (value: string | null) => {
+    if (!value) return 'Not available';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return 'Not available';
+    return date.toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  };
   const selectChargingStation = (station: ChargingStationCalendarOption) => {
     onStationSelect(station);
     setStationPickerOpen(false);
@@ -903,6 +921,53 @@ function EventSidePanel({ mode, form, editingEvent, onChange, onClose, onDelete,
           </div>
           <button type="button" onClick={onClose} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-outline-variant/45 bg-surface-container-lowest text-on-surface-variant transition hover:bg-surface-container" aria-label="Close schedule editor"><X className="h-4 w-4" /></button>
         </div>
+
+        {aiPlan && (
+          <div className="mb-4 rounded-lg border border-emerald-300/25 bg-surface-container-lowest p-3">
+            <div className="flex items-center gap-2 text-xs font-semibold text-emerald-500"><BrainCircuit className="h-4 w-4" />AI charging planner</div>
+            <h4 className="mt-2 text-sm font-semibold text-on-surface">{aiPlan.title}</h4>
+            <p className="mt-1 text-xs font-medium leading-relaxed text-on-surface-variant">{aiPlan.summary}</p>
+            <div className="mt-3 grid grid-cols-2 gap-2 text-[11px]">
+              <div className="rounded-md bg-surface-container-low p-2"><p className="text-slate-500">Risk level</p><p className="mt-1 font-semibold capitalize text-on-surface">{aiPlan.riskLevel}</p></div>
+              <div className="rounded-md bg-surface-container-low p-2"><p className="text-slate-500">Mobility confidence</p><p className="mt-1 font-semibold text-on-surface">{aiPlan.mobilityConfidenceScore}%</p></div>
+              <div className="rounded-md bg-surface-container-low p-2"><p className="text-slate-500">Current battery</p><p className="mt-1 font-semibold text-on-surface">{aiPlan.currentBatteryPercent}%</p></div>
+              <div className="rounded-md bg-surface-container-low p-2"><p className="text-slate-500">Target battery</p><p className="mt-1 font-semibold text-on-surface">{aiPlan.targetBatteryPercent ?? 'None'}{aiPlan.targetBatteryPercent ? '%' : ''}</p></div>
+              <div className="rounded-md bg-surface-container-low p-2"><p className="text-slate-500">Predicted lowest</p><p className="mt-1 font-semibold text-on-surface">{aiPlan.predictedLowestBatteryPercent}%</p></div>
+              <div className="rounded-md bg-surface-container-low p-2"><p className="text-slate-500">After schedule</p><p className="mt-1 font-semibold text-on-surface">{aiPlan.predictedBatteryAfterSchedule}%</p></div>
+            </div>
+            <div className="mt-3 rounded-md bg-surface-container-low p-2 text-[11px]">
+              <p className="font-semibold text-on-surface">{aiPlan.chargingLocationName ?? 'Charging location'} · {aiPlan.chargingType.replace(/_/g, ' ')}</p>
+              <p className="mt-1 text-slate-500">{formatAiPlanDateTime(aiPlan.recommendedChargingStart)} - {formatAiPlanDateTime(aiPlan.recommendedChargingEnd)}</p>
+            </div>
+            <p className="mt-3 text-xs font-medium leading-relaxed text-on-surface-variant">{aiPlan.reason}</p>
+            <div className="mt-3 grid grid-cols-2 gap-2 text-[11px]">
+              <div className="rounded-md bg-surface-container-low p-2"><p className="text-slate-500">Battery risk</p><p className="mt-1 font-semibold capitalize text-on-surface">{aiPlan.riskBreakdown.batteryRisk}</p></div>
+              <div className="rounded-md bg-surface-container-low p-2"><p className="text-slate-500">Opportunity risk</p><p className="mt-1 font-semibold capitalize text-on-surface">{aiPlan.riskBreakdown.chargingOpportunityRisk}</p></div>
+              <div className="rounded-md bg-surface-container-low p-2"><p className="text-slate-500">Schedule risk</p><p className="mt-1 font-semibold capitalize text-on-surface">{aiPlan.riskBreakdown.scheduleDisruptionRisk}</p></div>
+              <div className="rounded-md bg-surface-container-low p-2"><p className="text-slate-500">Weather/traffic</p><p className="mt-1 font-semibold capitalize text-on-surface">{aiPlan.riskBreakdown.weatherTrafficRisk}</p></div>
+            </div>
+            {aiPlan.backupPlan.available && (
+              <div className="mt-3 rounded-md border border-amber-300/25 bg-amber-500/10 p-2 text-[11px]">
+                <p className="font-semibold text-amber-500">{aiPlan.backupPlan.title ?? 'Backup charging plan'}</p>
+                <p className="mt-1 text-on-surface">{aiPlan.backupPlan.locationName ?? 'Backup location'}</p>
+                <p className="mt-1 text-slate-500">{formatAiPlanDateTime(aiPlan.backupPlan.startTime)} - {formatAiPlanDateTime(aiPlan.backupPlan.endTime)}</p>
+                {aiPlan.backupPlan.reason && <p className="mt-1 leading-relaxed text-on-surface-variant">{aiPlan.backupPlan.reason}</p>}
+              </div>
+            )}
+            <div className="mt-3 space-y-1.5 text-[11px] leading-relaxed text-on-surface-variant">
+              <p>{aiPlan.sidePanelDetails.batteryExplanation}</p>
+              <p>{aiPlan.sidePanelDetails.scheduleExplanation}</p>
+              <p>{aiPlan.sidePanelDetails.chargingExplanation}</p>
+              <p>{aiPlan.sidePanelDetails.backupExplanation}</p>
+            </div>
+            {aiPlan.calendarAction.shouldCreateEvent && editingEvent && (
+              <button type="button" onClick={() => onAddChargingPlan(editingEvent)} className="mt-3 flex min-h-9 w-full items-center justify-center gap-2 rounded-md bg-primary px-3 py-2 text-xs font-black uppercase tracking-widest text-on-primary transition active:scale-[0.99]">
+                <BatteryCharging className="h-3.5 w-3.5" />
+                {aiPlan.sidePanelDetails.userActionText}
+              </button>
+            )}
+          </div>
+        )}
 
         {chargingContext && (
           <div className="mb-4 rounded-lg border border-outline-variant/45 bg-surface-container-lowest p-3">
@@ -1129,14 +1194,21 @@ function EventSidePanel({ mode, form, editingEvent, onChange, onClose, onDelete,
 }
 
 export default function Calendar() {
-  const { events: calendarEvents, addEvent, updateEvent, deleteEvent } = useAppStore();
+  const { events: calendarEvents, aiChargingPlan, addEvent, updateEvent, deleteEvent } = useAppStore();
   const { selectedDate, weekStart, setSelectedDate, setActiveWeek } = useCalendarViewStore();
+  const location = useLocation();
   const initialDate = useMemo(() => selectedDate, []);
   const [dragSelection, setDragSelection] = useState<DragSelection | null>(null);
   const dragStartRef = useRef<DragStartState | null>(null);
   const [panelMode, setPanelMode] = useState<EventMode | null>(null);
   const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
   const [form, setForm] = useState<ScheduleForm>(() => buildEmptyForm(initialDate));
+  const aiPreviewEvent = useMemo(() => {
+    if (!aiChargingPlan) return null;
+    const event = buildCalendarEventFromChargingPlan(aiChargingPlan, true);
+    if (!event || calendarEvents.some((item) => item.id === event.id)) return null;
+    return event;
+  }, [aiChargingPlan, calendarEvents]);
 
   const timelineDays = useMemo(() => getTimelineDays(weekStart), [weekStart]);
   const timelineEvents = useMemo(() => {
@@ -1147,6 +1219,13 @@ export default function Calendar() {
       return date >= timelineStart && date < timelineEnd;
     });
   }, [calendarEvents, timelineDays]);
+  const timelineEventsWithPreview = useMemo(() => {
+    if (!aiPreviewEvent) return timelineEvents;
+    const date = getEventDate(aiPreviewEvent);
+    const timelineStart = timelineDays[0] ?? startOfDay(weekStart);
+    const timelineEnd = addDays(timelineDays[timelineDays.length - 1] ?? demoEnd, 1);
+    return date >= timelineStart && date < timelineEnd ? [...timelineEvents, aiPreviewEvent] : timelineEvents;
+  }, [aiPreviewEvent, timelineEvents, timelineDays, weekStart]);
 
   const draftEvent = useMemo<(CalendarEvent & { color: EventColor }) | null>(() => {
     if (!panelMode) return null;
@@ -1173,14 +1252,14 @@ export default function Calendar() {
   }, [editingEvent, form, panelMode]);
 
   const visibleWeekEvents = useMemo(() => {
-    if (!draftEvent) return timelineEvents;
+    if (!draftEvent) return timelineEventsWithPreview;
     const draftDate = getEventDate(draftEvent);
     const timelineStart = timelineDays[0] ?? startOfDay(weekStart);
     const timelineEnd = addDays(timelineDays[timelineDays.length - 1] ?? demoEnd, 1);
-    const baseEvents = editingEvent ? timelineEvents.filter((event) => event.id !== editingEvent.id) : timelineEvents;
+    const baseEvents = editingEvent ? timelineEventsWithPreview.filter((event) => event.id !== editingEvent.id) : timelineEventsWithPreview;
     if (draftDate < timelineStart || draftDate >= timelineEnd) return baseEvents;
     return [...baseEvents, draftEvent];
-  }, [draftEvent, editingEvent, timelineEvents, timelineDays]);
+  }, [draftEvent, editingEvent, timelineEventsWithPreview, timelineDays, weekStart]);
 
   const selectedEventId = panelMode === 'create' ? draftEventId : editingEvent?.id;
 
@@ -1203,6 +1282,12 @@ export default function Calendar() {
     setPanelMode(null);
     setEditingEvent(null);
   };
+
+  useEffect(() => {
+    if (!location.search.includes('aiPlan=1')) return;
+    const eventToOpen = aiPreviewEvent ?? (aiChargingPlan ? calendarEvents.find((event) => event.id === buildCalendarEventFromChargingPlan(aiChargingPlan)?.id) : undefined);
+    if (eventToOpen) openPanelForEvent(eventToOpen);
+  }, [location.search, aiPreviewEvent, aiChargingPlan, calendarEvents]);
 
   const handleGridPointerDown = (event: ReactPointerEvent<HTMLElement>, dayIndex: number, date: Date) => {
     if (event.target instanceof Element && event.target.closest('[data-event-block="true"]')) return;
@@ -1279,6 +1364,22 @@ export default function Calendar() {
     closePanel();
   };
 
+  const handleAddChargingPlan = (event: CalendarEvent) => {
+    if (!event.aiChargingPlan) return;
+    const confirmedEvent: CalendarEvent = {
+      ...event,
+      status: 'AI CHARGING CONFIRMED',
+      isAiRecommendationPreview: false,
+    };
+    const existingEvent = calendarEvents.find((item) => item.id === confirmedEvent.id);
+    if (existingEvent) updateEvent({ ...existingEvent, ...confirmedEvent });
+    else addEvent(confirmedEvent);
+    setActiveWeek(getEventDate(confirmedEvent));
+    setEditingEvent(confirmedEvent);
+    setForm(formFromEvent(confirmedEvent));
+    setPanelMode('edit');
+  };
+
   const handleChargingStationSelect = (station: ChargingStationCalendarOption) => {
     if (!editingEvent?.chargingMeta) return;
 
@@ -1326,6 +1427,7 @@ export default function Calendar() {
           onDelete={handleDeleteSchedule}
           onSubmit={handleSaveSchedule}
           onStationSelect={handleChargingStationSelect}
+          onAddChargingPlan={handleAddChargingPlan}
         />
       </div>
 
