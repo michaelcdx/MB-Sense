@@ -634,7 +634,7 @@ textarea {
   .premium-btn.glass-button.glass-brand-button {
     --glass-primary-rgb: 70 71 211;
     --glass-highlight-rgb: 164 216 255;
-    --glass-text: var(--color-on-surface);
+    --glass-text: var(--color-primary);
     min-height: 2.75rem;
   }
 

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Eye, EyeOff } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAppStore } from '../store/useAppStore';
+import Logo from '../components/Logo';
 
 export default function CreateAccount() {
   const [showPassword, setShowPassword] = useState(false);
@@ -20,9 +21,10 @@ export default function CreateAccount() {
       <div className="w-full max-w-sm flex flex-col items-center gap-8 rounded-3xl border border-outline-variant/45 bg-surface-container-lowest/82 p-7 shadow-ambient-lg backdrop-blur-xl">
         
         {/* Logo */}
-        <div className="text-center">
-          <h1 className="text-4xl font-black tracking-wide uppercase text-primary mb-4">MB SENSE</h1>
-          <h2 className="text-2xl font-bold text-on-surface">Create Account</h2>
+        <div className="text-center flex flex-col items-center">
+          <Logo className="h-16 w-16 text-primary mb-2" />
+          <h1 className="text-3xl font-black tracking-wide uppercase text-primary mb-2">MB SENSE</h1>
+          <h2 className="text-xl font-bold text-on-surface">Create Account</h2>
         </div>
 
         {/* Form */}

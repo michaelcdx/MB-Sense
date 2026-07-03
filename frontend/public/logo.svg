@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 600" width="100%" height="100%">
+  <!-- Battery Body -->
+  <rect x="100" y="100" width="700" height="400" rx="80" ry="80" fill="none" stroke="currentColor" stroke-width="36" />
+  
+  <!-- Right Terminal Loop -->
+  <path d="M 800,210 A 90,90 0 0 1 800,390" fill="none" stroke="currentColor" stroke-width="36" stroke-linecap="round" />
+  
+  <!-- Left Probe Line and Circle -->
+  <line x1="100" y1="300" x2="300" y2="300" stroke="currentColor" stroke-width="36" stroke-linecap="butt" />
+  <circle cx="330" cy="300" r="40" fill="none" stroke="currentColor" stroke-width="36" />
+  
+  <!-- Lightning Bolt -->
+  <polygon points="610,160 700,310 600,310 570,440 480,290 580,290" fill="currentColor" />
+</svg>
