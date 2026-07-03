@@ -1,5 +1,5 @@
 import { motion } from 'motion/react';
-import { CalendarEvent, useAppStore } from '../store/useAppStore';
+import { CalendarEvent, useAppStore, type ChargingStationCalendarOption } from '../store/useAppStore';
 import { AlertTriangle, BatteryCharging, BrainCircuit, Car, Check, Crosshair, MapPin, Save, Search, Trash2, Video, X, Zap } from 'lucide-react';
 import { cn } from '../lib/utils';
 import GlassButton from '../components/GlassButton';
@@ -397,6 +397,18 @@ function inputTimeToDisplay(value: string) {
   return minutesToDisplayTime(parseTimeToMinutes(value));
 }
 
+function formatChoiceWindow(start?: string, end?: string) {
+  if (!start || !end) return 'No window';
+  const startDate = new Date(start);
+  const endDate = new Date(end);
+  if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) return 'No window';
+
+  const day = startDate.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+  const startTime = startDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const endTime = endDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return `${day}, ${startTime}-${endTime}`;
+}
+
 function getEventStart(event: CalendarEvent) {
   return parseTimeToMinutes(event.time);
 }
@@ -729,7 +741,7 @@ function LocationModeButton({ active, icon: Icon, label, onClick }: {
   );
 }
 
-function EventSidePanel({ mode, form, editingEvent, onChange, onClose, onDelete, onSubmit }: {
+function EventSidePanel({ mode, form, editingEvent, onChange, onClose, onDelete, onSubmit, onStationSelect }: {
   mode: EventMode | null;
   form: ScheduleForm;
   editingEvent: CalendarEvent | null;
@@ -737,6 +749,7 @@ function EventSidePanel({ mode, form, editingEvent, onChange, onClose, onDelete,
   onClose: () => void;
   onDelete: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  onStationSelect: (station: ChargingStationCalendarOption) => void;
 }) {
   const formRef = useRef(form);
   const onChangeRef = useRef(onChange);
@@ -746,6 +759,7 @@ function EventSidePanel({ mode, form, editingEvent, onChange, onClose, onDelete,
   const [placeQuery, setPlaceQuery] = useState(form.location);
   const [placeFocused, setPlaceFocused] = useState(false);
   const [placesStatus, setPlacesStatus] = useState<'idle' | 'loading' | 'ready' | 'unavailable'>(hasGooglePlacesKey ? 'idle' : 'unavailable');
+  const [stationPickerOpen, setStationPickerOpen] = useState(false);
   const [coordinateDraft, setCoordinateDraft] = useState<CoordinateDraft>(() => coordinateDraftFromLocation(form.location));
   const localPlaceMatches = useMemo(() => getMalaysiaLocationMatches(placeQuery), [placeQuery]);
   const coordinateValue = parseCoordinateDraft(coordinateDraft);
@@ -756,6 +770,10 @@ function EventSidePanel({ mode, form, editingEvent, onChange, onClose, onDelete,
   useEffect(() => {
     formRef.current = form;
   }, [form]);
+
+  useEffect(() => {
+    setStationPickerOpen(false);
+  }, [editingEvent?.id, mode]);
 
   useEffect(() => {
     onChangeRef.current = onChange;
@@ -862,7 +880,13 @@ function EventSidePanel({ mode, form, editingEvent, onChange, onClose, onDelete,
   const chargingContext = editingEvent
     ? isChargingEvent(editingEvent) || isRiskEvent(editingEvent)
     : form.category === 'charging' || form.category === 'risk' || form.title.toLowerCase().includes('charge');
+  const chargingMeta = editingEvent?.chargingMeta;
+  const sortedChargingChoices = useMemo(() => [...(chargingMeta?.choiceOptions ?? [])].sort((a, b) => a.rank - b.rank), [chargingMeta?.choiceOptions]);
   const travelStatus = getTravelStatus(form.carNeeded);
+  const selectChargingStation = (station: ChargingStationCalendarOption) => {
+    onStationSelect(station);
+    setStationPickerOpen(false);
+  };
   const toggleTravelStatus = () => {
     const nextCarNeeded = !form.carNeeded;
     onChange({ ...form, carNeeded: nextCarNeeded, status: getTravelStatus(nextCarNeeded) });
@@ -884,11 +908,79 @@ function EventSidePanel({ mode, form, editingEvent, onChange, onClose, onDelete,
           <div className="mb-4 rounded-lg border border-outline-variant/45 bg-surface-container-lowest p-3">
             <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-emerald-500"><BatteryCharging className="h-4 w-4 text-emerald-500" />Charging prediction</div>
             <div className="grid grid-cols-2 gap-2 text-[11px]">
-              <div className="rounded-md bg-surface-container-low p-2"><p className="text-slate-500">Target</p><p className="mt-1 font-semibold text-on-surface">80%</p></div>
-              <div className="rounded-md bg-surface-container-low p-2"><p className="text-slate-500">Risk</p><p className={cn('mt-1 font-semibold', editingEvent && isRiskEvent(editingEvent) ? 'text-amber-500' : 'text-emerald-500')}>{editingEvent && isRiskEvent(editingEvent) ? 'High' : 'Watch'}</p></div>
-              <div className="rounded-md bg-surface-container-low p-2"><p className="text-slate-500">After schedule</p><p className="mt-1 font-semibold text-on-surface">22-28%</p></div>
-              <div className="rounded-md bg-surface-container-low p-2"><p className="text-slate-500">Window</p><p className="mt-1 font-semibold text-on-surface">Home</p></div>
+              <div className="rounded-md bg-surface-container-low p-2"><p className="text-slate-500">Mode</p><p className="mt-1 font-semibold text-on-surface">{chargingMeta?.mode ?? 'AI'}</p></div>
+              <div className="rounded-md bg-surface-container-low p-2"><p className="text-slate-500">Target</p><p className="mt-1 font-semibold text-on-surface">{chargingMeta ? `${chargingMeta.targetBattery}%` : '80%'}</p></div>
+              <div className="rounded-md bg-surface-container-low p-2"><p className="text-slate-500">Duration</p><p className="mt-1 font-semibold text-on-surface">{chargingMeta ? `${chargingMeta.minutesNeeded} min` : 'Predicted'}</p></div>
+              <div className="rounded-md bg-surface-container-low p-2"><p className="text-slate-500">Connector</p><p className="mt-1 font-semibold text-on-surface">{chargingMeta?.connector ?? 'CCS2'}</p></div>
             </div>
+            {chargingMeta?.selectedStation && (
+              <div className="mt-3 rounded-md border border-emerald-300/25 bg-emerald-500/10 p-2 text-[11px]">
+                <p className="font-semibold text-emerald-500">Top selected station</p>
+                <p className="mt-1 font-semibold text-on-surface">{chargingMeta.selectedStation.name}</p>
+                <p className="mt-1 text-slate-500">{chargingMeta.selectedStation.provider} � {chargingMeta.selectedStation.maxPowerKw} kW � {chargingMeta.selectedStation.distanceFromAnchorKm} km from {chargingMeta.anchorLocation}</p>
+              </div>
+            )}
+            {sortedChargingChoices.length ? (
+              <div className="mt-3 space-y-2">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">AI choices</p>
+                {sortedChargingChoices.slice(0, 5).map((choice) => (
+                  <div key={choice.id} className="rounded-md bg-surface-container-low p-2 text-[11px]">
+                    <p className="font-semibold text-on-surface">{choice.rank}. {choice.mode}{choice.stationName ? ` � ${choice.stationName}` : ''}</p>
+                    <p className="mt-1 text-slate-500">{formatChoiceWindow(choice.start, choice.end)}</p>
+                    <p className="mt-1 leading-relaxed text-on-surface-variant">{choice.reason}</p>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+            {chargingMeta?.stationOptions.length ? (
+              <div className="mt-3 space-y-2">
+                <div className="space-y-2">
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Top CCS2 stations</p>
+                  <button type="button" onClick={() => setStationPickerOpen(true)} className="flex min-h-8 w-full items-center justify-center gap-1.5 rounded-md border border-outline-variant/45 bg-surface-container-low px-2 py-1.5 text-center text-[10px] font-semibold leading-tight text-on-surface-variant transition hover:border-primary/40 hover:text-primary">
+                    <MapPin className="h-3 w-3 shrink-0" />
+                    <span>Select another charging station</span>
+                  </button>
+                </div>
+                {chargingMeta.stationOptions.slice(0, 5).map((station, index) => (
+                  <div key={station.id} className="rounded-md bg-surface-container-low p-2 text-[11px]">
+                    <p className="font-semibold text-on-surface">{index + 1}. {station.name}</p>
+                    <p className="mt-1 text-slate-500">{station.connector} � {station.maxPowerKw} kW � {station.distanceFromAnchorKm} km away � {station.detourKm} km detour</p>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+            {stationPickerOpen && chargingMeta?.stationOptions.length ? (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 px-4 py-6">
+                <button type="button" className="absolute inset-0" onClick={() => setStationPickerOpen(false)} aria-label="Close charging station selector" />
+                <div className="relative z-10 max-h-[82vh] w-full max-w-lg overflow-hidden rounded-lg border border-outline-variant/45 bg-surface-container-lowest shadow-ambient-lg">
+                  <div className="flex items-start justify-between gap-3 border-b border-outline-variant/45 p-4">
+                    <div>
+                      <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Available DC charging stations</p>
+                      <h4 className="mt-1 text-sm font-semibold text-on-surface">Select another charging station</h4>
+                    </div>
+                    <button type="button" onClick={() => setStationPickerOpen(false)} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-outline-variant/45 bg-surface-container-low text-on-surface-variant transition hover:bg-surface-container" aria-label="Close station selector"><X className="h-4 w-4" /></button>
+                  </div>
+                  <div className="max-h-[62vh] space-y-2 overflow-y-auto p-3">
+                    {chargingMeta.stationOptions.slice(0, 5).map((station, index) => {
+                      const selected = station.id === chargingMeta.selectedStation?.id;
+                      return (
+                        <button key={station.id} type="button" onClick={() => selectChargingStation(station)} className={cn('w-full rounded-md border p-3 text-left transition', selected ? 'border-emerald-300/35 bg-emerald-500/10' : 'border-outline-variant/45 bg-surface-container-low hover:border-primary/40')}>
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="text-xs font-semibold text-on-surface">{index + 1}. {station.name}</p>
+                              <p className="mt-1 text-[11px] font-medium text-slate-500">{station.provider} � {station.connector} � {station.maxPowerKw} kW � {station.stalls} stalls</p>
+                              <p className="mt-1 text-[11px] text-on-surface-variant">{station.address}</p>
+                              <p className="mt-1 text-[11px] text-slate-500">{station.distanceFromAnchorKm} km from {chargingMeta.anchorLocation} � {station.detourKm} km detour</p>
+                            </div>
+                            {selected && <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            ) : null}
             {editingEvent?.aiReason && <p className="mt-3 text-xs font-medium leading-relaxed text-on-surface-variant">{editingEvent.aiReason}</p>}
           </div>
         )}
@@ -1075,7 +1167,8 @@ export default function Calendar() {
       status: getTravelStatus(form.carNeeded),
       notes: form.notes.trim() || undefined,
       color: form.color,
-      aiReason: editingEvent?.aiReason
+      aiReason: editingEvent?.aiReason,
+      chargingMeta: editingEvent?.chargingMeta
     };
   }, [editingEvent, form, panelMode]);
 
@@ -1167,7 +1260,8 @@ export default function Calendar() {
       status,
       notes: form.notes.trim() || undefined,
       color: form.color,
-      aiReason: editingEvent?.aiReason
+      aiReason: editingEvent?.aiReason,
+      chargingMeta: editingEvent?.chargingMeta
     };
 
     if (editingEvent) updateEvent(nextEvent);
@@ -1183,6 +1277,28 @@ export default function Calendar() {
     if (!editingEvent) return;
     deleteEvent(editingEvent.id);
     closePanel();
+  };
+
+  const handleChargingStationSelect = (station: ChargingStationCalendarOption) => {
+    if (!editingEvent?.chargingMeta) return;
+
+    const nextEvent: CalendarEvent & { color?: EventColor } = {
+      ...editingEvent,
+      location: station.address,
+      notes: `Selected ${station.name} from the available CCS2 charging station options.`,
+      chargingMeta: {
+        ...editingEvent.chargingMeta,
+        selectedStation: station
+      }
+    };
+
+    updateEvent(nextEvent);
+    setEditingEvent(nextEvent);
+    setForm((current) => ({
+      ...current,
+      location: station.address,
+      notes: nextEvent.notes ?? current.notes
+    }));
   };
 
   return (
@@ -1209,6 +1325,7 @@ export default function Calendar() {
           onClose={closePanel}
           onDelete={handleDeleteSchedule}
           onSubmit={handleSaveSchedule}
+          onStationSelect={handleChargingStationSelect}
         />
       </div>
 

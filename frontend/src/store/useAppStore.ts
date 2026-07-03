@@ -14,8 +14,50 @@ export interface CalendarEvent {
   endTime?: string;
   notes?: string;
   aiReason?: string;
+  chargingMeta?: ChargingCalendarMeta;
 }
 
+export type ChargingCalendarMeta = {
+  mode: 'AC' | 'DC';
+  targetBattery: number;
+  minutesNeeded: number;
+  connector: 'CCS2';
+  anchorLocation: string;
+  previousLocation?: string;
+  nextLocation?: string;
+  selectedStation?: ChargingStationCalendarOption;
+  stationOptions: ChargingStationCalendarOption[];
+  choiceOptions?: ChargingChoiceCalendarOption[];
+  aiSource?: 'gemini' | 'fallback';
+  aiConfidence?: number;
+  aiReason?: string;
+};
+
+export type ChargingChoiceCalendarOption = {
+  id: string;
+  rank: number;
+  mode: 'AC' | 'DC';
+  start?: string;
+  end?: string;
+  selectedStationId?: string | null;
+  stationName?: string;
+  reason: string;
+};
+
+export type ChargingStationCalendarOption = {
+  id: string;
+  name: string;
+  provider: string;
+  city: string;
+  address: string;
+  connector: 'CCS2' | 'Tesla CCS2';
+  maxPowerKw: number;
+  stalls: number;
+  distanceFromAnchorKm: number;
+  detourKm: number;
+  isHighwayStop: boolean;
+  reason: string;
+};
 export interface VehicleState {
   locked: boolean;
   engineOn: boolean;

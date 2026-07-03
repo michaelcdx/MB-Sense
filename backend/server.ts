@@ -14,6 +14,100 @@ const ai = new GoogleGenAI({
   }
 });
 
+type ChargingMode = 'AC' | 'DC';
+
+type ChargingPredictionChoice = {
+  id?: string;
+  rank?: number;
+  mode?: ChargingMode;
+  start?: string;
+  end?: string;
+  selectedStationId?: string | null;
+  stationName?: string;
+  reason?: string;
+};
+
+type ChargingCandidateOption = {
+  mode: ChargingMode;
+  canComplete?: boolean;
+  start?: string;
+  end?: string;
+  minutesNeeded?: number | null;
+  targetBattery?: number;
+  location?: string;
+  stationOptions?: Array<{
+    id: string;
+    name: string;
+    provider: string;
+    connector: string;
+    maxPowerKw: number;
+    stalls: number;
+    distanceFromAnchorKm: number;
+    detourKm: number;
+    reason: string;
+  }>;
+};
+
+type ChargingPredictionRequest = {
+  preference?: ChargingMode | 'auto';
+  vehicleProfile?: Record<string, unknown>;
+  energy?: Record<string, unknown>;
+  schedule?: Record<string, unknown>;
+  choices?: ChargingPredictionChoice[];
+  options?: {
+    ac?: ChargingCandidateOption;
+    dc?: ChargingCandidateOption;
+  };
+  localSelection?: {
+    mode?: ChargingMode;
+    selectedStationId?: string | null;
+    explanation?: string;
+  };
+};
+
+function getLocalChargingDecision(payload: ChargingPredictionRequest) {
+  const ac = payload.options?.ac;
+  const dc = payload.options?.dc;
+  const prefer = payload.preference;
+  const acMinutes = Number(ac?.minutesNeeded ?? 0);
+  const dcStation = dc?.stationOptions?.[0];
+  const canUseAc = Boolean(ac?.canComplete);
+  const canUseDc = Boolean(dc?.canComplete && dcStation);
+  const mode: ChargingMode = prefer === 'AC' && canUseAc
+    ? 'AC'
+    : prefer === 'DC' && canUseDc
+      ? 'DC'
+      : canUseDc && acMinutes >= 180
+        ? 'DC'
+        : canUseAc
+          ? 'AC'
+          : canUseDc
+            ? 'DC'
+            : 'AC';
+
+  const localChoices = Array.isArray(payload.choices) && payload.choices.length
+    ? payload.choices.map((choice, index) => ({ ...choice, rank: index + 1 }))
+    : [
+        ac ? { id: 'ac-home-window', mode: 'AC', rank: mode === 'AC' ? 1 : 2, start: ac.start, end: ac.end, reason: 'Longest AC-compatible free window.' } : undefined,
+        dcStation ? { id: `dc-${dcStation.id}`, mode: 'DC', rank: mode === 'DC' ? 1 : 2, start: dc?.start, end: dc?.end, selectedStationId: dcStation.id, stationName: dcStation.name, reason: 'Best validated CCS2 DC station candidate.' } : undefined
+      ].filter(Boolean);
+
+  return {
+    source: 'fallback',
+    mode,
+    selectedStationId: mode === 'DC' ? dcStation?.id ?? null : null,
+    selectedChoiceId: mode === 'DC' && dcStation ? `dc-${dcStation.id}` : 'ac-home-window',
+    confidence: mode === 'DC' && canUseDc ? 0.72 : canUseAc ? 0.68 : 0.45,
+    reason: mode === 'DC'
+      ? `${dcStation?.name ?? 'The top compatible DC station'} is the best available CCS option from the current route context.`
+      : 'The AC option fits the longest available charging window.',
+    explanation: mode === 'DC'
+      ? `Use DC fast charging because the available window is shorter than the AC charging requirement. ${dcStation?.name ?? 'The selected CCS station'} is the best validated station candidate.`
+      : `Use AC charging during the longest free window because it can complete the requested top-up without a public DC stop.`,
+    choices: localChoices
+  };
+}
+
 async function startServer() {
   const app = express();
   const server = http.createServer(app);
@@ -74,6 +168,101 @@ async function startServer() {
     }
   });
 
+  // Gemini-backed charging prediction. The frontend sends validated candidates; Gemini selects among them.
+  app.post('/api/charging/predict', async (req, res) => {
+    const payload = (req.body ?? {}) as ChargingPredictionRequest;
+    const fallbackDecision = getLocalChargingDecision(payload);
+
+    try {
+      const response = await ai.models.generateContent({
+        model: "gemini-3.1-flash-lite",
+        contents: `Charging prediction context:\n${JSON.stringify(payload, null, 2)}`,
+        config: {
+          responseMimeType: "application/json",
+          systemInstruction: `You are MB Sense Charging Intelligence for a Mercedes-Benz EQS 580 4MATIC using CCS2-compatible charging.
+Return ONLY valid JSON with this exact shape:
+{
+  "mode": "AC" | "DC",
+  "selectedStationId": string | null,
+  "selectedChoiceId": string,
+  "confidence": number,
+  "reason": string,
+  "explanation": string,
+  "choices": [
+    {
+      "id": string,
+      "rank": number,
+      "mode": "AC" | "DC",
+      "start": string,
+      "end": string,
+      "selectedStationId": string | null,
+      "stationName": string,
+      "reason": string
+    }
+  ]
+}
+Rules:
+- Evaluate the full seven-day schedule, energy forecast, AC/DC options, and charging station candidates in the request.
+- Choose and rank only from the provided choices and AC/DC candidate options. Do not invent times, places, or stations.
+- Preserve choice ids from the request and return choices sorted from best to worst.
+- If preference is AC or DC and that candidate canComplete is true, obey it.
+- If choosing DC, selectedStationId must be one of options.dc.stationOptions[].id and must support CCS2 or Tesla CCS2 as listed.
+- If choosing AC, selectedStationId must be null.
+- Use vehicleProfile for the EQS 580 4MATIC connector, battery data, and battery-care rules. You may use general EQS 580 battery-care knowledge only when it does not conflict with provided data.
+- Prefer AC when a long overnight/home window can complete the charge comfortably and supports battery longevity.
+- Prefer DC when AC requires a long block that is hard to fit, or when the DC station is near the latest location before charging or on the route to the next destination.
+- Mention the practical reason: schedule gap, charge duration, latest location, route detour, connector, station quality, and battery-care impact.`
+        }
+      });
+
+      const parsed = JSON.parse((response.text || '{}').replace(/```json/g, '').replace(/```/g, '').trim());
+      const requestedMode: ChargingMode = parsed.mode === 'AC' || parsed.mode === 'DC' ? parsed.mode : fallbackDecision.mode;
+      const forcedPreference = payload.preference === 'AC' || payload.preference === 'DC' ? payload.preference : undefined;
+      const mode: ChargingMode = forcedPreference && payload.options?.[forcedPreference.toLowerCase() as 'ac' | 'dc']?.canComplete
+        ? forcedPreference
+        : requestedMode;
+      const dcStations = payload.options?.dc?.stationOptions ?? [];
+      const stationMatch = mode === 'DC'
+        ? dcStations.find((station) => station.id === parsed.selectedStationId) ?? dcStations[0]
+        : undefined;
+
+      if (mode === 'DC' && !stationMatch) {
+        res.json(fallbackDecision);
+        return;
+      }
+
+      const requestChoiceIds = new Set((payload.choices ?? []).map((choice) => String(choice.id ?? '')).filter(Boolean));
+      const parsedChoices = Array.isArray(parsed.choices)
+        ? parsed.choices
+            .filter((choice: any) => requestChoiceIds.has(String(choice.id ?? '')))
+            .map((choice: any, index: number) => ({
+              id: String(choice.id),
+              rank: Number(choice.rank) || index + 1,
+              mode: choice.mode === 'DC' ? 'DC' : 'AC',
+              start: typeof choice.start === 'string' ? choice.start : undefined,
+              end: typeof choice.end === 'string' ? choice.end : undefined,
+              selectedStationId: choice.mode === 'DC' ? String(choice.selectedStationId ?? '') || null : null,
+              stationName: typeof choice.stationName === 'string' ? choice.stationName : undefined,
+              reason: typeof choice.reason === 'string' ? choice.reason : ''
+            }))
+            .sort((a: any, b: any) => a.rank - b.rank)
+        : fallbackDecision.choices;
+
+      res.json({
+        source: 'gemini',
+        mode,
+        selectedStationId: mode === 'DC' ? stationMatch?.id ?? null : null,
+        selectedChoiceId: requestChoiceIds.has(String(parsed.selectedChoiceId ?? '')) ? parsed.selectedChoiceId : mode === 'DC' && stationMatch ? `dc-${stationMatch.id}` : 'ac-home-window',
+        confidence: Math.max(0, Math.min(1, Number(parsed.confidence ?? 0.82))),
+        reason: typeof parsed.reason === 'string' && parsed.reason.trim() ? parsed.reason.trim() : fallbackDecision.reason,
+        explanation: typeof parsed.explanation === 'string' && parsed.explanation.trim() ? parsed.explanation.trim() : fallbackDecision.explanation,
+        choices: parsedChoices.length ? parsedChoices : fallbackDecision.choices
+      });
+    } catch (error) {
+      console.log("Charging prediction resolved via local fallback decision.");
+      res.json(fallbackDecision);
+    }
+  });
   // Schedule analysis
   app.post('/api/analyze-schedule', async (req, res) => {
     const { events } = req.body;

@@ -1,6 +1,7 @@
-import type { CalendarEvent, VehicleState } from '../store/useAppStore';
+import type { CalendarEvent, ChargingCalendarMeta, VehicleState } from '../store/useAppStore';
 import { mercedesEqs450PlusMockData, mercedesEqsDerivedValues, mercedesEqsAiTrainingRules } from '../constants/mercedesEqs450PlusTrainedData';
-import { estimateDrivingRoute, type RouteDistanceSource } from '../constants/realWorldRouteData';
+import { mockDCChargingStationsMalaysia, type DCChargingStation } from '../constants/dcChargingStationsMalaysia';
+import { estimateDrivingRoute, resolveLocationCoordinates, type Coordinates, type RouteDistanceSource } from '../constants/realWorldRouteData';
 
 type WeatherSnapshot = {
   temp: number;
@@ -8,7 +9,57 @@ type WeatherSnapshot = {
 };
 
 export type TrafficLevel = 'light' | 'moderate' | 'heavy';
+export type ChargingMode = 'AC' | 'DC';
+export type ChargingModePreference = ChargingMode | 'auto';
 
+export type GeminiChargingChoice = {
+  id: string;
+  rank: number;
+  mode: ChargingMode;
+  start?: string;
+  end?: string;
+  selectedStationId?: string | null;
+  stationName?: string;
+  reason: string;
+};
+
+export type GeminiChargingDecision = {
+  source?: 'gemini' | 'fallback';
+  mode: ChargingMode;
+  selectedStationId?: string | null;
+  selectedChoiceId?: string;
+  confidence?: number;
+  reason?: string;
+  explanation?: string;
+  choices?: GeminiChargingChoice[];
+};
+
+export type DCStationRecommendation = {
+  station: DCChargingStation;
+  connector: 'CCS2' | 'Tesla CCS2';
+  anchorLocation: string;
+  previousLocation?: string;
+  nextLocation?: string;
+  distanceFromAnchorKm: number;
+  detourKm: number;
+  score: number;
+  reason: string;
+};
+
+export type ChargingOptionPlan = {
+  mode: ChargingMode;
+  window?: AvailabilityWindow;
+  start?: Date;
+  end?: Date;
+  minutesNeeded: number | null;
+  blockMinutes: number;
+  targetBattery: number;
+  canComplete: boolean;
+  location: string;
+  summary: string;
+  selectedStation?: DCStationRecommendation;
+  stationOptions: DCStationRecommendation[];
+};
 export type TripForecast = {
   eventId: string;
   title: string;
@@ -42,10 +93,25 @@ export type AgentInsight = {
   summary: string;
 };
 
+export type ChargingScheduleEventSnapshot = {
+  id: string;
+  title: string;
+  location: string;
+  start: string;
+  end: string;
+  time: string;
+  endTime?: string;
+  departureTime?: string;
+  carNeeded: boolean;
+  category: CalendarEvent['category'];
+  status?: string;
+};
+
 export type ChargingPlan = {
   planningStart: Date;
   scheduleDemand: {
     upcomingEvents: number;
+    upcomingSchedule: ChargingScheduleEventSnapshot[];
     travelEvents: number;
     highDemandEvent?: TripForecast;
     trips: TripForecast[];
@@ -88,6 +154,13 @@ export type ChargingPlan = {
     start?: Date;
     end?: Date;
   };
+  chargingStrategy: {
+    preference: ChargingModePreference;
+    selected: ChargingOptionPlan;
+    ac: ChargingOptionPlan;
+    dc: ChargingOptionPlan;
+    aiDecision?: GeminiChargingDecision;
+  };
   explanation: string;
   agents: AgentInsight[];
 };
@@ -105,6 +178,9 @@ const acMinutesPerPercent = mercedesEqsDerivedValues.acCharging.averageMinutesPe
 const dcMinutesPerPercent = mercedesEqsDerivedValues.dcFastCharging.averageMinutesPer1Percent_from10To80;
 const chargeRatePercentPerHour = 60 / acMinutesPerPercent;
 const batteryCapacityKWh = mercedesEqs450PlusMockData.vehicle.batteryCapacityKWh;
+export const managedChargingEventId = 'ai-managed-charging-recommendation';
+const dcStationBufferMinutes = 15;
+const homeChargingLocation = 'Home Garage, Damansara Heights';
 const acChargeCurve = mercedesEqs450PlusMockData.batteryPercentageData
   .map((point) => ({
     socPercent: point.socPercent,
@@ -128,6 +204,35 @@ function addDays(date: Date, amount: number) {
   const next = new Date(date);
   next.setDate(next.getDate() + amount);
   return next;
+}
+
+function sameDay(a: Date, b: Date) {
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+}
+
+function toRadians(degrees: number) {
+  return degrees * Math.PI / 180;
+}
+
+function roundToSingleDecimal(value: number) {
+  return Math.round(value * 10) / 10;
+}
+
+function getGreatCircleDistanceKm(from: Coordinates, to: Coordinates) {
+  const earthRadiusKm = 6371;
+  const dLat = toRadians(to.lat - from.lat);
+  const dLng = toRadians(to.lng - from.lng);
+  const lat1 = toRadians(from.lat);
+  const lat2 = toRadians(to.lat);
+  const haversine = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  return 2 * earthRadiusKm * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine));
+}
+
+function estimateStationRoadDistanceKm(from: Coordinates, to: Coordinates) {
+  const directDistanceKm = getGreatCircleDistanceKm(from, to);
+  if (directDistanceKm < 0.4) return 0;
+  const roadFactor = directDistanceKm > 45 ? 1.22 : directDistanceKm > 15 ? 1.3 : 1.38;
+  return roundToSingleDecimal(directDistanceKm * roadFactor);
 }
 
 function parseTimeToMinutes(time: string) {
@@ -223,8 +328,33 @@ function eventDateTime(event: CalendarEvent, time = event.time) {
   return next;
 }
 
+function serializeScheduleEventForPrediction(event: CalendarEvent): ChargingScheduleEventSnapshot {
+  const start = eventDateTime(event, event.departureTime ?? event.time);
+  const end = eventDateTime(event, event.endTime ?? event.time);
+  if (end <= start) end.setMinutes(start.getMinutes() + 60);
+
+  return {
+    id: event.id,
+    title: event.title,
+    location: event.location,
+    start: start.toISOString(),
+    end: end.toISOString(),
+    time: event.time,
+    endTime: event.endTime,
+    departureTime: event.departureTime,
+    carNeeded: event.carNeeded,
+    category: event.category,
+    status: event.status
+  };
+}
+
 function getPlanningStart(events: CalendarEvent[], planningAnchor?: Date) {
-  if (planningAnchor && !Number.isNaN(planningAnchor.getTime())) return startOfDay(planningAnchor);
+  if (planningAnchor && !Number.isNaN(planningAnchor.getTime())) {
+    const anchorDay = startOfDay(planningAnchor);
+    const now = new Date();
+    now.setSeconds(0, 0);
+    return sameDay(anchorDay, now) ? now : anchorDay;
+  }
 
   const today = startOfDay(new Date());
   const datedEvents = events.map((event) => event.date instanceof Date ? event.date : new Date(event.date));
@@ -343,9 +473,14 @@ function buildTripForecasts(events: CalendarEvent[], weather: WeatherSnapshot, p
     .filter((trip) => trip.distanceKm > 0);
 }
 
+function isManagedChargingEvent(event: CalendarEvent) {
+  return event.id === managedChargingEventId || event.status === 'AI MANAGED CHARGING';
+}
+
 function buildBusyBlocks(events: CalendarEvent[], planningStart: Date) {
   const horizonEnd = addDays(planningStart, horizonDays);
   return events
+    .filter((event) => !isManagedChargingEvent(event))
     .map((event) => {
       const start = eventDateTime(event, event.departureTime ?? event.time);
       const end = eventDateTime(event, event.endTime ?? event.time);
@@ -356,12 +491,26 @@ function buildBusyBlocks(events: CalendarEvent[], planningStart: Date) {
     .sort((a, b) => a.start.getTime() - b.start.getTime());
 }
 
+function buildPhysicalTravelBlocks(events: CalendarEvent[], planningStart: Date) {
+  const horizonEnd = addDays(planningStart, horizonDays);
+  return events
+    .filter((event) => event.carNeeded && isPhysicalLocation(event.location) && !isManagedChargingEvent(event))
+    .map((event) => {
+      const start = eventDateTime(event, event.departureTime ?? event.time);
+      const end = eventDateTime(event, event.endTime ?? event.time);
+      if (end <= start) end.setMinutes(start.getMinutes() + 45);
+      return { start, end, event };
+    })
+    .filter((block) => block.end > planningStart && block.start < horizonEnd)
+    .sort((a, b) => a.start.getTime() - b.start.getTime());
+}
+
 function windowScore(start: Date, end: Date, durationMinutes: number) {
   const hour = start.getHours();
-  let score = Math.min(durationMinutes / 30, 8);
-  if (hour >= 19 || hour < 7) score += 5;
+  let score = Math.min(durationMinutes / 30, 12);
+  if (hour >= 19 || hour < 7) score += 7;
   if (hour >= 10 && hour <= 16) score += 2;
-  if (start.getHours() >= 18 && end.getHours() <= 23) score += 2;
+  if (start.getHours() >= 18 || end.getHours() <= 8 || durationMinutes >= 7 * 60) score += 5;
   return score;
 }
 
@@ -374,51 +523,43 @@ function getChargerAccess(start: Date) {
 
 function buildAvailabilityWindows(events: CalendarEvent[], planningStart: Date) {
   const blocks = buildBusyBlocks(events, planningStart);
+  const horizonEnd = addDays(planningStart, horizonDays);
   const windows: AvailabilityWindow[] = [];
+  let cursor = new Date(planningStart);
 
-  for (let day = 0; day < horizonDays; day += 1) {
-    const dayStart = addDays(startOfDay(planningStart), day);
-    dayStart.setHours(day === 0 ? Math.max(planningStart.getHours(), 6) : 6, day === 0 ? planningStart.getMinutes() : 0, 0, 0);
-    const dayEnd = addDays(startOfDay(planningStart), day);
-    dayEnd.setHours(23, 0, 0, 0);
+  for (const block of blocks) {
+    const gapStart = new Date(Math.max(cursor.getTime(), planningStart.getTime()));
+    const gapEnd = new Date(Math.min(block.start.getTime(), horizonEnd.getTime()));
+    const durationMinutes = Math.round((gapEnd.getTime() - gapStart.getTime()) / 60000);
 
-    let cursor = new Date(dayStart);
-    const dayBlocks = blocks.filter((block) => block.end > dayStart && block.start < dayEnd);
-
-    for (const block of dayBlocks) {
-      const gapStart = new Date(Math.max(cursor.getTime(), dayStart.getTime()));
-      const gapEnd = new Date(Math.min(block.start.getTime(), dayEnd.getTime()));
-      const durationMinutes = Math.round((gapEnd.getTime() - gapStart.getTime()) / 60000);
-
-      if (durationMinutes >= 60) {
-        const chargerAccess = getChargerAccess(gapStart);
-        windows.push({
-          id: `${gapStart.toISOString()}-${gapEnd.toISOString()}`,
-          start: gapStart,
-          end: gapEnd,
-          durationMinutes,
-          location: chargerAccess === 'home wallbox' ? 'Home Garage, Damansara Heights' : 'Parked between appointments',
-          chargerAccess,
-          score: windowScore(gapStart, gapEnd, durationMinutes) + (chargerAccess === 'home wallbox' ? 4 : chargerAccess === 'public charger nearby' ? 2 : 0)
-        });
-      }
-
-      if (block.end > cursor) cursor = new Date(block.end);
-    }
-
-    const finalDuration = Math.round((dayEnd.getTime() - cursor.getTime()) / 60000);
-    if (finalDuration >= 60) {
-      const chargerAccess = getChargerAccess(cursor);
+    if (durationMinutes >= 30) {
+      const chargerAccess = getChargerAccess(gapStart);
       windows.push({
-        id: `${cursor.toISOString()}-${dayEnd.toISOString()}`,
-        start: new Date(cursor),
-        end: dayEnd,
-        durationMinutes: finalDuration,
-        location: chargerAccess === 'home wallbox' ? 'Home Garage, Damansara Heights' : 'Parked between appointments',
+        id: `${gapStart.toISOString()}-${gapEnd.toISOString()}`,
+        start: gapStart,
+        end: gapEnd,
+        durationMinutes,
+        location: chargerAccess === 'home wallbox' ? homeChargingLocation : 'Parked between appointments',
         chargerAccess,
-        score: windowScore(cursor, dayEnd, finalDuration) + (chargerAccess === 'home wallbox' ? 4 : chargerAccess === 'public charger nearby' ? 2 : 0)
+        score: windowScore(gapStart, gapEnd, durationMinutes) + (chargerAccess === 'home wallbox' ? 4 : chargerAccess === 'public charger nearby' ? 2 : 0)
       });
     }
+
+    if (block.end > cursor) cursor = new Date(block.end);
+  }
+
+  const finalDuration = Math.round((horizonEnd.getTime() - cursor.getTime()) / 60000);
+  if (finalDuration >= 30) {
+    const chargerAccess = getChargerAccess(cursor);
+    windows.push({
+      id: `${cursor.toISOString()}-${horizonEnd.toISOString()}`,
+      start: new Date(cursor),
+      end: horizonEnd,
+      durationMinutes: finalDuration,
+      location: chargerAccess === 'home wallbox' ? homeChargingLocation : 'Parked between appointments',
+      chargerAccess,
+      score: windowScore(cursor, horizonEnd, finalDuration) + (chargerAccess === 'home wallbox' ? 4 : chargerAccess === 'public charger nearby' ? 2 : 0)
+    });
   }
 
   return windows.sort((a, b) => b.score - a.score || a.start.getTime() - b.start.getTime());
@@ -430,19 +571,187 @@ function addMinutes(date: Date, minutes: number) {
   return next;
 }
 
-function buildExplanation(plan: Omit<ChargingPlan, 'explanation' | 'agents'>) {
-  const best = plan.decision.bestWindow;
-  const leadTrip = plan.scheduleDemand.highDemandEvent;
+function getStationCoordinates(station: DCChargingStation): Coordinates {
+  return { lat: station.latitude, lng: station.longitude };
+}
 
-  if (!best || plan.energy.topUpPercent === 0) {
+function getCompatibleConnector(station: DCChargingStation): 'CCS2' | 'Tesla CCS2' | undefined {
+  if (station.connectors.includes('CCS2')) return 'CCS2';
+  if (station.connectors.includes('Tesla CCS2')) return 'Tesla CCS2';
+  return undefined;
+}
+
+function getWindowRouteContext(events: CalendarEvent[], planningStart: Date, windowStart: Date) {
+  const travelBlocks = buildPhysicalTravelBlocks(events, planningStart);
+  const previous = [...travelBlocks].reverse().find((block) => block.end <= windowStart);
+  const next = travelBlocks.find((block) => block.start >= windowStart);
+  const previousLocation = previous?.event.location ?? homeChargingLocation;
+
+  return {
+    previousLocation,
+    nextLocation: next?.event.location,
+    anchorLocation: previousLocation
+  };
+}
+
+function rankDCStationsForWindow(events: CalendarEvent[], planningStart: Date, window: AvailabilityWindow): DCStationRecommendation[] {
+  const context = getWindowRouteContext(events, planningStart, window.start);
+  const anchorCoordinates = resolveLocationCoordinates(context.anchorLocation) ?? resolveLocationCoordinates(homeChargingLocation);
+  if (!anchorCoordinates) return [];
+
+  const nextCoordinates = context.nextLocation ? resolveLocationCoordinates(context.nextLocation) : undefined;
+  const anchorToNextKm = nextCoordinates ? estimateStationRoadDistanceKm(anchorCoordinates, nextCoordinates) : 0;
+
+  return mockDCChargingStationsMalaysia
+    .map<DCStationRecommendation | null>((station) => {
+      const connector = getCompatibleConnector(station);
+      if (!connector) return null;
+
+      const stationCoordinates = getStationCoordinates(station);
+      const distanceFromAnchorKm = estimateStationRoadDistanceKm(anchorCoordinates, stationCoordinates);
+      const viaStationKm = nextCoordinates
+        ? estimateStationRoadDistanceKm(anchorCoordinates, stationCoordinates) + estimateStationRoadDistanceKm(stationCoordinates, nextCoordinates)
+        : distanceFromAnchorKm;
+      const detourKm = nextCoordinates ? Math.max(0, roundToSingleDecimal(viaStationKm - anchorToNextKm)) : 0;
+      const highwayBonus = station.isHighwayStop && nextCoordinates ? 1.2 : 0;
+      const powerBonus = station.maxPowerKw / 120;
+      const stallBonus = station.stalls / 8;
+      const score = distanceFromAnchorKm * 1.1 + detourKm * 1.8 - powerBonus - stallBonus - highwayBonus;
+      const reason = nextCoordinates && detourKm <= 3
+        ? `Near the route from ${context.anchorLocation} to ${context.nextLocation}`
+        : distanceFromAnchorKm <= 5
+          ? `Closest CCS station to ${context.anchorLocation}`
+          : `Best CCS option from ${context.anchorLocation}`;
+
+      const recommendation: DCStationRecommendation = {
+        station,
+        connector,
+        anchorLocation: context.anchorLocation,
+        previousLocation: context.previousLocation,
+        nextLocation: context.nextLocation,
+        distanceFromAnchorKm,
+        detourKm,
+        score,
+        reason
+      };
+      return recommendation;
+    })
+    .filter((station): station is DCStationRecommendation => Boolean(station))
+    .sort((a, b) => a.score - b.score)
+    .slice(0, 5);
+}
+
+function selectAcWindow(windows: AvailabilityWindow[], blockMinutes: number) {
+  return windows
+    .filter((window) => window.durationMinutes >= blockMinutes)
+    .sort((a, b) => {
+      const aHome = a.chargerAccess === 'home wallbox' ? 0 : 1;
+      const bHome = b.chargerAccess === 'home wallbox' ? 0 : 1;
+      const aOvernight = a.start.getHours() >= 18 || a.start.getHours() < 7 || a.durationMinutes >= 7 * 60 ? 0 : 1;
+      const bOvernight = b.start.getHours() >= 18 || b.start.getHours() < 7 || b.durationMinutes >= 7 * 60 ? 0 : 1;
+      return aHome - bHome || aOvernight - bOvernight || a.start.getTime() - b.start.getTime();
+    })[0];
+}
+
+function selectDcWindow(windows: AvailabilityWindow[], blockMinutes: number) {
+  const feasible = windows.filter((window) => window.durationMinutes >= blockMinutes);
+  const evening = feasible.filter((window) => window.start.getHours() >= 17 || window.start.getHours() < 7);
+  return (evening.length ? evening : feasible).sort((a, b) => a.start.getTime() - b.start.getTime())[0];
+}
+
+function buildChargingOptionPlans(events: CalendarEvent[], planningStart: Date, windows: AvailabilityWindow[], acMinutesNeeded: number, dcFastMinutesNeeded: number | null, targetBattery: number, dcFastTargetBattery: number, preference: ChargingModePreference, aiDecision?: GeminiChargingDecision) {
+  const acBlockMinutes = Math.max(acMinutesNeeded, 30);
+  const dcBlockMinutes = Math.max((dcFastMinutesNeeded ?? 0) + dcStationBufferMinutes, 30);
+  const acWindow = selectAcWindow(windows, acBlockMinutes);
+  const dcWindow = dcFastMinutesNeeded === null ? undefined : selectDcWindow(windows, dcBlockMinutes);
+  const dcStations = dcWindow ? rankDCStationsForWindow(events, planningStart, dcWindow) : [];
+  const usableAiDecision = aiDecision && (preference === 'auto' || aiDecision.mode === preference) ? aiDecision : undefined;
+  const aiStation = usableAiDecision?.mode === 'DC' && usableAiDecision.selectedStationId
+    ? dcStations.find((station) => station.station.id === usableAiDecision.selectedStationId)
+    : undefined;
+  const selectedStation = aiStation ?? dcStations[0];
+
+  const ac: ChargingOptionPlan = {
+    mode: 'AC',
+    window: acWindow,
+    start: acWindow?.start,
+    end: acWindow ? addMinutes(acWindow.start, Math.min(acBlockMinutes, acWindow.durationMinutes)) : undefined,
+    minutesNeeded: acMinutesNeeded,
+    blockMinutes: acBlockMinutes,
+    targetBattery,
+    canComplete: Boolean(acWindow),
+    location: homeChargingLocation,
+    summary: acWindow
+      ? `AC needs ${acMinutesNeeded} minutes, so MB Sense chose a long ${acWindow.chargerAccess} window.`
+      : `No free window is long enough for the ${acMinutesNeeded} minute AC charge.`,
+    stationOptions: []
+  };
+
+  const dc: ChargingOptionPlan = {
+    mode: 'DC',
+    window: dcWindow,
+    start: dcWindow?.start,
+    end: dcWindow ? addMinutes(dcWindow.start, Math.min(dcBlockMinutes, dcWindow.durationMinutes)) : undefined,
+    minutesNeeded: dcFastMinutesNeeded,
+    blockMinutes: dcBlockMinutes,
+    targetBattery: dcFastTargetBattery,
+    canComplete: Boolean(dcWindow && selectedStation),
+    location: selectedStation ? selectedStation.station.address : 'No compatible CCS2 DC station found',
+    selectedStation,
+    stationOptions: dcStations,
+    summary: selectedStation
+      ? `${selectedStation.station.name} is the top CCS2 DC station near ${selectedStation.anchorLocation}.`
+      : 'No compatible CCS2 DC station could be ranked for the available DC window.'
+  };
+
+  const canUseAiDecision = usableAiDecision?.mode === 'AC' ? ac.canComplete : usableAiDecision?.mode === 'DC' ? dc.canComplete : false;
+  const aiSelected = canUseAiDecision ? (usableAiDecision?.mode === 'AC' ? ac : dc) : undefined;
+  const canUsePreferred = preference === 'AC' ? ac.canComplete : preference === 'DC' ? dc.canComplete : false;
+  const selected = aiSelected ?? (canUsePreferred
+    ? (preference === 'AC' ? ac : dc)
+    : dc.canComplete && acMinutesNeeded >= 180
+      ? dc
+      : ac.canComplete
+        ? ac
+        : dc.canComplete
+          ? dc
+          : ac);
+
+  return { preference, selected, ac, dc, aiDecision: aiSelected ? usableAiDecision : undefined };
+}
+
+function dcStationToCalendarOption(recommendation: DCStationRecommendation): ChargingCalendarMeta['stationOptions'][number] {
+  return {
+    id: recommendation.station.id,
+    name: recommendation.station.name,
+    provider: recommendation.station.provider,
+    city: recommendation.station.city,
+    address: recommendation.station.address,
+    connector: recommendation.connector,
+    maxPowerKw: recommendation.station.maxPowerKw,
+    stalls: recommendation.station.stalls,
+    distanceFromAnchorKm: recommendation.distanceFromAnchorKm,
+    detourKm: recommendation.detourKm,
+    isHighwayStop: recommendation.station.isHighwayStop,
+    reason: recommendation.reason
+  };
+}
+
+function buildExplanation(plan: Omit<ChargingPlan, 'explanation' | 'agents'>) {
+  const selected = plan.chargingStrategy.selected;
+  const leadTrip = plan.scheduleDemand.highDemandEvent;
+  const aiExplanation = plan.chargingStrategy.aiDecision?.explanation?.trim();
+  if (aiExplanation && selected.start && selected.end) return aiExplanation;
+
+  if (!selected.start || !selected.end || plan.energy.topUpPercent === 0) {
     return `Battery is projected to finish at ${plan.energy.projectedBattery}% after the next ${plan.scheduleDemand.travelEvents} drive events, using the EQS 450+ training range of ${plan.energy.rangePerPercentKm} km per 1%.`;
   }
 
-  const dcCopy = plan.charging.dcFast.validToTarget
-    ? ` DC fast estimate is about ${plan.charging.dcFast.minutesNeeded ?? 0} minutes.`
-    : ` DC fast estimate is capped at ${plan.charging.dcFast.cappedAtBattery}% because the training data only covers 10-80%.`;
+  if (selected.mode === 'DC' && selected.selectedStation) {
+    return `Use DC fast charging because AC needs ${plan.chargingStrategy.ac.minutesNeeded} minutes. MB Sense picked ${selected.selectedStation.station.name} because it supports ${selected.selectedStation.connector} and is ${selected.selectedStation.distanceFromAnchorKm} km from ${selected.selectedStation.anchorLocation}.`;
+  }
 
-  return `Charge during ${best.chargerAccess} time because ${leadTrip?.title ?? 'the upcoming schedule'} creates the highest demand. AC charging to ${plan.charging.targetBattery}% takes about ${plan.charging.ac.minutesNeeded} minutes.${dcCopy}`;
+  return `Use AC charging during a long ${selected.window?.chargerAccess ?? 'free'} window because ${leadTrip?.title ?? 'the upcoming schedule'} creates the highest demand. AC charging to ${selected.targetBattery}% takes about ${selected.minutesNeeded ?? 0} minutes.`;
 }
 
 function buildAgents(plan: Omit<ChargingPlan, 'explanation' | 'agents'>): AgentInsight[] {
@@ -507,10 +816,12 @@ function buildAgents(plan: Omit<ChargingPlan, 'explanation' | 'agents'>): AgentI
   ];
 }
 
-export function buildChargingPlan(events: CalendarEvent[], vehicle: VehicleState, weather: WeatherSnapshot, targetChargePercent = dailyTarget, planningAnchor?: Date): ChargingPlan {
+export function buildChargingPlan(events: CalendarEvent[], vehicle: VehicleState, weather: WeatherSnapshot, targetChargePercent = dailyTarget, planningAnchor?: Date, chargingPreference: ChargingModePreference = 'auto', aiDecision?: GeminiChargingDecision): ChargingPlan {
   const planningStart = getPlanningStart(events, planningAnchor);
-  const upcomingEvents = events.filter((event) => eventDateTime(event) >= planningStart && eventDateTime(event) < addDays(planningStart, horizonDays));
-  const trips = buildTripForecasts(events, weather, planningStart);
+  const planningEvents = events.filter((event) => !isManagedChargingEvent(event));
+  const upcomingEvents = planningEvents.filter((event) => eventDateTime(event) >= planningStart && eventDateTime(event) < addDays(planningStart, horizonDays));
+  const upcomingSchedule = upcomingEvents.map(serializeScheduleEventForPrediction);
+  const trips = buildTripForecasts(planningEvents, weather, planningStart);
   const forecastUsePercent = trips.reduce((sum, trip) => sum + trip.batteryUsePercent, 0);
   const targetBattery = clampPercent(targetChargePercent, minTargetCharge, maxTargetCharge);
   const plannedStartBattery = Math.max(vehicle.batteryLevel, targetBattery);
@@ -522,17 +833,19 @@ export function buildChargingPlan(events: CalendarEvent[], vehicle: VehicleState
   const dcFastTargetBattery = Math.min(targetBattery, dcFastMaxSoc);
   const dcFastMinutesNeeded = vehicle.batteryLevel >= dcFastMaxSoc ? null : getDcFastChargeMinutesNeeded(vehicle.batteryLevel, dcFastTargetBattery);
   const dcFastValidToTarget = targetBattery <= dcFastMaxSoc;
-  const windows = buildAvailabilityWindows(events, planningStart);
-  const feasibleWindows = windows.filter((window) => window.durationMinutes >= Math.max(acMinutesNeeded, 30));
-  const bestWindow = feasibleWindows[0] ?? windows[0];
-  const canComplete = Boolean(bestWindow && bestWindow.durationMinutes >= acMinutesNeeded);
-  const start = bestWindow?.start;
-  const end = start && acMinutesNeeded > 0 ? addMinutes(start, Math.min(acMinutesNeeded, bestWindow.durationMinutes)) : bestWindow?.end;
+  const windows = buildAvailabilityWindows(planningEvents, planningStart);
+  const chargingStrategy = buildChargingOptionPlans(planningEvents, planningStart, windows, acMinutesNeeded, dcFastMinutesNeeded, targetBattery, dcFastTargetBattery, chargingPreference, aiDecision);
+  const selected = chargingStrategy.selected;
+  const bestWindow = selected.window;
+  const canComplete = selected.canComplete;
+  const start = selected.start;
+  const end = selected.end;
 
   const partialPlan = {
     planningStart,
     scheduleDemand: {
       upcomingEvents: upcomingEvents.length,
+      upcomingSchedule,
       travelEvents: trips.length,
       highDemandEvent: trips.reduce<TripForecast | undefined>((current, trip) => !current || trip.batteryUsePercent > current.batteryUsePercent ? trip : current, undefined),
       trips
@@ -554,8 +867,8 @@ export function buildChargingPlan(events: CalendarEvent[], vehicle: VehicleState
     },
     charging: {
       chargeRatePercentPerHour: Math.round(chargeRatePercentPerHour * 10) / 10,
-      minutesNeeded: acMinutesNeeded,
-      targetBattery,
+      minutesNeeded: selected.minutesNeeded ?? acMinutesNeeded,
+      targetBattery: selected.targetBattery,
       ac: {
         minutesNeeded: acMinutesNeeded,
         targetBattery,
@@ -574,7 +887,8 @@ export function buildChargingPlan(events: CalendarEvent[], vehicle: VehicleState
       canComplete,
       start,
       end
-    }
+    },
+    chargingStrategy
   };
 
   return {
@@ -584,6 +898,180 @@ export function buildChargingPlan(events: CalendarEvent[], vehicle: VehicleState
   };
 }
 
+function getEventTypeFromDate(date: Date): CalendarEvent['type'] {
+  const hour = date.getHours();
+  if (hour < 12) return 'Morning';
+  if (hour < 17) return 'Afternoon';
+  return 'Evening';
+}
+
+export function buildManagedChargingCalendarEvent(plan: ChargingPlan): CalendarEvent | null {
+  const selected = plan.chargingStrategy.selected;
+  if (!selected.start || !selected.end || !selected.canComplete) return null;
+
+  const stationOptions = selected.stationOptions.map(dcStationToCalendarOption);
+  const selectedStation = selected.selectedStation ? dcStationToCalendarOption(selected.selectedStation) : undefined;
+  const chargingMeta: ChargingCalendarMeta = {
+    mode: selected.mode,
+    targetBattery: selected.targetBattery,
+    minutesNeeded: selected.minutesNeeded ?? selected.blockMinutes,
+    connector: 'CCS2',
+    anchorLocation: selected.selectedStation?.anchorLocation ?? homeChargingLocation,
+    previousLocation: selected.selectedStation?.previousLocation,
+    nextLocation: selected.selectedStation?.nextLocation,
+    selectedStation,
+    stationOptions,
+    choiceOptions: plan.chargingStrategy.aiDecision?.choices ?? buildLocalChargingChoices(plan),
+    aiSource: plan.chargingStrategy.aiDecision?.source,
+    aiConfidence: plan.chargingStrategy.aiDecision?.confidence,
+    aiReason: plan.chargingStrategy.aiDecision?.reason
+  };
+
+  return {
+    id: managedChargingEventId,
+    title: `Charging Time (${selected.mode})`,
+    location: selected.mode === 'DC' && selectedStation ? selectedStation.address : selected.location,
+    time: minutesToDisplayTime(selected.start.getHours() * 60 + selected.start.getMinutes()),
+    endTime: minutesToDisplayTime(selected.end.getHours() * 60 + selected.end.getMinutes()),
+    date: startOfDay(selected.start),
+    carNeeded: false,
+    type: getEventTypeFromDate(selected.start),
+    category: 'charging',
+    status: 'AI MANAGED CHARGING',
+    notes: selected.summary,
+    aiReason: plan.explanation,
+    chargingMeta
+  };
+}
+
+function serializeChargingOption(option: ChargingOptionPlan) {
+  return {
+    mode: option.mode,
+    canComplete: option.canComplete,
+    start: option.start?.toISOString(),
+    end: option.end?.toISOString(),
+    minutesNeeded: option.minutesNeeded,
+    blockMinutes: option.blockMinutes,
+    targetBattery: option.targetBattery,
+    location: option.location,
+    window: option.window ? {
+      id: option.window.id,
+      start: option.window.start.toISOString(),
+      end: option.window.end.toISOString(),
+      durationMinutes: option.window.durationMinutes,
+      chargerAccess: option.window.chargerAccess,
+      location: option.window.location
+    } : undefined,
+    stationOptions: option.stationOptions.map((recommendation) => ({
+      id: recommendation.station.id,
+      name: recommendation.station.name,
+      provider: recommendation.station.provider,
+      connector: recommendation.connector,
+      maxPowerKw: recommendation.station.maxPowerKw,
+      stalls: recommendation.station.stalls,
+      distanceFromAnchorKm: recommendation.distanceFromAnchorKm,
+      detourKm: recommendation.detourKm,
+      reason: recommendation.reason,
+      address: recommendation.station.address,
+      city: recommendation.station.city,
+      isHighwayStop: recommendation.station.isHighwayStop,
+      anchorLocation: recommendation.anchorLocation,
+      nextLocation: recommendation.nextLocation
+    }))
+  };
+}
+
+function buildLocalChargingChoices(plan: ChargingPlan): GeminiChargingChoice[] {
+  const choices: GeminiChargingChoice[] = [];
+  const ac = plan.chargingStrategy.ac;
+  if (ac.canComplete) {
+    choices.push({
+      id: 'ac-home-window',
+      rank: choices.length + 1,
+      mode: 'AC',
+      start: ac.start?.toISOString(),
+      end: ac.end?.toISOString(),
+      selectedStationId: null,
+      reason: ac.summary
+    });
+  }
+
+  const dc = plan.chargingStrategy.dc;
+  if (dc.canComplete) {
+    dc.stationOptions.forEach((recommendation) => {
+      choices.push({
+        id: `dc-${recommendation.station.id}`,
+        rank: choices.length + 1,
+        mode: 'DC',
+        start: dc.start?.toISOString(),
+        end: dc.end?.toISOString(),
+        selectedStationId: recommendation.station.id,
+        stationName: recommendation.station.name,
+        reason: `${recommendation.reason}. ${recommendation.distanceFromAnchorKm} km from ${recommendation.anchorLocation}; ${recommendation.detourKm} km detour.`
+      });
+    });
+  }
+
+  return choices.map((choice, index) => ({ ...choice, rank: index + 1 }));
+}
+export function buildGeminiChargingPredictionPayload(plan: ChargingPlan, preference: ChargingModePreference) {
+  return {
+    preference,
+    vehicleProfile: {
+      model: 'Mercedes-Benz EQS 580 4MATIC',
+      connector: 'CCS2',
+      batteryCapacityKWh: plan.energy.batteryCapacityKWh,
+      batteryCareRules: [
+        'Prefer AC charging when there is a long overnight/home window and the car can finish before the next trip.',
+        'Prefer DC fast charging only when schedule pressure makes AC impractical or when a CCS2 station is convenient near the latest location or route.',
+        'Daily target should normally stay near 80% unless the next 7 days need more range.',
+        'Keep projected battery above the reserve target after planned travel.'
+      ]
+    },
+    choices: buildLocalChargingChoices(plan),
+    energy: {
+      currentBattery: plan.energy.currentBattery,
+      forecastUsePercent: plan.energy.forecastUsePercent,
+      projectedBattery: plan.energy.projectedBattery,
+      reserveTarget: plan.energy.reserveTarget,
+      recommendedTarget: plan.energy.recommendedTarget,
+      topUpPercent: plan.energy.topUpPercent,
+      batteryCapacityKWh: plan.energy.batteryCapacityKWh
+    },
+    schedule: {
+      planningStart: plan.planningStart.toISOString(),
+      upcomingEvents: plan.scheduleDemand.upcomingEvents,
+      events: plan.scheduleDemand.upcomingSchedule,
+      travelEvents: plan.scheduleDemand.travelEvents,
+      highDemandEvent: plan.scheduleDemand.highDemandEvent ? {
+        title: plan.scheduleDemand.highDemandEvent.title,
+        location: plan.scheduleDemand.highDemandEvent.location,
+        batteryUsePercent: plan.scheduleDemand.highDemandEvent.batteryUsePercent,
+        departureTime: plan.scheduleDemand.highDemandEvent.departureTime
+      } : undefined,
+      trips: plan.scheduleDemand.trips.slice(0, 8).map((trip) => ({
+        title: trip.title,
+        originLocation: trip.originLocation,
+        location: trip.location,
+        departureTime: trip.departureTime,
+        eventTime: trip.eventTime,
+        distanceKm: trip.distanceKm,
+        traffic: trip.traffic,
+        weatherImpactPercent: trip.weatherImpactPercent,
+        batteryUsePercent: trip.batteryUsePercent
+      }))
+    },
+    options: {
+      ac: serializeChargingOption(plan.chargingStrategy.ac),
+      dc: serializeChargingOption(plan.chargingStrategy.dc)
+    },
+    localSelection: {
+      mode: plan.chargingStrategy.selected.mode,
+      selectedStationId: plan.chargingStrategy.selected.selectedStation?.station.id ?? null,
+      explanation: plan.explanation
+    }
+  };
+}
 export function formatPlanDateTime(date?: Date) {
   if (!date) return 'Not available';
   return date.toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
