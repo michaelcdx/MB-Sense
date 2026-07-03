@@ -1,4 +1,6 @@
 import type { CalendarEvent, VehicleState } from '../store/useAppStore';
+import { mercedesEqs450PlusMockData, mercedesEqsDerivedValues, mercedesEqsAiTrainingRules } from '../constants/mercedesEqs450PlusTrainedData';
+import { estimateDrivingRoute, type RouteDistanceSource } from '../constants/realWorldRouteData';
 
 type WeatherSnapshot = {
   temp: number;
@@ -10,11 +12,14 @@ export type TrafficLevel = 'light' | 'moderate' | 'heavy';
 export type TripForecast = {
   eventId: string;
   title: string;
+  originLocation: string;
   location: string;
   date: Date;
   departureTime: string;
   eventTime: string;
   distanceKm: number;
+  routeDurationMinutes?: number;
+  routeDistanceSource: RouteDistanceSource;
   traffic: TrafficLevel;
   weatherImpactPercent: number;
   batteryUsePercent: number;
@@ -49,9 +54,13 @@ export type ChargingPlan = {
     currentBattery: number;
     forecastUsePercent: number;
     reserveTarget: number;
+    plannedStartBattery: number;
+    withoutChargeProjectedBattery: number;
     projectedBattery: number;
     recommendedTarget: number;
     topUpPercent: number;
+    rangePerPercentKm: number;
+    batteryCapacityKWh: number;
   };
   availability: {
     windows: AvailabilityWindow[];
@@ -60,6 +69,18 @@ export type ChargingPlan = {
     chargeRatePercentPerHour: number;
     minutesNeeded: number;
     targetBattery: number;
+    ac: {
+      minutesNeeded: number;
+      targetBattery: number;
+      chargeRatePercentPerHour: number;
+    };
+    dcFast: {
+      minutesNeeded: number | null;
+      targetBattery: number;
+      validToTarget: boolean;
+      cappedAtBattery: number;
+      unsupportedTopUpPercent: number;
+    };
   };
   decision: {
     bestWindow?: AvailabilityWindow;
@@ -74,11 +95,30 @@ export type ChargingPlan = {
 const reserveTarget = 20;
 const dailyTarget = 80;
 const defaultPlanningDate = new Date(2026, 6, 3);
-const horizonDays = 4;
-const wallboxKw = 11;
-const batteryKwh = 108;
-const chargingEfficiency = 0.9;
-const chargeRatePercentPerHour = (wallboxKw / batteryKwh) * 100 * chargingEfficiency;
+const horizonDays = 7;
+const minTargetCharge = 50;
+const maxTargetCharge = 100;
+const dcFastMinSoc = mercedesEqsAiTrainingRules.dcFastChargingValidSocRange.minPercent;
+const dcFastMaxSoc = mercedesEqsAiTrainingRules.dcFastChargingValidSocRange.maxPercent;
+const rangePerPercentKm = mercedesEqsDerivedValues.rangePer1PercentKm;
+const acMinutesPerPercent = mercedesEqsDerivedValues.acCharging.averageMinutesPer1Percent_from10To100;
+const dcMinutesPerPercent = mercedesEqsDerivedValues.dcFastCharging.averageMinutesPer1Percent_from10To80;
+const chargeRatePercentPerHour = 60 / acMinutesPerPercent;
+const batteryCapacityKWh = mercedesEqs450PlusMockData.vehicle.batteryCapacityKWh;
+const acChargeCurve = mercedesEqs450PlusMockData.batteryPercentageData
+  .map((point) => ({
+    socPercent: point.socPercent,
+    minutes: point.acChargeFrom10PercentToThisSocMinutes_est
+  }))
+  .filter((point) => point.minutes !== null)
+  .sort((a, b) => a.socPercent - b.socPercent);
+const dcChargeCurve = mercedesEqs450PlusMockData.batteryPercentageData
+  .map((point) => ({
+    socPercent: point.socPercent,
+    minutes: point.dcFastChargeFrom10PercentToThisSocMinutes_est
+  }))
+  .filter((point): point is { socPercent: number; minutes: number } => point.minutes !== null)
+  .sort((a, b) => a.socPercent - b.socPercent);
 
 function startOfDay(date: Date) {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate());
@@ -104,6 +144,68 @@ function parseTimeToMinutes(time: string) {
   return hour * 60 + minute;
 }
 
+function clampPercent(value: number, min = 0, max = 100) {
+  return Math.max(min, Math.min(max, Math.round(value)));
+}
+
+function cumulativeAcChargeMinutesAtSoc(socPercent: number) {
+  const bounded = clampPercent(socPercent, 0, 100);
+  const first = acChargeCurve[0];
+  const last = acChargeCurve[acChargeCurve.length - 1];
+
+  if (!first || !last) return Math.max(0, (bounded - 10) * acMinutesPerPercent);
+  if (bounded <= first.socPercent) return Math.max(0, (bounded - first.socPercent) * acMinutesPerPercent + first.minutes);
+  if (bounded >= last.socPercent) return last.minutes + (bounded - last.socPercent) * acMinutesPerPercent;
+
+  for (let index = 1; index < acChargeCurve.length; index += 1) {
+    const previous = acChargeCurve[index - 1];
+    const next = acChargeCurve[index];
+    if (bounded > next.socPercent) continue;
+
+    const span = next.socPercent - previous.socPercent;
+    const progress = span ? (bounded - previous.socPercent) / span : 0;
+    return previous.minutes + (next.minutes - previous.minutes) * progress;
+  }
+
+  return last.minutes;
+}
+
+function getAcChargeMinutesNeeded(currentPercent: number, targetPercent: number) {
+  const current = clampPercent(currentPercent);
+  const target = clampPercent(targetPercent);
+  if (target <= current) return 0;
+  return Math.ceil(cumulativeAcChargeMinutesAtSoc(target) - cumulativeAcChargeMinutesAtSoc(current));
+}
+
+function cumulativeDcFastChargeMinutesAtSoc(socPercent: number) {
+  const bounded = clampPercent(socPercent, dcFastMinSoc, dcFastMaxSoc);
+  const first = dcChargeCurve[0];
+  const last = dcChargeCurve[dcChargeCurve.length - 1];
+
+  if (!first || !last) return Math.max(0, (bounded - dcFastMinSoc) * dcMinutesPerPercent);
+  if (bounded <= first.socPercent) return Math.max(0, (bounded - first.socPercent) * dcMinutesPerPercent + first.minutes);
+  if (bounded >= last.socPercent) return last.minutes;
+
+  for (let index = 1; index < dcChargeCurve.length; index += 1) {
+    const previous = dcChargeCurve[index - 1];
+    const next = dcChargeCurve[index];
+    if (bounded > next.socPercent) continue;
+
+    const span = next.socPercent - previous.socPercent;
+    const progress = span ? (bounded - previous.socPercent) / span : 0;
+    return previous.minutes + (next.minutes - previous.minutes) * progress;
+  }
+
+  return last.minutes;
+}
+
+function getDcFastChargeMinutesNeeded(currentPercent: number, targetPercent: number) {
+  const current = clampPercent(currentPercent, dcFastMinSoc, dcFastMaxSoc);
+  const target = clampPercent(targetPercent, dcFastMinSoc, dcFastMaxSoc);
+  if (target <= current) return 0;
+  return Math.ceil(cumulativeDcFastChargeMinutesAtSoc(target) - cumulativeDcFastChargeMinutesAtSoc(current));
+}
+
 function minutesToDisplayTime(minutes: number) {
   const bounded = Math.max(0, Math.min(24 * 60 - 1, minutes));
   const hour24 = Math.floor(bounded / 60);
@@ -121,7 +223,9 @@ function eventDateTime(event: CalendarEvent, time = event.time) {
   return next;
 }
 
-function getPlanningStart(events: CalendarEvent[]) {
+function getPlanningStart(events: CalendarEvent[], planningAnchor?: Date) {
+  if (planningAnchor && !Number.isNaN(planningAnchor.getTime())) return startOfDay(planningAnchor);
+
   const today = startOfDay(new Date());
   const datedEvents = events.map((event) => event.date instanceof Date ? event.date : new Date(event.date));
   const min = datedEvents.reduce<Date | null>((current, date) => current && current < date ? current : date, null);
@@ -144,6 +248,31 @@ function estimateDistanceKm(location: string) {
   if (value.includes('royal lake')) return 16;
   if (value.includes('home') || value.includes('teams') || value.includes('online') || value.includes('hq')) return 0;
   return 22;
+}
+
+function isPhysicalLocation(location: string) {
+  const value = location.toLowerCase();
+  return !value.includes('online') && !value.includes('teams');
+}
+
+function estimateFallbackDurationMinutes(distanceKm: number) {
+  if (distanceKm <= 0) return 0;
+
+  const averageSpeedKmh = distanceKm > 65 ? 72 : distanceKm > 30 ? 56 : distanceKm > 12 ? 42 : 30;
+  return Math.max(5, Math.round(distanceKm / averageSpeedKmh * 60));
+}
+
+function estimateTripRoute(fromLocation: string, toLocation: string) {
+  const route = estimateDrivingRoute(fromLocation, toLocation);
+  if (route) return route;
+
+  const distanceKm = estimateDistanceKm(toLocation);
+  return {
+    distanceKm,
+    distanceMeters: Math.round(distanceKm * 1000),
+    durationMinutesNoTraffic: estimateFallbackDurationMinutes(distanceKm),
+    source: 'heuristic-estimated' as const
+  };
 }
 
 function getTrafficLevel(event: CalendarEvent) {
@@ -174,30 +303,44 @@ function weatherImpact(weather: WeatherSnapshot) {
 
 function buildTripForecasts(events: CalendarEvent[], weather: WeatherSnapshot, planningStart: Date) {
   const horizonEnd = addDays(planningStart, horizonDays);
-  return events
+  const trips = events
     .filter((event) => event.carNeeded)
-    .map((event) => {
-      const date = eventDateTime(event);
-      const distanceKm = estimateDistanceKm(event.location);
+    .map((event) => ({
+      event,
+      date: eventDateTime(event)
+    }))
+    .filter(({ date, event }) => date >= planningStart && date < horizonEnd && isPhysicalLocation(event.location))
+    .sort((a, b) => a.date.getTime() - b.date.getTime());
+
+  return trips
+    .map(({ event, date }, index) => {
+      const previousTrip = trips[index - 1];
+      const originLocation = previousTrip && startOfDay(previousTrip.date).getTime() === startOfDay(date).getTime()
+        ? previousTrip.event.location
+        : 'Home Garage, Damansara Heights';
+      const route = estimateTripRoute(originLocation, event.location);
+      const distanceKm = route.distanceKm;
       const traffic = getTrafficLevel(event);
       const weatherImpactPercent = weatherImpact(weather);
-      const batteryUsePercent = Math.ceil((distanceKm / 4.2) * trafficMultiplier(traffic) * (1 + weatherImpactPercent / 100));
+      const batteryUsePercent = Math.ceil((distanceKm / rangePerPercentKm) * trafficMultiplier(traffic) * (1 + weatherImpactPercent / 100));
 
       return {
         eventId: event.id,
         title: event.title,
+        originLocation,
         location: event.location,
         date,
         departureTime: event.departureTime ?? minutesToDisplayTime(Math.max(parseTimeToMinutes(event.time) - 30, 0)),
         eventTime: event.time,
         distanceKm,
+        routeDurationMinutes: route.durationMinutesNoTraffic,
+        routeDistanceSource: route.source,
         traffic,
         weatherImpactPercent,
         batteryUsePercent
       } satisfies TripForecast;
     })
-    .filter((trip) => trip.date >= planningStart && trip.date < horizonEnd && trip.distanceKm > 0)
-    .sort((a, b) => a.date.getTime() - b.date.getTime());
+    .filter((trip) => trip.distanceKm > 0);
 }
 
 function buildBusyBlocks(events: CalendarEvent[], planningStart: Date) {
@@ -292,69 +435,99 @@ function buildExplanation(plan: Omit<ChargingPlan, 'explanation' | 'agents'>) {
   const leadTrip = plan.scheduleDemand.highDemandEvent;
 
   if (!best || plan.energy.topUpPercent === 0) {
-    return `Battery is projected to finish at ${plan.energy.projectedBattery}% after the next ${plan.scheduleDemand.travelEvents} drive events, so no urgent charge is required right now.`;
+    return `Battery is projected to finish at ${plan.energy.projectedBattery}% after the next ${plan.scheduleDemand.travelEvents} drive events, using the EQS 450+ training range of ${plan.energy.rangePerPercentKm} km per 1%.`;
   }
 
-  return `Charge during ${best.chargerAccess} time because ${leadTrip?.title ?? 'the upcoming schedule'} creates the highest demand. Adding ${plan.energy.topUpPercent}% takes about ${plan.charging.minutesNeeded} minutes and keeps the projected reserve near ${plan.energy.reserveTarget}%.`;
+  const dcCopy = plan.charging.dcFast.validToTarget
+    ? ` DC fast estimate is about ${plan.charging.dcFast.minutesNeeded ?? 0} minutes.`
+    : ` DC fast estimate is capped at ${plan.charging.dcFast.cappedAtBattery}% because the training data only covers 10-80%.`;
+
+  return `Charge during ${best.chargerAccess} time because ${leadTrip?.title ?? 'the upcoming schedule'} creates the highest demand. AC charging to ${plan.charging.targetBattery}% takes about ${plan.charging.ac.minutesNeeded} minutes.${dcCopy}`;
 }
 
 function buildAgents(plan: Omit<ChargingPlan, 'explanation' | 'agents'>): AgentInsight[] {
   const best = plan.decision.bestWindow;
+  const highDemand = plan.scheduleDemand.highDemandEvent;
+  const scheduleStatus: AgentInsight['status'] = plan.scheduleDemand.travelEvents >= 4 ? 'watch' : 'ready';
+  const energyStatus: AgentInsight['status'] = plan.energy.projectedBattery < plan.energy.reserveTarget
+    ? 'action'
+    : plan.energy.forecastUsePercent >= 35
+      ? 'watch'
+      : 'ready';
+  const targetBelowRecommended = plan.charging.targetBattery < plan.energy.recommendedTarget;
+  const chargingStatus: AgentInsight['status'] = targetBelowRecommended || plan.energy.projectedBattery < plan.energy.reserveTarget
+    ? 'action'
+    : plan.charging.minutesNeeded > 90 || plan.energy.forecastUsePercent >= 35
+      ? 'watch'
+      : 'ready';
+  const decisionStatus: AgentInsight['status'] = plan.decision.canComplete && !targetBelowRecommended ? 'ready' : 'action';
+  const dcFastSummary = plan.charging.dcFast.validToTarget
+    ? `DC fast estimate is ${plan.charging.dcFast.minutesNeeded ?? 0} min to ${plan.charging.dcFast.targetBattery}%.`
+    : `DC fast is capped at ${plan.charging.dcFast.cappedAtBattery}% because the training data stops at 80%.`;
+
   return [
     {
       name: 'Schedule Agent',
-      status: plan.scheduleDemand.travelEvents >= 3 ? 'watch' : 'ready',
+      status: scheduleStatus,
       metric: `${plan.scheduleDemand.travelEvents} drives`,
-      summary: `Scanned ${plan.scheduleDemand.upcomingEvents} upcoming events and found ${plan.scheduleDemand.travelEvents} car-required trips.`
+      summary: `Scanned ${plan.scheduleDemand.upcomingEvents} current schedule blocks and found ${plan.scheduleDemand.travelEvents} car-required trips.`
     },
     {
       name: 'Energy Agent',
-      status: plan.energy.projectedBattery < plan.energy.reserveTarget ? 'action' : 'ready',
+      status: energyStatus,
       metric: `${plan.energy.forecastUsePercent}% use`,
-      summary: `Predicts battery usage from route distance, ${plan.scheduleDemand.highDemandEvent?.traffic ?? 'moderate'} traffic, and weather load.`
+      summary: `${highDemand ? `${highDemand.title} is the highest demand trip. ` : ''}Predicts battery use with ${plan.energy.rangePerPercentKm} km per 1% from the EQS 450+ training data.`
     },
     {
       name: 'Availability Agent',
       status: plan.availability.windows.length ? 'ready' : 'action',
-      metric: `${plan.availability.windows.length} windows`,
-      summary: `Found parked gaps of at least one hour across the planning horizon.`
+      metric: `${plan.availability.windows.length} free slots`,
+      summary: `Rebuilt parked gaps from ${plan.scheduleDemand.upcomingEvents} schedule blocks and found slots of at least one hour.`
     },
     {
       name: 'Charging Agent',
-      status: plan.charging.minutesNeeded > 90 ? 'watch' : 'ready',
-      metric: `${plan.charging.minutesNeeded} min`,
-      summary: `Calculates the time needed to reach ${plan.charging.targetBattery}% using the home wallbox rate.`
+      status: chargingStatus,
+      metric: `${plan.charging.targetBattery}% target`,
+      summary: `Rechecked against ${plan.energy.forecastUsePercent}% forecast use. AC takes ${plan.charging.ac.minutesNeeded} min. ${dcFastSummary}`
     },
     {
       name: 'Decision Agent',
-      status: plan.decision.canComplete ? 'ready' : 'action',
+      status: decisionStatus,
       metric: best ? best.chargerAccess : 'No fit',
-      summary: best ? `Selected the highest scoring parked window before the demand peak.` : 'No available window can complete the recommended charge.'
+      summary: best
+        ? `Selected from ${plan.availability.windows.length} available slots around ${highDemand?.title ?? 'the latest travel demand'}.`
+        : 'No available slot can complete the current charging target.'
     },
     {
       name: 'Explanation Agent',
       status: 'ready',
-      metric: 'Plain English',
-      summary: 'Turns the planning result into a user-friendly reason for the recommendation.'
+      metric: `${plan.scheduleDemand.travelEvents} trips`,
+      summary: 'Refreshes the recommendation from the latest schedule, energy, availability, charging, and decision results.'
     }
   ];
 }
 
-export function buildChargingPlan(events: CalendarEvent[], vehicle: VehicleState, weather: WeatherSnapshot): ChargingPlan {
-  const planningStart = getPlanningStart(events);
+export function buildChargingPlan(events: CalendarEvent[], vehicle: VehicleState, weather: WeatherSnapshot, targetChargePercent = dailyTarget, planningAnchor?: Date): ChargingPlan {
+  const planningStart = getPlanningStart(events, planningAnchor);
   const upcomingEvents = events.filter((event) => eventDateTime(event) >= planningStart && eventDateTime(event) < addDays(planningStart, horizonDays));
   const trips = buildTripForecasts(events, weather, planningStart);
   const forecastUsePercent = trips.reduce((sum, trip) => sum + trip.batteryUsePercent, 0);
-  const projectedBattery = Math.max(vehicle.batteryLevel - forecastUsePercent, 0);
+  const targetBattery = clampPercent(targetChargePercent, minTargetCharge, maxTargetCharge);
+  const plannedStartBattery = Math.max(vehicle.batteryLevel, targetBattery);
+  const projectedBattery = Math.max(plannedStartBattery - forecastUsePercent, 0);
+  const withoutChargeProjectedBattery = Math.max(vehicle.batteryLevel - forecastUsePercent, 0);
   const recommendedTarget = Math.min(dailyTarget, Math.max(60, forecastUsePercent + reserveTarget + 5));
-  const topUpPercent = Math.max(recommendedTarget - vehicle.batteryLevel, 0);
-  const minutesNeeded = Math.max(0, Math.ceil((topUpPercent / chargeRatePercentPerHour) * 60));
+  const topUpPercent = Math.max(targetBattery - vehicle.batteryLevel, 0);
+  const acMinutesNeeded = getAcChargeMinutesNeeded(vehicle.batteryLevel, targetBattery);
+  const dcFastTargetBattery = Math.min(targetBattery, dcFastMaxSoc);
+  const dcFastMinutesNeeded = vehicle.batteryLevel >= dcFastMaxSoc ? null : getDcFastChargeMinutesNeeded(vehicle.batteryLevel, dcFastTargetBattery);
+  const dcFastValidToTarget = targetBattery <= dcFastMaxSoc;
   const windows = buildAvailabilityWindows(events, planningStart);
-  const feasibleWindows = windows.filter((window) => window.durationMinutes >= Math.max(minutesNeeded, 30));
+  const feasibleWindows = windows.filter((window) => window.durationMinutes >= Math.max(acMinutesNeeded, 30));
   const bestWindow = feasibleWindows[0] ?? windows[0];
-  const canComplete = Boolean(bestWindow && bestWindow.durationMinutes >= minutesNeeded);
+  const canComplete = Boolean(bestWindow && bestWindow.durationMinutes >= acMinutesNeeded);
   const start = bestWindow?.start;
-  const end = start && minutesNeeded > 0 ? addMinutes(start, Math.min(minutesNeeded, bestWindow.durationMinutes)) : bestWindow?.end;
+  const end = start && acMinutesNeeded > 0 ? addMinutes(start, Math.min(acMinutesNeeded, bestWindow.durationMinutes)) : bestWindow?.end;
 
   const partialPlan = {
     planningStart,
@@ -368,17 +541,33 @@ export function buildChargingPlan(events: CalendarEvent[], vehicle: VehicleState
       currentBattery: vehicle.batteryLevel,
       forecastUsePercent,
       reserveTarget,
+      plannedStartBattery,
+      withoutChargeProjectedBattery,
       projectedBattery,
       recommendedTarget,
-      topUpPercent
+      topUpPercent,
+      rangePerPercentKm,
+      batteryCapacityKWh
     },
     availability: {
       windows
     },
     charging: {
       chargeRatePercentPerHour: Math.round(chargeRatePercentPerHour * 10) / 10,
-      minutesNeeded,
-      targetBattery: recommendedTarget
+      minutesNeeded: acMinutesNeeded,
+      targetBattery,
+      ac: {
+        minutesNeeded: acMinutesNeeded,
+        targetBattery,
+        chargeRatePercentPerHour: Math.round(chargeRatePercentPerHour * 10) / 10
+      },
+      dcFast: {
+        minutesNeeded: dcFastMinutesNeeded,
+        targetBattery: dcFastTargetBattery,
+        validToTarget: dcFastValidToTarget,
+        cappedAtBattery: dcFastMaxSoc,
+        unsupportedTopUpPercent: Math.max(targetBattery - dcFastMaxSoc, 0)
+      }
     },
     decision: {
       bestWindow,

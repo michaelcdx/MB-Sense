@@ -1,6 +1,6 @@
 import { motion } from 'motion/react';
 import { CalendarEvent, useAppStore } from '../store/useAppStore';
-import { AlertTriangle, BatteryCharging, BrainCircuit, Car, Save, Trash2, Video, X, Zap } from 'lucide-react';
+import { AlertTriangle, BatteryCharging, BrainCircuit, Car, Check, Crosshair, MapPin, Save, Search, Trash2, Video, X, Zap } from 'lucide-react';
 import { cn } from '../lib/utils';
 import GlassButton from '../components/GlassButton';
 import { FormEvent, PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from 'react';
@@ -8,22 +8,21 @@ import { useCalendarViewStore } from '../store/useCalendarViewStore';
 
 type EventMode = 'create' | 'edit';
 type EventColor = 'graphite' | 'blue' | 'green' | 'amber' | 'rose' | 'violet' | 'cream' | 'general' | 'study' | 'assignment' | 'urgent' | 'charging' | 'risk';
-type EventTextColor = 'dark' | 'light' | 'light3' | 'light4' | 'cream5' | 'rose6' | 'green7' | 'amber8';
 
-const eventColorOptions: { value: EventColor; label: string; backgroundColor: string; textColor: string }[] = [
-  { value: 'general', label: 'Work / Meeting', backgroundColor: '#243B53', textColor: '#F8FAFC' },
-  { value: 'study', label: 'Class / Study', backgroundColor: '#3B2F63', textColor: '#F8FAFC' },
-  { value: 'assignment', label: 'Assignment / Deadline', backgroundColor: '#6B2E2E', textColor: '#FFF7ED' },
-  { value: 'urgent', label: 'Important / Urgent', backgroundColor: '#7A1F2B', textColor: '#FFF1F2' },
-  { value: 'charging', label: 'AI Charging Recommendation', backgroundColor: '#14532D', textColor: '#ECFDF5' },
-  { value: 'risk', label: 'Battery Risk Warning', backgroundColor: '#7C4A03', textColor: '#FFFBEB' },
-  { value: 'graphite', label: 'Graphite', backgroundColor: '#0b0f10', textColor: '#f5f7f9' },
-  { value: 'blue', label: 'Blue', backgroundColor: '#172554', textColor: '#f5f7f9' },
-  { value: 'green', label: 'Green', backgroundColor: '#064e3b', textColor: '#f5f7f9' },
-  { value: 'amber', label: 'Amber', backgroundColor: '#78350f', textColor: '#f5f7f9' },
-  { value: 'rose', label: 'Rose', backgroundColor: '#881337', textColor: '#f5f7f9' },
-  { value: 'violet', label: 'Violet', backgroundColor: '#4c1d95', textColor: '#f5f7f9' },
-  { value: 'cream', label: 'Cream', backgroundColor: '#FFF7ED', textColor: '#2c2f31' }
+const eventColorOptions: { value: EventColor; label: string; backgroundColor: string }[] = [
+  { value: 'general', label: 'Work / Meeting', backgroundColor: '#243B53' },
+  { value: 'study', label: 'Class / Study', backgroundColor: '#3B2F63' },
+  { value: 'assignment', label: 'Assignment / Deadline', backgroundColor: '#6B2E2E' },
+  { value: 'urgent', label: 'Important / Urgent', backgroundColor: '#7A1F2B' },
+  { value: 'charging', label: 'AI Charging Recommendation', backgroundColor: '#14532D' },
+  { value: 'risk', label: 'Battery Risk Warning', backgroundColor: '#7C4A03' },
+  { value: 'graphite', label: 'Graphite', backgroundColor: '#0B0F10' },
+  { value: 'blue', label: 'Blue', backgroundColor: '#172554' },
+  { value: 'green', label: 'Green', backgroundColor: '#064E3B' },
+  { value: 'amber', label: 'Amber', backgroundColor: '#78350F' },
+  { value: 'rose', label: 'Rose', backgroundColor: '#881337' },
+  { value: 'violet', label: 'Violet', backgroundColor: '#4C1D95' },
+  { value: 'cream', label: 'Cream', backgroundColor: '#C8A76A' }
 ];
 
 const eventColorStyles: Record<EventColor, { backgroundColor: string }> = eventColorOptions.reduce((styles, option) => ({
@@ -31,21 +30,7 @@ const eventColorStyles: Record<EventColor, { backgroundColor: string }> = eventC
   [option.value]: { backgroundColor: option.backgroundColor }
 }), {} as Record<EventColor, { backgroundColor: string }>);
 
-const eventTextColorOptions: { value: EventTextColor; label: string; color: string }[] = [
-  { value: 'dark', label: 'Text 1', color: '#1E3A5F' },
-  { value: 'light', label: 'Text 2', color: '#F8FAFC' },
-  { value: 'light3', label: 'Text 3', color: '#F8FAFC' },
-  { value: 'light4', label: 'Text 4', color: '#F8FAFC' },
-  { value: 'cream5', label: 'Text 5', color: '#FFF7ED' },
-  { value: 'rose6', label: 'Text 6', color: '#FFF1F2' },
-  { value: 'green7', label: 'Text 7', color: '#ECFDF5' },
-  { value: 'amber8', label: 'Text 8', color: '#FFFBEB' }
-];
-
-const eventTextColorStyles: Record<EventTextColor, { color: string }> = eventTextColorOptions.reduce((styles, option) => ({
-  ...styles,
-  [option.value]: { color: option.color }
-}), {} as Record<EventTextColor, { color: string }>);
+const defaultEventTextStyle = { color: '#FFFFFF' };
 
 type ScheduleForm = {
   title: string;
@@ -58,7 +43,6 @@ type ScheduleForm = {
   status: string;
   notes: string;
   color: EventColor;
-  textColor: EventTextColor;
 };
 
 type DragSelection = {
@@ -81,6 +65,22 @@ type EventHorizontalLayout = {
   zIndex: number;
 };
 
+type LocationMode = 'place' | 'coordinates';
+
+type MalaysiaLocationSuggestion = {
+  id: string;
+  name: string;
+  address: string;
+  lat: number;
+  lng: number;
+  keywords?: string[];
+};
+
+type CoordinateDraft = {
+  lat: string;
+  lng: string;
+};
+
 const productTagline = 'Predict battery risk before it happens.';
 const draftEventId = 'draft-schedule-block';
 const dayLabels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -96,10 +96,205 @@ const calendarHeight = 24 * hourHeight;
 const demoStart = new Date(2026, 5, 15);
 const demoEnd = new Date(2026, 6, 30);
 const fallbackDemoDate = new Date(2026, 6, 1);
+const malaysiaBounds = {
+  north: 7.6,
+  south: 0.85,
+  east: 119.3,
+  west: 99.6,
+};
+
+const runtimeGoogleMapsKey =
+  'GOOGLE_MAPS_PLATFORM_KEY' in globalThis
+    ? String((globalThis as { GOOGLE_MAPS_PLATFORM_KEY?: string }).GOOGLE_MAPS_PLATFORM_KEY ?? '')
+    : '';
+const processGoogleMapsKey = typeof process !== 'undefined' ? process.env.GOOGLE_MAPS_PLATFORM_KEY || '' : '';
+type ViteImportMeta = ImportMeta & {
+  env: {
+    VITE_GOOGLE_MAPS_PLATFORM_KEY?: string;
+    VITE_GOOGLE_MAPS_KEY?: string;
+  };
+};
+const viteEnv = (import.meta as ViteImportMeta).env;
+const googlePlacesApiKey =
+  processGoogleMapsKey ||
+  viteEnv.VITE_GOOGLE_MAPS_PLATFORM_KEY ||
+  viteEnv.VITE_GOOGLE_MAPS_KEY ||
+  runtimeGoogleMapsKey ||
+  '';
+const hasGooglePlacesKey = Boolean(googlePlacesApiKey) && googlePlacesApiKey !== 'YOUR_API_KEY';
+
+const malaysiaLocationSuggestions: MalaysiaLocationSuggestion[] = [
+  {
+    id: 'trx-exchange',
+    name: 'The Exchange TRX',
+    address: 'Persiaran TRX, Tun Razak Exchange, 55188 Kuala Lumpur, Malaysia',
+    lat: 3.1427,
+    lng: 101.718,
+    keywords: ['trx', 'tun razak exchange', 'exchange trx', 'trx mall'],
+  },
+  {
+    id: 'trx-tower',
+    name: 'TRX Exchange 106',
+    address: 'Lingkaran TRX, Tun Razak Exchange, 55188 Kuala Lumpur, Malaysia',
+    lat: 3.1421,
+    lng: 101.7166,
+    keywords: ['trx', 'exchange 106', 'tun razak exchange', 'office'],
+  },
+  {
+    id: 'suria-klcc',
+    name: 'Suria KLCC',
+    address: 'Kuala Lumpur City Centre, 50088 Kuala Lumpur, Malaysia',
+    lat: 3.1579,
+    lng: 101.7121,
+    keywords: ['klcc', 'petronas', 'suria'],
+  },
+  {
+    id: 'pavilion-kl',
+    name: 'Pavilion Kuala Lumpur',
+    address: '168 Jalan Bukit Bintang, 55100 Kuala Lumpur, Malaysia',
+    lat: 3.1491,
+    lng: 101.7136,
+    keywords: ['pavilion', 'bukit bintang'],
+  },
+  {
+    id: 'mbm-puchong',
+    name: 'Mercedes-Benz Malaysia HQ',
+    address: 'Puchong, Selangor, Malaysia',
+    lat: 3.0323,
+    lng: 101.6176,
+    keywords: ['mercedes', 'hq', 'puchong', 'mbm'],
+  },
+  {
+    id: 'mcd-klcc',
+    name: "McDonald's Suria KLCC",
+    address: 'Suria KLCC, Kuala Lumpur City Centre, 50088 Kuala Lumpur, Malaysia',
+    lat: 3.158,
+    lng: 101.7122,
+    keywords: ['mcdonalds', 'mcdonald', 'mcd', 'klcc'],
+  },
+  {
+    id: 'mcd-bukit-bintang',
+    name: "McDonald's Bukit Bintang",
+    address: 'Jalan Bukit Bintang, Bukit Bintang, 55100 Kuala Lumpur, Malaysia',
+    lat: 3.1467,
+    lng: 101.7112,
+    keywords: ['mcdonalds', 'mcdonald', 'mcd', 'bukit bintang'],
+  },
+  {
+    id: 'mcd-bangsar',
+    name: "McDonald's Bangsar",
+    address: 'Bangsar Baru, 59100 Kuala Lumpur, Malaysia',
+    lat: 3.1308,
+    lng: 101.6709,
+    keywords: ['mcdonalds', 'mcdonald', 'mcd', 'bangsar'],
+  },
+  {
+    id: 'mcd-ss2',
+    name: "McDonald's SS2 Petaling Jaya",
+    address: 'SS2, 47300 Petaling Jaya, Selangor, Malaysia',
+    lat: 3.1188,
+    lng: 101.6233,
+    keywords: ['mcdonalds', 'mcdonald', 'mcd', 'ss2', 'petaling jaya', 'pj'],
+  },
+  {
+    id: 'mcd-ttdi',
+    name: "McDonald's TTDI",
+    address: 'Taman Tun Dr Ismail, 60000 Kuala Lumpur, Malaysia',
+    lat: 3.1397,
+    lng: 101.6304,
+    keywords: ['mcdonalds', 'mcdonald', 'mcd', 'ttdi', 'taman tun'],
+  },
+];
+
+let googlePlacesLibraryPromise: Promise<void> | null = null;
 
 const dayHeaderFormatter = new Intl.DateTimeFormat('en-US', { day: 'numeric' });
 const weekRangeFormatter = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' });
 const fullDateFormatter = new Intl.DateTimeFormat('en-US', { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' });
+
+function loadGooglePlacesLibrary() {
+  if (!hasGooglePlacesKey || typeof document === 'undefined') return Promise.reject(new Error('Google Places API key is not configured.'));
+  if (typeof google !== 'undefined' && google.maps?.places?.Autocomplete) return Promise.resolve();
+  if (typeof google !== 'undefined' && google.maps?.importLibrary) {
+    return google.maps.importLibrary('places').then(() => undefined);
+  }
+  if (googlePlacesLibraryPromise) return googlePlacesLibraryPromise;
+
+  googlePlacesLibraryPromise = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.async = true;
+    script.defer = true;
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(googlePlacesApiKey)}&libraries=places&loading=async`;
+    script.dataset.calendarGooglePlaces = 'true';
+    script.addEventListener('load', () => {
+      if (typeof google !== 'undefined' && google.maps?.places?.Autocomplete) resolve();
+      else reject(new Error('Google Places library did not load.'));
+    }, { once: true });
+    script.addEventListener('error', () => reject(new Error('Google Places library failed to load.')), { once: true });
+    document.head.appendChild(script);
+  });
+
+  return googlePlacesLibraryPromise;
+}
+
+function normalizeLocationSearch(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function compactLocationSearch(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
+function getMalaysiaLocationMatches(query: string) {
+  const normalized = normalizeLocationSearch(query);
+  const compactQuery = compactLocationSearch(query);
+  if (normalized.length < 2 && compactQuery.length < 2) return [];
+
+  const tokens = normalized.split(' ').filter(Boolean);
+
+  return malaysiaLocationSuggestions
+    .filter((suggestion) => {
+      const source = [suggestion.name, suggestion.address, ...(suggestion.keywords ?? [])].join(' ');
+      const normalizedSource = normalizeLocationSearch(source);
+      const compactSource = compactLocationSearch(source);
+
+      return tokens.every((token) => normalizedSource.includes(token) || compactSource.includes(compactLocationSearch(token)))
+        || (compactQuery.length >= 2 && compactSource.includes(compactQuery));
+    })
+    .slice(0, 6);
+}
+
+function formatSuggestionLocation(suggestion: MalaysiaLocationSuggestion) {
+  return `${suggestion.name}, ${suggestion.address}`;
+}
+
+function isValidCoordinate(lat: number, lng: number) {
+  return Number.isFinite(lat) && Number.isFinite(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180;
+}
+
+function parseCoordinateString(value: string) {
+  const match = value.match(/(-?\d+(?:\.\d+)?)\s*[, ]\s*(-?\d+(?:\.\d+)?)/);
+  if (!match) return null;
+
+  const lat = Number(match[1]);
+  const lng = Number(match[2]);
+  return isValidCoordinate(lat, lng) ? { lat, lng } : null;
+}
+
+function parseCoordinateDraft(draft: CoordinateDraft) {
+  const lat = Number(draft.lat);
+  const lng = Number(draft.lng);
+  return isValidCoordinate(lat, lng) ? { lat, lng } : null;
+}
+
+function coordinateDraftFromLocation(value: string): CoordinateDraft {
+  const parsed = parseCoordinateString(value);
+  return parsed ? { lat: String(parsed.lat), lng: String(parsed.lng) } : { lat: '', lng: '' };
+}
+
+function formatCoordinateLocation(lat: number, lng: number) {
+  return `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+}
 
 function startOfDay(date: Date) {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate());
@@ -279,6 +474,10 @@ function getDefaultEventColor(event: Pick<CalendarEvent, 'category' | 'carNeeded
   return 'general';
 }
 
+function getTravelStatus(carNeeded: boolean) {
+  return carNeeded ? 'Vehicle Required' : 'Remote / No Car';
+}
+
 function getEventColor(event: CalendarEvent) {
   return ((event as CalendarEvent & { color?: EventColor }).color ?? getDefaultEventColor(event));
 }
@@ -291,16 +490,8 @@ function getEventColorStyle(event: CalendarEvent) {
   return eventColorStyles[getEventColor(event)];
 }
 
-function getDefaultEventTextColor(background: EventColor) {
-  return background === 'cream' ? 'dark' : background === 'assignment' ? 'cream5' : background === 'urgent' ? 'rose6' : background === 'charging' ? 'green7' : background === 'risk' ? 'amber8' : 'light';
-}
-
-function getEventTextColor(event: CalendarEvent) {
-  return ((event as CalendarEvent & { textColor?: EventTextColor }).textColor ?? getDefaultEventTextColor(getEventColor(event)));
-}
-
 function getEventTextColorStyle(event: CalendarEvent) {
-  return eventTextColorStyles[getEventTextColor(event)];
+  return defaultEventTextStyle;
 }
 
 function buildEmptyForm(date: Date, start = 9 * 60, end = 10 * 60): ScheduleForm {
@@ -312,10 +503,9 @@ function buildEmptyForm(date: Date, start = 9 * 60, end = 10 * 60): ScheduleForm
     endTime: minutesToTimeInput(end),
     carNeeded: true,
     category: 'work',
-    status: 'Vehicle Required',
+    status: getTravelStatus(true),
     notes: '',
-    color: 'general',
-    textColor: 'light'
+    color: 'general'
   };
 }
 
@@ -330,10 +520,9 @@ function formFromEvent(event: CalendarEvent): ScheduleForm {
     endTime: minutesToTimeInput(end),
     carNeeded: event.carNeeded,
     category: event.category,
-    status: event.status ?? (event.carNeeded ? 'Vehicle Required' : 'Remote / No Car'),
+    status: getTravelStatus(event.carNeeded),
     notes: event.notes ?? '',
-    color: getEventColor(event),
-    textColor: getEventTextColor(event)
+    color: getEventColor(event)
   };
 }
 
@@ -521,6 +710,25 @@ function CalendarWeekView({ days, weekStart, events, selection, selectedEventId,
   );
 }
 
+function LocationModeButton({ active, icon: Icon, label, onClick }: {
+  active: boolean;
+  icon: typeof Search;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn('flex h-9 items-center justify-center gap-2 rounded-md border px-2 text-xs font-semibold transition', active ? 'border-primary bg-primary/10 text-primary' : 'border-outline-variant/45 bg-surface-container-lowest text-on-surface-variant hover:border-primary/35 hover:text-primary')}
+    >
+      <Icon className="h-3.5 w-3.5" />
+      <span className="truncate">{label}</span>
+      {active && <Check className="h-3.5 w-3.5" />}
+    </button>
+  );
+}
+
 function EventSidePanel({ mode, form, editingEvent, onChange, onClose, onDelete, onSubmit }: {
   mode: EventMode | null;
   form: ScheduleForm;
@@ -530,6 +738,111 @@ function EventSidePanel({ mode, form, editingEvent, onChange, onClose, onDelete,
   onDelete: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
+  const formRef = useRef(form);
+  const onChangeRef = useRef(onChange);
+  const placeInputRef = useRef<HTMLInputElement>(null);
+  const autocompleteListenerRef = useRef<google.maps.MapsEventListener | null>(null);
+  const [locationMode, setLocationMode] = useState<LocationMode>(() => parseCoordinateString(form.location) ? 'coordinates' : 'place');
+  const [placeQuery, setPlaceQuery] = useState(form.location);
+  const [placeFocused, setPlaceFocused] = useState(false);
+  const [placesStatus, setPlacesStatus] = useState<'idle' | 'loading' | 'ready' | 'unavailable'>(hasGooglePlacesKey ? 'idle' : 'unavailable');
+  const [coordinateDraft, setCoordinateDraft] = useState<CoordinateDraft>(() => coordinateDraftFromLocation(form.location));
+  const localPlaceMatches = useMemo(() => getMalaysiaLocationMatches(placeQuery), [placeQuery]);
+  const coordinateValue = parseCoordinateDraft(coordinateDraft);
+  const coordinateStarted = Boolean(coordinateDraft.lat.trim() || coordinateDraft.lng.trim());
+  const coordinateInvalid = locationMode === 'coordinates' && coordinateStarted && !coordinateValue;
+  const showLocalPlaceMatches = locationMode === 'place' && placeFocused && localPlaceMatches.length > 0 && placesStatus !== 'ready';
+
+  useEffect(() => {
+    formRef.current = form;
+  }, [form]);
+
+  useEffect(() => {
+    onChangeRef.current = onChange;
+  }, [onChange]);
+
+  useEffect(() => {
+    const parsed = parseCoordinateString(form.location);
+    setLocationMode(parsed ? 'coordinates' : 'place');
+    setPlaceQuery(parsed ? '' : form.location);
+    setCoordinateDraft(parsed ? { lat: String(parsed.lat), lng: String(parsed.lng) } : { lat: '', lng: '' });
+  }, [editingEvent?.id, form.date, form.endTime, form.startTime, mode]);
+
+  useEffect(() => {
+    if (!mode || locationMode !== 'place' || !hasGooglePlacesKey) return;
+
+    let cancelled = false;
+    autocompleteListenerRef.current?.remove();
+    autocompleteListenerRef.current = null;
+    setPlacesStatus('loading');
+
+    loadGooglePlacesLibrary()
+      .then(() => {
+        if (cancelled || !placeInputRef.current) return;
+
+        const bounds = new google.maps.LatLngBounds(
+          { lat: malaysiaBounds.south, lng: malaysiaBounds.west },
+          { lat: malaysiaBounds.north, lng: malaysiaBounds.east }
+        );
+        const autocomplete = new google.maps.places.Autocomplete(placeInputRef.current, {
+          bounds,
+          componentRestrictions: { country: 'my' },
+          fields: ['formatted_address', 'geometry', 'name'],
+          strictBounds: false,
+        });
+
+        autocompleteListenerRef.current = autocomplete.addListener('place_changed', () => {
+          const place = autocomplete.getPlace();
+          const displayLocation = [place.name, place.formatted_address].filter(Boolean).join(', ') || placeInputRef.current?.value || '';
+          setPlaceQuery(displayLocation);
+          onChangeRef.current({ ...formRef.current, location: displayLocation });
+        });
+        setPlacesStatus('ready');
+      })
+      .catch(() => {
+        if (!cancelled) setPlacesStatus('unavailable');
+      });
+
+    return () => {
+      cancelled = true;
+      autocompleteListenerRef.current?.remove();
+      autocompleteListenerRef.current = null;
+    };
+  }, [locationMode, mode]);
+
+  const setLocationFromPlace = (value: string) => {
+    setPlaceQuery(value);
+    onChange({ ...form, location: value });
+  };
+
+  const selectLocationSuggestion = (suggestion: MalaysiaLocationSuggestion) => {
+    setLocationFromPlace(formatSuggestionLocation(suggestion));
+    setPlaceFocused(false);
+  };
+
+  const updateCoordinateDraft = (nextDraft: CoordinateDraft) => {
+    setCoordinateDraft(nextDraft);
+    const nextCoordinate = parseCoordinateDraft(nextDraft);
+    onChange({ ...form, location: nextCoordinate ? formatCoordinateLocation(nextCoordinate.lat, nextCoordinate.lng) : '' });
+  };
+
+  const selectLocationMode = (nextMode: LocationMode) => {
+    setLocationMode(nextMode);
+    setPlaceFocused(false);
+
+    if (nextMode === 'place') {
+      const nextPlace = parseCoordinateString(form.location) ? '' : form.location;
+      setPlaceQuery(nextPlace);
+      onChange({ ...form, location: nextPlace });
+      return;
+    }
+
+    const nextDraft = coordinateDraftFromLocation(form.location);
+    setCoordinateDraft(nextDraft);
+    const nextCoordinate = parseCoordinateDraft(nextDraft);
+    onChange({ ...form, location: nextCoordinate ? formatCoordinateLocation(nextCoordinate.lat, nextCoordinate.lng) : '' });
+  };
+
   if (!mode) {
     return (
       <aside className="min-h-0 border-t border-outline-variant/45 bg-surface-container-low p-4 text-on-surface lg:border-l lg:border-t-0">
@@ -546,7 +859,14 @@ function EventSidePanel({ mode, form, editingEvent, onChange, onClose, onDelete,
     );
   }
 
-  const chargingContext = editingEvent ? isChargingEvent(editingEvent) || isRiskEvent(editingEvent) : form.status.toLowerCase().includes('charging') || form.status.toLowerCase().includes('risk') || form.title.toLowerCase().includes('charge');
+  const chargingContext = editingEvent
+    ? isChargingEvent(editingEvent) || isRiskEvent(editingEvent)
+    : form.category === 'charging' || form.category === 'risk' || form.title.toLowerCase().includes('charge');
+  const travelStatus = getTravelStatus(form.carNeeded);
+  const toggleTravelStatus = () => {
+    const nextCarNeeded = !form.carNeeded;
+    onChange({ ...form, carNeeded: nextCarNeeded, status: getTravelStatus(nextCarNeeded) });
+  };
 
   return (
     <aside className="min-h-0 overflow-hidden border-t border-outline-variant/45 bg-surface-container-low text-on-surface lg:border-l lg:border-t-0">
@@ -592,52 +912,112 @@ function EventSidePanel({ mode, form, editingEvent, onChange, onClose, onDelete,
               <input type="time" value={form.endTime} onChange={(event) => onChange({ ...form, endTime: event.target.value })} required className="h-9 w-full rounded-md border border-outline-variant/45 bg-surface-container-lowest px-2.5 text-xs font-medium text-on-surface outline-none focus:border-primary/45" />
             </label>
           </div>
-          <label className="block">
-            <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-slate-500">Location</span>
-            <input value={form.location} onChange={(event) => onChange({ ...form, location: event.target.value })} required className="h-9 w-full rounded-md border border-outline-variant/45 bg-surface-container-lowest px-2.5 text-xs font-medium text-on-surface outline-none placeholder:text-slate-500 focus:border-primary/45" placeholder="TRX Executive Tower" />
-          </label>
+          <div className="space-y-2">
+            <span className="block text-[10px] font-semibold uppercase tracking-wider text-slate-500">Location type</span>
+            <div className="grid grid-cols-2 gap-2">
+              <LocationModeButton active={locationMode === 'place'} icon={Search} label="Place name" onClick={() => selectLocationMode('place')} />
+              <LocationModeButton active={locationMode === 'coordinates'} icon={Crosshair} label="Coordinates" onClick={() => selectLocationMode('coordinates')} />
+            </div>
+
+            {locationMode === 'place' ? (
+              <label className="block">
+                <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-slate-500">Place name</span>
+                <div className="relative">
+                  <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+                  <input
+                    ref={placeInputRef}
+                    value={placeQuery}
+                    onBlur={() => window.setTimeout(() => setPlaceFocused(false), 120)}
+                    onChange={(event) => setLocationFromPlace(event.target.value)}
+                    onFocus={() => setPlaceFocused(true)}
+                    required
+                    className="h-9 w-full rounded-md border border-outline-variant/45 bg-surface-container-lowest pl-8 pr-2.5 text-xs font-medium text-on-surface outline-none placeholder:text-slate-500 focus:border-primary/45"
+                    placeholder="TRX or McDonalds"
+                  />
+                  {showLocalPlaceMatches && (
+                    <div className="absolute left-0 right-0 top-[calc(100%+0.25rem)] z-40 max-h-56 overflow-y-auto rounded-md border border-outline-variant/45 bg-surface-container-lowest p-1 shadow-ambient-lg">
+                      {localPlaceMatches.map((suggestion) => (
+                        <button
+                          key={suggestion.id}
+                          type="button"
+                          onClick={() => selectLocationSuggestion(suggestion)}
+                          onMouseDown={(event) => event.preventDefault()}
+                          className="flex w-full items-start gap-2 rounded-md px-2 py-2 text-left transition hover:bg-surface-container-low"
+                        >
+                          <MapPin className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
+                          <span className="min-w-0">
+                            <span className="block truncate text-xs font-semibold text-on-surface">{suggestion.name}</span>
+                            <span className="mt-0.5 block truncate text-[10px] font-medium text-on-surface-variant">{suggestion.address}</span>
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </label>
+            ) : (
+              <div>
+                <div className="grid grid-cols-2 gap-2">
+                  <label className="block">
+                    <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-slate-500">Latitude</span>
+                    <input
+                      inputMode="decimal"
+                      value={coordinateDraft.lat}
+                      onChange={(event) => updateCoordinateDraft({ ...coordinateDraft, lat: event.target.value })}
+                      className={cn('h-9 w-full rounded-md border bg-surface-container-lowest px-2.5 text-xs font-medium text-on-surface outline-none placeholder:text-slate-500 focus:border-primary/45', coordinateInvalid ? 'border-rose-300/45' : 'border-outline-variant/45')}
+                      placeholder="3.142700"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-slate-500">Longitude</span>
+                    <input
+                      inputMode="decimal"
+                      value={coordinateDraft.lng}
+                      onChange={(event) => updateCoordinateDraft({ ...coordinateDraft, lng: event.target.value })}
+                      className={cn('h-9 w-full rounded-md border bg-surface-container-lowest px-2.5 text-xs font-medium text-on-surface outline-none placeholder:text-slate-500 focus:border-primary/45', coordinateInvalid ? 'border-rose-300/45' : 'border-outline-variant/45')}
+                      placeholder="101.718000"
+                    />
+                  </label>
+                </div>
+                {coordinateInvalid && <p className="mt-1.5 text-[10px] font-semibold text-rose-500">Enter latitude from -90 to 90 and longitude from -180 to 180.</p>}
+                {coordinateValue && <p className="mt-1.5 text-[10px] font-semibold text-primary">Saved as {formatCoordinateLocation(coordinateValue.lat, coordinateValue.lng)}</p>}
+              </div>
+            )}
+          </div>
           <label className="block">
             <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-slate-500">Event Type / Use</span>
-            <select value={form.category} onChange={(event) => { const category = event.target.value as CalendarEvent['category']; const color = getDefaultEventColor({ title: form.title, status: form.status, carNeeded: form.carNeeded, category }); onChange({ ...form, category, color, textColor: getDefaultEventTextColor(color) }); }} className="h-9 w-full rounded-md border border-outline-variant/45 bg-surface-container-lowest px-2.5 text-xs font-medium text-on-surface outline-none focus:border-primary/45"><option value="work">Work / Meeting</option><option value="study">Class / Study</option><option value="assignment">Assignment / Deadline</option><option value="important">Important / Urgent</option><option value="charging">AI Charging Recommendation</option><option value="risk">Battery Risk Warning</option><option value="personal">Personal</option><option value="fitness">Fitness</option><option value="other">Charging / Other</option></select>
-          </label>
-          <label className="block">
-            <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-slate-500">Status</span>
-            <input value={form.status} onChange={(event) => onChange({ ...form, status: event.target.value })} className="h-9 w-full rounded-md border border-outline-variant/45 bg-surface-container-lowest px-2.5 text-xs font-medium text-on-surface outline-none placeholder:text-slate-500 focus:border-primary/45" placeholder="Vehicle Required" />
+            <select value={form.category} onChange={(event) => { const category = event.target.value as CalendarEvent['category']; const color = getDefaultEventColor({ title: form.title, status: form.status, carNeeded: form.carNeeded, category }); onChange({ ...form, category, color }); }} className="h-9 w-full rounded-md border border-outline-variant/45 bg-surface-container-lowest px-2.5 text-xs font-medium text-on-surface outline-none focus:border-primary/45"><option value="work">Work / Meeting</option><option value="study">Class / Study</option><option value="assignment">Assignment / Deadline</option><option value="important">Important / Urgent</option><option value="charging">AI Charging Recommendation</option><option value="risk">Battery Risk Warning</option><option value="personal">Personal</option><option value="fitness">Fitness</option><option value="other">Charging / Other</option></select>
           </label>
           <div>
+            <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-slate-500">Status</span>
+            <button type="button" onClick={toggleTravelStatus} className={cn('flex min-h-11 w-full items-center justify-between gap-3 rounded-md border px-3 py-2 text-left transition', form.carNeeded ? 'border-blue-300/35 bg-blue-500/20 text-blue-600' : 'border-outline-variant/45 bg-surface-container-lowest text-on-surface-variant')}>
+              <span className="flex min-w-0 items-center gap-2">
+                {form.carNeeded ? <Car className="h-3.5 w-3.5 shrink-0" /> : <Video className="h-3.5 w-3.5 shrink-0" />}
+                <span className="min-w-0">
+                  <span className="block truncate text-xs font-semibold">{form.carNeeded ? 'Drive needed' : 'Remote / no car'}</span>
+                  <span className="mt-0.5 block truncate text-[10px] font-bold uppercase tracking-wider opacity-75">{travelStatus}</span>
+                </span>
+              </span>
+              <Check className={cn('h-3.5 w-3.5 shrink-0 transition', form.carNeeded ? 'opacity-100' : 'opacity-45')} />
+            </button>
+          </div>
+          <div>
             <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-slate-500">Background</span>
-            <div className="grid grid-cols-5 sm:grid-cols-10 gap-1.5">
+            <div className="flex flex-wrap gap-2">
               {eventColorOptions.map((option) => (
                 <button
                   key={option.value}
                   type="button"
-                  onClick={() => onChange({ ...form, color: option.value, textColor: getDefaultEventTextColor(option.value) })}
-                  className={cn('flex h-9 items-center justify-center rounded-md text-[0px] transition active:scale-95', form.color === option.value && 'ring-2 ring-primary ring-offset-2 ring-offset-surface-container-low')}
+                  onClick={() => onChange({ ...form, color: option.value })}
+                  className={cn('flex h-8 w-8 items-center justify-center rounded-full border border-white/80 text-[0px] transition active:scale-95', form.color === option.value && 'ring-2 ring-primary ring-offset-2 ring-offset-surface-container-low')}
                   style={{ backgroundColor: option.backgroundColor }}
                   aria-label={`Use ${option.label} schedule color`}
                 >
-                  {option.label}
+                  <span className={cn('h-2.5 w-2.5 rounded-full bg-white transition', form.color === option.value ? 'opacity-100' : 'opacity-0')} />
                 </button>
               ))}
             </div>
           </div>
-          <div>
-            <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-slate-500">Text</span>
-            <div className="grid grid-cols-2 gap-1.5">
-              {eventTextColorOptions.map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  onClick={() => onChange({ ...form, textColor: option.value })}
-                  className={cn('flex h-9 items-center justify-center rounded-md border text-[10px] font-black uppercase tracking-widest transition active:scale-95', form.textColor === option.value ? 'border-primary ring-2 ring-primary ring-offset-2 ring-offset-surface-container-low' : 'border-outline-variant/45')}
-                  style={{ backgroundColor: option.color, color: option.value === 'dark' ? '#F8FAFC' : '#1E3A5F' }}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
-          </div>
-          <button type="button" onClick={() => onChange({ ...form, carNeeded: !form.carNeeded, status: !form.carNeeded ? 'Vehicle Required' : 'Remote / No Car' })} className={cn('flex h-9 w-full items-center justify-center gap-2 rounded-md border px-3 text-xs font-semibold transition', form.carNeeded ? 'border-blue-300/35 bg-blue-500/20 text-blue-600' : 'border-outline-variant/45 bg-surface-container-lowest text-on-surface-variant')}>{form.carNeeded ? <Car className="h-3.5 w-3.5" /> : <Video className="h-3.5 w-3.5" />}{form.carNeeded ? 'Drive needed' : 'Remote / no car'}</button>
           <label className="block">
             <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-slate-500">Notes</span>
             <textarea value={form.notes} onChange={(event) => onChange({ ...form, notes: event.target.value })} rows={4} className="w-full resize-none rounded-md border border-outline-variant/45 bg-surface-container-lowest px-2.5 py-2 text-xs font-medium leading-relaxed text-on-surface outline-none placeholder:text-slate-500 focus:border-primary/45" placeholder="Details or charging recommendation context" />
@@ -657,10 +1037,9 @@ function EventSidePanel({ mode, form, editingEvent, onChange, onClose, onDelete,
 }
 
 export default function Calendar() {
-  const { events } = useAppStore();
+  const { events: calendarEvents, addEvent, updateEvent, deleteEvent } = useAppStore();
   const { selectedDate, weekStart, setSelectedDate, setActiveWeek } = useCalendarViewStore();
   const initialDate = useMemo(() => selectedDate, []);
-  const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>(events);
   const [dragSelection, setDragSelection] = useState<DragSelection | null>(null);
   const dragStartRef = useRef<DragStartState | null>(null);
   const [panelMode, setPanelMode] = useState<EventMode | null>(null);
@@ -677,7 +1056,7 @@ export default function Calendar() {
     });
   }, [calendarEvents, timelineDays]);
 
-  const draftEvent = useMemo<(CalendarEvent & { color: EventColor; textColor: EventTextColor }) | null>(() => {
+  const draftEvent = useMemo<(CalendarEvent & { color: EventColor }) | null>(() => {
     if (!panelMode) return null;
     const start = parseTimeToMinutes(form.startTime);
     const parsedEnd = parseTimeToMinutes(form.endTime);
@@ -693,10 +1072,9 @@ export default function Calendar() {
       carNeeded: form.carNeeded,
       type: getEventType(form.startTime),
       category: form.category,
-      status: form.status.trim() || 'Draft',
+      status: getTravelStatus(form.carNeeded),
       notes: form.notes.trim() || undefined,
       color: form.color,
-      textColor: form.textColor,
       aiReason: editingEvent?.aiReason
     };
   }, [editingEvent, form, panelMode]);
@@ -775,8 +1153,8 @@ export default function Calendar() {
     const parsedEnd = parseTimeToMinutes(form.endTime);
     const normalizedEnd = parsedEnd > start ? parsedEnd : start + 30;
     const date = fromDateInputValue(form.date);
-    const status = form.status.trim() || (form.carNeeded ? 'Vehicle Required' : 'Remote / No Car');
-    const nextEvent: CalendarEvent & { color: EventColor; textColor: EventTextColor } = {
+    const status = getTravelStatus(form.carNeeded);
+    const nextEvent: CalendarEvent & { color: EventColor } = {
       id: editingEvent?.id ?? `local-${Date.now()}`,
       title: form.title.trim(),
       location: form.location.trim(),
@@ -789,11 +1167,12 @@ export default function Calendar() {
       status,
       notes: form.notes.trim() || undefined,
       color: form.color,
-      textColor: form.textColor,
       aiReason: editingEvent?.aiReason
     };
 
-    setCalendarEvents((current) => editingEvent ? current.map((item) => item.id === editingEvent.id ? nextEvent : item) : [...current, nextEvent]);
+    if (editingEvent) updateEvent(nextEvent);
+    else addEvent(nextEvent);
+
     setActiveWeek(date);
     setEditingEvent(nextEvent);
     setForm(formFromEvent(nextEvent));
@@ -802,7 +1181,7 @@ export default function Calendar() {
 
   const handleDeleteSchedule = () => {
     if (!editingEvent) return;
-    setCalendarEvents((current) => current.filter((event) => event.id !== editingEvent.id));
+    deleteEvent(editingEvent.id);
     closePanel();
   };
 

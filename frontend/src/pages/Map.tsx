@@ -2806,7 +2806,7 @@ export default function MapView() {
       : 'Overview';
   const MapStateIcon = activeNavigation ? Navigation : isManualExplore ? LocateFixed : Route;
   const controlBottomClass = isFutureDrivePreview
-    ? 'bottom-[calc(12.5rem+env(safe-area-inset-bottom))] md:bottom-auto md:top-[18.5rem] lg:top-[19rem]'
+    ? 'bottom-[calc(12.5rem+env(safe-area-inset-bottom))] sm:bottom-[calc(11rem+env(safe-area-inset-bottom))] md:bottom-8'
     : sheetState === 'expanded'
       ? 'bottom-[calc(62dvh+env(safe-area-inset-bottom))] sm:bottom-[calc(59dvh+env(safe-area-inset-bottom))] lg:bottom-8'
       : 'bottom-[calc(12.5rem+env(safe-area-inset-bottom))] sm:bottom-[calc(11rem+env(safe-area-inset-bottom))] lg:bottom-8';
@@ -3163,12 +3163,12 @@ export default function MapView() {
         className={cn(
           'absolute z-[60] transition-all duration-300 ease-out',
           isFutureDrivePreview
-            ? 'inset-x-3 bottom-[calc(5.75rem+env(safe-area-inset-bottom))] h-[min(72dvh,43rem)] md:inset-x-auto md:left-5 md:top-[9.5rem] md:bottom-6 md:h-auto md:w-[360px] md:max-w-[calc(48vw-2rem)] lg:left-8 lg:top-[9.75rem] lg:w-[380px]'
+            ? 'inset-x-3 bottom-[calc(5.75rem+env(safe-area-inset-bottom))] h-[min(72dvh,43rem)] md:inset-x-auto md:left-8 md:bottom-8 md:w-[360px] md:max-w-[calc(48vw-2rem)] lg:left-10 lg:w-[380px]'
             : cn(
-                'inset-x-3 sm:inset-x-auto sm:left-1/2 sm:w-[430px] sm:max-w-[calc(100vw-2rem)] sm:-translate-x-1/2',
+                'inset-x-3 sm:inset-x-auto sm:left-8 sm:w-[430px] sm:max-w-[calc(100vw-4rem)]',
                 sheetState === 'expanded'
-                  ? 'bottom-[calc(5.75rem+env(safe-area-inset-bottom))] sm:bottom-6'
-                  : 'bottom-[calc(5.75rem+env(safe-area-inset-bottom))] sm:bottom-6'
+                  ? 'bottom-[calc(5.75rem+env(safe-area-inset-bottom))] sm:bottom-8'
+                  : 'bottom-[calc(5.75rem+env(safe-area-inset-bottom))] sm:bottom-8'
               )
         )}
       >
