@@ -12,19 +12,19 @@ type EventMode = 'create' | 'edit';
 type EventColor = 'graphite' | 'blue' | 'green' | 'amber' | 'rose' | 'violet' | 'cream' | 'general' | 'study' | 'assignment' | 'urgent' | 'charging' | 'risk';
 
 const eventColorOptions: { value: EventColor; label: string; backgroundColor: string }[] = [
-  { value: 'general', label: 'Work / Meeting', backgroundColor: '#243B53' },
-  { value: 'study', label: 'Class / Study', backgroundColor: '#3B2F63' },
-  { value: 'assignment', label: 'Assignment / Deadline', backgroundColor: '#6B2E2E' },
-  { value: 'urgent', label: 'Important / Urgent', backgroundColor: '#7A1F2B' },
-  { value: 'charging', label: 'AI Charging Recommendation', backgroundColor: '#14532D' },
-  { value: 'risk', label: 'Battery Risk Warning', backgroundColor: '#7C4A03' },
-  { value: 'graphite', label: 'Graphite', backgroundColor: '#0B0F10' },
-  { value: 'blue', label: 'Blue', backgroundColor: '#172554' },
-  { value: 'green', label: 'Green', backgroundColor: '#064E3B' },
-  { value: 'amber', label: 'Amber', backgroundColor: '#78350F' },
-  { value: 'rose', label: 'Rose', backgroundColor: '#881337' },
-  { value: 'violet', label: 'Violet', backgroundColor: '#4C1D95' },
-  { value: 'cream', label: 'Cream', backgroundColor: '#C8A76A' }
+  { value: 'general', label: 'Work / Meeting', backgroundColor: '#D8E8FF' },
+  { value: 'study', label: 'Class / Study', backgroundColor: '#E7DCFF' },
+  { value: 'assignment', label: 'Assignment / Deadline', backgroundColor: '#FFDAD6' },
+  { value: 'urgent', label: 'Important / Urgent', backgroundColor: '#FFD7E2' },
+  { value: 'charging', label: 'AI Charging Recommendation', backgroundColor: '#D8F8E7' },
+  { value: 'risk', label: 'Battery Risk Warning', backgroundColor: '#FFE8BC' },
+  { value: 'graphite', label: 'Graphite', backgroundColor: '#E1E7EA' },
+  { value: 'blue', label: 'Blue', backgroundColor: '#D4E3FF' },
+  { value: 'green', label: 'Green', backgroundColor: '#D8F2DD' },
+  { value: 'amber', label: 'Amber', backgroundColor: '#FFE0B2' },
+  { value: 'rose', label: 'Rose', backgroundColor: '#FFD9E2' },
+  { value: 'violet', label: 'Violet', backgroundColor: '#E5D9FF' },
+  { value: 'cream', label: 'Cream', backgroundColor: '#FFF1C7' }
 ];
 
 const eventColorStyles: Record<EventColor, { backgroundColor: string }> = eventColorOptions.reduce((styles, option) => ({
@@ -32,7 +32,7 @@ const eventColorStyles: Record<EventColor, { backgroundColor: string }> = eventC
   [option.value]: { backgroundColor: option.backgroundColor }
 }), {} as Record<EventColor, { backgroundColor: string }>);
 
-const defaultEventTextStyle = { color: '#FFFFFF' };
+const defaultEventTextStyle = { color: '#25313A' };
 
 type ScheduleForm = {
   title: string;
@@ -503,7 +503,7 @@ function getEventTone(_event: CalendarEvent) {
 function getEventColorStyle(event: CalendarEvent) {
   if (event.aiChargingPlan) {
     const amber = event.aiChargingPlan.riskLevel === 'high' || event.aiChargingPlan.calendarAction.colorType === 'battery-risk';
-    return { backgroundColor: amber ? '#7C4A03' : '#14532D' };
+    return { backgroundColor: amber ? '#FFE8BC' : '#D8F8E7' };
   }
   return eventColorStyles[getEventColor(event)];
 }
@@ -511,7 +511,7 @@ function getEventColorStyle(event: CalendarEvent) {
 function getEventTextColorStyle(event: CalendarEvent) {
   if (event.aiChargingPlan) {
     const amber = event.aiChargingPlan.riskLevel === 'high' || event.aiChargingPlan.calendarAction.colorType === 'battery-risk';
-    return { color: amber ? '#FFFBEB' : '#ECFDF5' };
+    return { color: amber ? '#714A00' : '#165C3B' };
   }
   return defaultEventTextStyle;
 }
@@ -777,6 +777,8 @@ function EventSidePanel({ mode, form, editingEvent, onChange, onClose, onDelete,
   const coordinateStarted = Boolean(coordinateDraft.lat.trim() || coordinateDraft.lng.trim());
   const coordinateInvalid = locationMode === 'coordinates' && coordinateStarted && !coordinateValue;
   const showLocalPlaceMatches = locationMode === 'place' && placeFocused && localPlaceMatches.length > 0 && placesStatus !== 'ready';
+  const chargingMeta = editingEvent?.chargingMeta;
+  const sortedChargingChoices = useMemo(() => [...(chargingMeta?.choiceOptions ?? [])].sort((a, b) => a.rank - b.rank), [chargingMeta?.choiceOptions]);
 
   useEffect(() => {
     formRef.current = form;
@@ -891,9 +893,7 @@ function EventSidePanel({ mode, form, editingEvent, onChange, onClose, onDelete,
   const chargingContext = editingEvent
     ? isChargingEvent(editingEvent) || isRiskEvent(editingEvent)
     : form.category === 'charging' || form.category === 'risk' || form.title.toLowerCase().includes('charge');
-  const chargingMeta = editingEvent?.chargingMeta;
   const aiPlan = editingEvent?.aiChargingPlan;
-  const sortedChargingChoices = useMemo(() => [...(chargingMeta?.choiceOptions ?? [])].sort((a, b) => a.rank - b.rank), [chargingMeta?.choiceOptions]);
   const travelStatus = getTravelStatus(form.carNeeded);
   const formatAiPlanDateTime = (value: string | null) => {
     if (!value) return 'Not available';
