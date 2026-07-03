@@ -1,152 +1,119 @@
 import { useAppStore } from '../store/useAppStore';
-import { Thermometer, Battery, Lock, LockOpen, Power, Snowflake, ChevronRight, Navigation } from 'lucide-react';
+import { Battery, Lock, LockOpen, Power, Snowflake, Thermometer } from 'lucide-react';
 import { motion } from 'motion/react';
 import { cn } from '../lib/utils';
-import { useState } from 'react';
 import VehicleStatus from '../components/VehicleStatus';
-import TripEfficiencyChart from '../components/TripEfficiencyChart';
 import AmbientLightingSettings from '../components/AmbientLightingSettings';
-import TelemetryWidget from '../components/TelemetryWidget';
+
+const vehicleImageSrc = '/vehicle-eqs-suv.webp';
 
 export default function Vehicle() {
-  const { vehicle, recentActions, toggleLock, toggleEngine, togglePreCool } = useAppStore();
-  const [imgLoaded, setImgLoaded] = useState(false);
+  const { vehicle, toggleLock, toggleEngine, togglePreCool } = useAppStore();
 
   return (
-    <motion.div 
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      className="flex flex-col gap-8 pb-10"
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -8 }}
+      className="flex flex-col gap-5 pb-24 sm:pb-8"
     >
-      {/* Hero Visual */}
-      <div className="relative w-full aspect-[16/9] rounded-3xl overflow-hidden bg-surface-container-lowest border border-outline-variant/45 shadow-ambient-lg">
-        <img 
-          src="https://upload.wikimedia.org/wikipedia/commons/e/ef/Mercedes-Benz_V297_Classic-Days_2022_DSC_0016.jpg" 
-          alt="Mercedes-Benz EQS electric vehicle" 
-          className={cn(
-            "w-full h-full object-cover transition-opacity duration-1000",
-            imgLoaded ? "opacity-85" : "opacity-0"
-          )}
-          style={{ filter: 'saturate(0.9) contrast(1.05)' }}
-          onLoad={() => setImgLoaded(true)}
-        />
-        <div className="absolute inset-0 bg-gradient-to-t from-white/92 via-white/30 to-transparent" />
-        <div className="absolute bottom-6 left-6">
-          <p className="text-xs text-primary font-bold uppercase tracking-[0.2em] mb-1">Mercedes-Benz EQS Active</p>
-          <h2 className="text-3xl font-bold text-on-surface tracking-tight">EQS 580 4MATIC</h2>
+      <header className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <p className="text-[11px] font-black uppercase tracking-[0.24em] text-primary">Vehicle</p>
+          <h1 className="mt-2 text-3xl font-black tracking-tight text-on-surface sm:text-4xl">EQS 580 4MATIC</h1>
         </div>
-      </div>
+        <div className="inline-flex w-fit items-center gap-2 rounded-2xl border border-outline-variant/45 bg-surface-container-lowest px-4 py-3 text-sm font-black text-on-surface shadow-ambient">
+          <span className={cn('h-2.5 w-2.5 rounded-full', vehicle.engineOn ? 'bg-emerald-400' : 'bg-slate-500')} />
+          {vehicle.engineOn ? 'Drive system active' : 'Vehicle standby'}
+        </div>
+      </header>
 
-      {/* Grid */}
-      <section className="grid grid-cols-2 gap-4">
-        {/* Cabin Temp */}
-        <div className="bg-surface-container-lowest border border-outline-variant/45 p-5 rounded-3xl flex flex-col justify-between h-40 shadow-ambient">
-          <div>
-            <Thermometer className="w-6 h-6 text-emerald-400 mb-3" />
-            <p className="text-sm font-medium text-slate-400">Cabin Temp</p>
-            <p className="text-2xl font-bold text-on-surface leading-tight mt-1">{vehicle.cabinTemp}°C</p>
+      <section className="overflow-hidden rounded-3xl border border-outline-variant/45 bg-surface-container-lowest shadow-ambient">
+        <div className="relative h-44 bg-[#e5e5e7] sm:h-56 lg:h-64">
+          <img
+            src={vehicleImageSrc}
+            alt="Black Mercedes-Benz EQS SUV"
+            className="h-full w-full object-contain mix-blend-multiply"
+          />
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-surface-container-lowest/70 to-transparent" />
+          <div className="absolute left-4 top-4 rounded-2xl border border-outline-variant/35 bg-surface-container-lowest/82 px-3 py-2 backdrop-blur-xl">
+            <p className="text-[10px] font-black uppercase tracking-widest text-primary">Vehicle view</p>
+            <p className="mt-0.5 text-xs font-semibold text-slate-500">Mercedes-Benz EQS SUV</p>
           </div>
-          <button 
+        </div>
+      </section>
+
+      <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="flex min-h-44 flex-col justify-between rounded-3xl border border-outline-variant/45 bg-surface-container-lowest p-5 shadow-ambient">
+          <div>
+            <Thermometer className="mb-3 h-6 w-6 text-emerald-400" />
+            <p className="text-sm font-semibold text-slate-500">Cabin temperature</p>
+            <p className="mt-1 text-3xl font-black text-on-surface">{vehicle.cabinTemp} C</p>
+          </div>
+          <button
+            type="button"
             onClick={togglePreCool}
             className={cn(
-              "mt-auto w-full py-2.5 rounded-xl text-sm font-bold uppercase tracking-widest transition-all",
-              vehicle.preCooling ? "bg-emerald-500/15 text-emerald-500 border border-emerald-500/25" : "bg-primary/10 text-primary hover:bg-primary/15 border border-primary/15"
+              'mt-4 flex h-10 items-center justify-center gap-2 rounded-xl border text-xs font-black uppercase tracking-widest transition',
+              vehicle.preCooling ? 'border-emerald-300/30 bg-emerald-500/10 text-emerald-500' : 'border-primary/20 bg-primary/10 text-primary hover:bg-primary/15'
             )}
           >
-            {vehicle.preCooling ? 'Cooling...' : 'Pre-cool'}
+            <Snowflake className="h-3.5 w-3.5" />
+            {vehicle.preCooling ? 'Pre-cooling' : 'Pre-cool'}
           </button>
         </div>
 
-        {/* Fuel/Battery */}
-        <div className="bg-surface-container-lowest border border-outline-variant/45 p-5 rounded-3xl flex flex-col justify-between h-40 shadow-ambient">
+        <div className="flex min-h-44 flex-col justify-between rounded-3xl border border-outline-variant/45 bg-surface-container-lowest p-5 shadow-ambient">
           <div>
-            <Battery className="w-6 h-6 text-amber-400 mb-3" />
-            <p className="text-sm font-medium text-slate-400">Battery Level</p>
-            <div className="flex items-end gap-2 mt-1">
-              <p className="text-2xl font-bold text-on-surface leading-tight">{vehicle.batteryLevel}%</p>
-              <p className="text-xs text-slate-500 font-medium pb-1">420km</p>
+            <Battery className="mb-3 h-6 w-6 text-amber-400" />
+            <p className="text-sm font-semibold text-slate-500">Battery level</p>
+            <div className="mt-1 flex items-end gap-2">
+              <p className="text-3xl font-black text-on-surface">{vehicle.batteryLevel}%</p>
+              <p className="pb-1 text-xs font-semibold text-slate-500">{Math.round(vehicle.batteryLevel * 3.8)} km est.</p>
             </div>
           </div>
-          <div className="mt-auto w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
-            <div className="h-full bg-amber-400 transition-all" style={{ width: `${vehicle.batteryLevel}%` }} />
+          <div className="mt-4 h-2 overflow-hidden rounded-full bg-surface-container-high">
+            <div className="h-full rounded-full bg-amber-400 transition-all" style={{ width: `${vehicle.batteryLevel}%` }} />
           </div>
         </div>
 
-        {/* Status (Lock) */}
-        <div className={cn(
-          "bg-surface-container-lowest p-5 rounded-3xl flex flex-col justify-between h-40 transition-all border shadow-ambient",
-          vehicle.locked ? "border-primary/25" : "border-outline-variant/45"
-        )}>
+        <div className="flex min-h-44 flex-col justify-between rounded-3xl border border-outline-variant/45 bg-surface-container-lowest p-5 shadow-ambient">
           <div>
-            {vehicle.locked ? <Lock className="w-6 h-6 text-primary mb-3" /> : <LockOpen className="w-6 h-6 text-slate-400 mb-3" />}
-            <p className="text-sm font-medium text-slate-400">Status</p>
-            <p className="text-2xl font-bold text-on-surface leading-tight mt-1">{vehicle.locked ? 'Locked' : 'Unlocked'}</p>
+            {vehicle.locked ? <Lock className="mb-3 h-6 w-6 text-primary" /> : <LockOpen className="mb-3 h-6 w-6 text-slate-500" />}
+            <p className="text-sm font-semibold text-slate-500">Locked status</p>
+            <p className="mt-1 text-3xl font-black text-on-surface">{vehicle.locked ? 'Locked' : 'Unlocked'}</p>
           </div>
-          <button 
+          <button
+            type="button"
             onClick={toggleLock}
             className={cn(
-              "mt-auto w-full py-2.5 rounded-xl text-sm font-bold uppercase tracking-widest transition-all flex items-center justify-center gap-2",
-              vehicle.locked ? "bg-primary text-on-primary hover:bg-primary-dim" : "bg-surface-container text-on-surface hover:bg-surface-container-high"
+              'mt-4 h-10 rounded-xl border text-xs font-black uppercase tracking-widest transition',
+              vehicle.locked ? 'border-primary bg-primary text-on-primary hover:bg-primary-dim' : 'border-outline-variant/45 bg-surface-container-low text-on-surface hover:bg-surface-container'
             )}
           >
             {vehicle.locked ? 'Unlock' : 'Lock'}
           </button>
         </div>
 
-        {/* Engine Status */}
-        <div className="bg-surface-container-lowest border border-outline-variant/45 p-5 rounded-3xl flex flex-col justify-between h-40 shadow-ambient">
+        <div className="flex min-h-44 flex-col justify-between rounded-3xl border border-outline-variant/45 bg-surface-container-lowest p-5 shadow-ambient">
           <div>
-            <Power className={cn("w-6 h-6 mb-3", vehicle.engineOn ? "text-emerald-400" : "text-rose-400")} />
-            <p className="text-sm font-medium text-slate-400">Engine</p>
-            <p className="text-2xl font-bold text-on-surface leading-tight mt-1">{vehicle.engineOn ? 'Running' : 'Off'}</p>
+            <Power className={cn('mb-3 h-6 w-6', vehicle.engineOn ? 'text-emerald-400' : 'text-rose-400')} />
+            <p className="text-sm font-semibold text-slate-500">Engine status</p>
+            <p className="mt-1 text-3xl font-black text-on-surface">{vehicle.engineOn ? 'Running' : 'Off'}</p>
           </div>
-          <button 
-             onClick={toggleEngine}
-             className="w-full flex items-center justify-center gap-2 text-on-surface mt-auto bg-primary/10 py-2.5 rounded-xl hover:bg-primary/15 border border-primary/15"
+          <button
+            type="button"
+            onClick={toggleEngine}
+            className="mt-4 flex h-10 items-center justify-center gap-2 rounded-xl border border-primary/20 bg-primary/10 text-xs font-black uppercase tracking-widest text-primary transition hover:bg-primary/15"
           >
-            <div className={cn("w-2 h-2 rounded-full", vehicle.engineOn ? "bg-emerald-400 animate-pulse" : "bg-slate-500")} />
-            <span className="text-xs font-bold uppercase tracking-widest">{vehicle.engineOn ? 'Active' : 'Standby'}</span>
+            <span className={cn('h-2 w-2 rounded-full', vehicle.engineOn ? 'bg-emerald-400' : 'bg-slate-500')} />
+            {vehicle.engineOn ? 'Stop engine' : 'Start engine'}
           </button>
         </div>
       </section>
 
-      {/* Real-time Vehicle Cockpit Telemetry & Service Widget */}
-      <TelemetryWidget />
-
-      {/* Interactive Interior Ambient Lighting Settings Panel */}
-      <AmbientLightingSettings />
-
-      {/* Vehicle Telemetrics & Status Dashboard */}
       <VehicleStatus />
-
-      {/* Recharts Trip Efficiency Data Visualization */}
-      <TripEfficiencyChart />
-
-      {/* Recent Actions */}
-      <section>
-        <h3 className="text-lg font-bold text-on-surface mb-4 px-1">Recent Actions</h3>
-        <div className="bg-surface-container-lowest border border-outline-variant/45 rounded-3xl overflow-hidden divide-y divide-white/5 shadow-ambient">
-          {recentActions.map((action, i) => (
-            <div key={i} className="flex items-center justify-between p-4 bg-transparent hover:bg-surface-container-low transition-colors">
-              <div className="flex items-center gap-4">
-                <div className="w-10 h-10 rounded-full bg-surface-container border border-outline-variant/45 flex items-center justify-center">
-                  {action.icon === 'ac_unit' && <Snowflake className="w-5 h-5 text-emerald-400" />}
-                  {action.icon === 'lock' && <Lock className="w-5 h-5 text-blue-400" />}
-                  {action.icon === 'lock_open' && <LockOpen className="w-5 h-5 text-slate-400" />}
-                  {action.icon === 'power_settings_new' && <Power className="w-5 h-5 text-rose-400" />}
-                  {action.icon === 'explore' && <Navigation className="w-5 h-5 text-amber-400" />}
-                </div>
-                <div>
-                  <p className="text-sm font-semibold text-slate-200">{action.title}</p>
-                  <p className="text-xs text-slate-500 mt-0.5">{action.description} • {action.time}</p>
-                </div>
-              </div>
-              <ChevronRight className="w-5 h-5 text-slate-600" />
-            </div>
-          ))}
-        </div>
-      </section>
+      <AmbientLightingSettings />
     </motion.div>
   );
 }
