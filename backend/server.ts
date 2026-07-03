@@ -32,16 +32,13 @@ async function startServer() {
     const { message, history, usePro } = req.body;
     
     try {
-      const model = usePro ? "gemini-3.1-pro-preview" : "gemini-3.5-flash";
+      const model = usePro ? "gemini-3.1-pro-preview" : "gemini-3.1-flash-lite";
       const config: any = {
         systemInstruction: "You are an intelligent mobility assistant for Mercedes-Benz MB Sense. Help the user with smart navigation, recommendations, and vehicle control. Respond in a concise, authoritative, and helpful tone.",
       };
 
       if (usePro) {
         config.thinkingConfig = { thinkingLevel: 1 }; // HIGH is mapped to 1 generally or let it be auto
-      } else {
-        // use google search for flash
-        config.tools = [{ googleSearch: {} }];
       }
 
       const chat = ai.chats.create({

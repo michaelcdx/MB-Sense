@@ -1,81 +1,105 @@
 import { motion } from 'motion/react';
 import { CalendarEvent, useAppStore } from '../store/useAppStore';
-import {
-  BrainCircuit,
-  CalendarDays,
-  Car,
-  ChevronLeft,
-  ChevronRight,
-  Clock,
-  MapPin,
-  MoreVertical,
-  Pencil,
-  Plus,
-  Trash2,
-  Video,
-  X
-} from 'lucide-react';
+import { AlertTriangle, BatteryCharging, BrainCircuit, CalendarDays, Car, ChevronLeft, ChevronRight, Save, Trash2, Video, X, Zap } from 'lucide-react';
 import { cn } from '../lib/utils';
-import { FormEvent, PointerEvent as ReactPointerEvent, useEffect, useRef, useState } from 'react';
+import GlassButton from '../components/GlassButton';
+import { FormEvent, PointerEvent as ReactPointerEvent, useMemo, useRef, useState } from 'react';
 
-type CalendarView = 'week' | 'month';
-type PickerMode = 'month' | 'year';
+type EventMode = 'create' | 'edit';
 
-interface ScheduleForm {
+type ScheduleForm = {
   title: string;
   location: string;
-  time: string;
   date: string;
+  startTime: string;
+  endTime: string;
   carNeeded: boolean;
-}
+  category: CalendarEvent['category'];
+  status: string;
+  notes: string;
+};
 
-interface CalendarDay {
+type DragSelection = {
+  dayIndex: number;
   date: Date;
-  isCurrentMonth: boolean;
-  isToday: boolean;
-  events: CalendarEvent[];
-}
+  startMinutes: number;
+  endMinutes: number;
+};
 
-interface DragScrollState {
+type DragStartState = {
   pointerId: number;
-  x: number;
-  y: number;
-  scrollLeft: number;
-  scrollTop: number;
-  moved: boolean;
-}
+  dayIndex: number;
+  date: Date;
+  startMinutes: number;
+};
 
-const dayLabels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-const monthNames = Array.from({ length: 12 }, (_, month) =>
-  new Date(2026, month, 1).toLocaleDateString('en-US', { month: 'long' })
-);
-const monthFormatter = new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' });
-const shortMonthFormatter = new Intl.DateTimeFormat('en-US', { month: 'short' });
+const productTagline = 'Predict battery risk before it happens.';
+const draftEventId = 'draft-schedule-block';
+const dayLabels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const dayStartHour = 0;
+const dayEndHour = 24;
+const startMinutes = 0;
+const endMinutes = 24 * 60;
+const hourHeight = 72;
+const timeColumnWidth = 52;
+const dayColumnMinWidth = 132;
+const snapMinutes = 15;
+const calendarHeight = 24 * hourHeight;
+const demoStart = new Date(2026, 5, 15);
+const demoEnd = new Date(2026, 6, 30);
+const fallbackDemoDate = new Date(2026, 6, 1);
+
+const dayHeaderFormatter = new Intl.DateTimeFormat('en-US', { day: 'numeric' });
+const monthLabelFormatter = new Intl.DateTimeFormat('en-US', { month: 'short' });
+const monthHeaderFormatter = new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' });
+const weekRangeFormatter = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' });
+const fullDateFormatter = new Intl.DateTimeFormat('en-US', { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' });
 
 function startOfDay(date: Date) {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function startOfWeek(date: Date) {
+  const normalized = startOfDay(date);
+  const mondayOffset = (normalized.getDay() + 6) % 7;
+  normalized.setDate(normalized.getDate() - mondayOffset);
+  return normalized;
+}
+
+function addDays(date: Date, amount: number) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + amount);
+  return next;
 }
 
 function sameDay(a: Date, b: Date) {
   return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 }
 
-function getEventDate(event: CalendarEvent) {
-  return event.date instanceof Date ? event.date : new Date(event.date);
+function getInitialCalendarDate() {
+  const today = startOfDay(new Date());
+  return today >= startOfDay(demoStart) && today <= startOfDay(demoEnd) ? today : fallbackDemoDate;
 }
 
-function getEventMinutes(event: CalendarEvent) {
-  const match = event.time.match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
-  if (!match) return 0;
+function getAvailableWeeks() {
+  const weeks: Date[] = [];
+  for (let cursor = startOfWeek(demoStart); cursor <= startOfWeek(demoEnd); cursor = addDays(cursor, 7)) {
+    weeks.push(new Date(cursor));
+  }
+  return weeks;
+}
 
-  const [, rawHour, rawMinute, meridiem] = match;
-  let hour = Number(rawHour);
-  const minute = Number(rawMinute);
+function getWeekDays(weekStart: Date) {
+  return Array.from({ length: 7 }, (_, index) => addDays(weekStart, index));
+}
 
-  if (meridiem?.toUpperCase() === 'PM' && hour !== 12) hour += 12;
-  if (meridiem?.toUpperCase() === 'AM' && hour === 12) hour = 0;
+function getWeekRangeLabel(weekStart: Date) {
+  const weekEnd = addDays(weekStart, 6);
+  return `${weekRangeFormatter.format(weekStart)} - ${weekRangeFormatter.format(weekEnd)}`;
+}
 
-  return hour * 60 + minute;
+function getEventDate(event: CalendarEvent) {
+  return event.date instanceof Date ? event.date : new Date(event.date);
 }
 
 function toDateInputValue(date: Date) {
@@ -90,970 +114,575 @@ function fromDateInputValue(value: string) {
   return new Date(year, month - 1, day);
 }
 
-function toTimeInputValue(time: string) {
+function parseTimeToMinutes(time: string) {
   const match = time.match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
-  if (!match) return '';
+  if (!match) return startMinutes;
 
   const [, rawHour, rawMinute, meridiem] = match;
   let hour = Number(rawHour);
+  const minute = Number(rawMinute);
 
   if (meridiem?.toUpperCase() === 'PM' && hour !== 12) hour += 12;
   if (meridiem?.toUpperCase() === 'AM' && hour === 12) hour = 0;
 
-  return `${String(hour).padStart(2, '0')}:${rawMinute}`;
+  return hour * 60 + minute;
 }
 
-function toDisplayTime(value: string) {
-  const [rawHour, minute] = value.split(':').map(Number);
-  const meridiem = rawHour >= 12 ? 'PM' : 'AM';
-  const hour = rawHour % 12 || 12;
-  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')} ${meridiem}`;
+function minutesToTimeInput(minutes: number) {
+  const bounded = Math.max(0, Math.min(23 * 60 + 59, minutes));
+  const hour = Math.floor(bounded / 60);
+  const minute = bounded % 60;
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
 }
 
-function getEventType(time: string): CalendarEvent['type'] {
-  const [hour] = time.split(':').map(Number);
-  if (hour < 12) return 'Morning';
-  if (hour < 17) return 'Afternoon';
+function minutesToDisplayTime(minutes: number) {
+  const bounded = Math.max(0, Math.min(endMinutes, minutes));
+  const hour24 = Math.floor(bounded / 60) % 24;
+  const minute = bounded % 60;
+  const meridiem = hour24 >= 12 ? 'PM' : 'AM';
+  const hour = hour24 % 12 || 12;
+  return `${hour}:${String(minute).padStart(2, '0')} ${meridiem}`;
+}
+
+function inputTimeToDisplay(value: string) {
+  return minutesToDisplayTime(parseTimeToMinutes(value));
+}
+
+function getEventStart(event: CalendarEvent) {
+  return parseTimeToMinutes(event.time);
+}
+
+function getEventEnd(event: CalendarEvent) {
+  const start = getEventStart(event);
+  const parsedEnd = event.endTime ? parseTimeToMinutes(event.endTime) : start + 60;
+  return parsedEnd > start ? parsedEnd : start + 60;
+}
+
+function getEventType(startTime: string): CalendarEvent['type'] {
+  const minutes = parseTimeToMinutes(startTime);
+  if (minutes < 12 * 60) return 'Morning';
+  if (minutes < 17 * 60) return 'Afternoon';
   return 'Evening';
 }
 
-function createEmptyForm(date: Date): ScheduleForm {
+function getHourLabel(hour: number) {
+  const normalized = hour % 24;
+  if (normalized === 0) return '12 AM';
+  if (normalized === 12) return '12 PM';
+  if (normalized > 12) return `${normalized - 12} PM`;
+  return `${normalized} AM`;
+}
+
+function getMinutesFromPointer(event: ReactPointerEvent<HTMLElement>, element: HTMLElement) {
+  const rect = element.getBoundingClientRect();
+  const y = event.clientY - rect.top;
+  const rawMinutes = startMinutes + (y / hourHeight) * 60;
+  const snapped = Math.round(rawMinutes / snapMinutes) * snapMinutes;
+  return Math.max(startMinutes, Math.min(endMinutes, snapped));
+}
+
+function getBlockLayout(event: CalendarEvent) {
+  const rawStart = getEventStart(event);
+  const rawEnd = getEventEnd(event);
+  const visibleStart = Math.max(startMinutes, rawStart);
+  const visibleEnd = Math.min(endMinutes, rawEnd);
+  const top = ((visibleStart - startMinutes) / 60) * hourHeight;
+  const height = Math.max(24, ((visibleEnd - visibleStart) / 60) * hourHeight - 3);
+  return { top, height };
+}
+
+function getSelectionLayout(selection: DragSelection) {
+  const top = ((selection.startMinutes - startMinutes) / 60) * hourHeight;
+  const height = Math.max(22, ((selection.endMinutes - selection.startMinutes) / 60) * hourHeight);
+  return { top, height };
+}
+function isChargingEvent(event: CalendarEvent) {
+  const text = `${event.title} ${event.status ?? ''}`.toLowerCase();
+  return text.includes('charge') || text.includes('charging');
+}
+
+function isRiskEvent(event: CalendarEvent) {
+  const text = `${event.title} ${event.status ?? ''}`.toLowerCase();
+  return text.includes('risk') || text.includes('warning') || text.includes('urgent');
+}
+
+function getEventTone(event: CalendarEvent) {
+  if (isRiskEvent(event)) return 'calendar-solid-event border-amber-400/35 bg-amber-400/20 text-amber-500';
+  if (isChargingEvent(event)) return 'calendar-solid-event border-emerald-400/35 bg-emerald-400/20 text-emerald-500';
+  if ((event.status ?? '').toLowerCase().includes('important')) return 'calendar-solid-event border-rose-400/35 bg-rose-500/20 text-rose-500';
+  if (event.category === 'personal' || event.category === 'fitness') return 'calendar-solid-event border-violet-300/35 bg-violet-350/20 text-violet-350';
+  if (!event.carNeeded) return 'calendar-solid-event border-outline-variant/45 bg-surface-container text-on-surface';
+  return 'calendar-solid-event border-blue-300/35 bg-blue-500/20 text-blue-600';
+}
+
+function buildEmptyForm(date: Date, start = 9 * 60, end = 10 * 60): ScheduleForm {
   return {
     title: '',
     location: '',
-    time: '09:00',
     date: toDateInputValue(date),
-    carNeeded: true
+    startTime: minutesToTimeInput(start),
+    endTime: minutesToTimeInput(end),
+    carNeeded: true,
+    category: 'work',
+    status: 'Vehicle Required',
+    notes: ''
   };
 }
 
-function isInteractiveTarget(target: EventTarget | null) {
-  return target instanceof Element && Boolean(target.closest('button,input,textarea,select,a,[data-no-drag-scroll="true"]'));
-}
-
-function useDragScroll() {
-  const dragState = useRef<DragScrollState | null>(null);
-
-  const handlePointerDown = (event: ReactPointerEvent<HTMLElement>) => {
-    if (event.pointerType !== 'mouse' || event.button !== 0 || event.buttons !== 1 || isInteractiveTarget(event.target)) return;
-
-    const target = event.currentTarget;
-    dragState.current = {
-      pointerId: event.pointerId,
-      x: event.clientX,
-      y: event.clientY,
-      scrollLeft: target.scrollLeft,
-      scrollTop: target.scrollTop,
-      moved: false
-    };
-    target.setPointerCapture(event.pointerId);
-  };
-
-  const handlePointerMove = (event: ReactPointerEvent<HTMLElement>) => {
-    const state = dragState.current;
-    if (!state || state.pointerId !== event.pointerId) return;
-    if (event.buttons !== 1) {
-      dragState.current = null;
-      return;
-    }
-
-    const dx = event.clientX - state.x;
-    const dy = event.clientY - state.y;
-    if (Math.abs(dx) > 4 || Math.abs(dy) > 4) state.moved = true;
-
-    event.currentTarget.scrollLeft = state.scrollLeft - dx;
-    event.currentTarget.scrollTop = state.scrollTop - dy;
-  };
-
-  const handlePointerUp = (event: ReactPointerEvent<HTMLElement>) => {
-    const state = dragState.current;
-    if (!state || state.pointerId !== event.pointerId) return;
-
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-    dragState.current = null;
-  };
-
+function formFromEvent(event: CalendarEvent): ScheduleForm {
+  const start = getEventStart(event);
+  const end = getEventEnd(event);
   return {
-    onPointerDown: handlePointerDown,
-    onPointerMove: handlePointerMove,
-    onPointerUp: handlePointerUp,
-    onPointerCancel: handlePointerUp,
-    onLostPointerCapture: handlePointerUp
+    title: event.title,
+    location: event.location,
+    date: toDateInputValue(getEventDate(event)),
+    startTime: minutesToTimeInput(start),
+    endTime: minutesToTimeInput(end),
+    carNeeded: event.carNeeded,
+    category: event.category,
+    status: event.status ?? (event.carNeeded ? 'Vehicle Required' : 'Remote / No Car'),
+    notes: event.notes ?? ''
   };
-}
-
-function useWindowDragScroll(disabled: boolean) {
-  const dragState = useRef<DragScrollState | null>(null);
-
-  useEffect(() => {
-    if (disabled) {
-      dragState.current = null;
-      return;
-    }
-
-    const handlePointerDown = (event: PointerEvent) => {
-      if (event.pointerType !== 'mouse' || event.button !== 0 || event.buttons !== 1 || isInteractiveTarget(event.target)) return;
-
-      dragState.current = {
-        pointerId: event.pointerId,
-        x: event.clientX,
-        y: event.clientY,
-        scrollLeft: window.scrollX,
-        scrollTop: window.scrollY,
-        moved: false
-      };
-    };
-
-    const handlePointerMove = (event: PointerEvent) => {
-      const state = dragState.current;
-      if (!state || state.pointerId !== event.pointerId) return;
-      if (event.buttons !== 1) {
-        dragState.current = null;
-        return;
-      }
-
-      const dx = event.clientX - state.x;
-      const dy = event.clientY - state.y;
-      if (Math.abs(dx) > 4 || Math.abs(dy) > 4) state.moved = true;
-
-      event.preventDefault();
-      window.scrollTo({
-        left: state.scrollLeft - dx,
-        top: state.scrollTop - dy
-      });
-    };
-
-    const handlePointerEnd = (event: PointerEvent) => {
-      const state = dragState.current;
-      if (!state || state.pointerId !== event.pointerId) return;
-
-      dragState.current = null;
-    };
-
-    const handleWindowBlur = () => {
-      dragState.current = null;
-    };
-
-    document.addEventListener('pointerdown', handlePointerDown);
-    document.addEventListener('pointermove', handlePointerMove, { passive: false });
-    document.addEventListener('pointerup', handlePointerEnd);
-    document.addEventListener('pointercancel', handlePointerEnd);
-    window.addEventListener('blur', handleWindowBlur);
-
-    return () => {
-      document.removeEventListener('pointerdown', handlePointerDown);
-      document.removeEventListener('pointermove', handlePointerMove);
-      document.removeEventListener('pointerup', handlePointerEnd);
-      document.removeEventListener('pointercancel', handlePointerEnd);
-      window.removeEventListener('blur', handleWindowBlur);
-    };
-  }, [disabled]);
 }
 
 function sortEvents(events: CalendarEvent[]) {
-  return [...events].sort((a, b) => getEventMinutes(a) - getEventMinutes(b));
+  return [...events].sort((a, b) => getEventStart(a) - getEventStart(b));
 }
 
-function buildYearOptions(activeYear: number) {
-  const rangeStart = activeYear - 5;
-  return Array.from({ length: 12 }, (_, index) => rangeStart + index);
+function CalendarHeader({ userInitials, weekStart, weeks, onPrevious, onNext, onToday, onWeekChange }: {
+  userInitials: string;
+  weekStart: Date;
+  weeks: Date[];
+  onPrevious: () => void;
+  onNext: () => void;
+  onToday: () => void;
+  onWeekChange: (week: Date) => void;
+}) {
+  return (
+    <header className="flex h-12 shrink-0 items-center justify-between border-b border-outline-variant/45 bg-surface-container-low px-3 text-on-surface">
+      <div className="flex min-w-0 items-center gap-3">
+        <div className="flex items-center gap-2 text-sm font-semibold">
+          <CalendarDays className="h-4 w-4 text-on-surface-variant" />
+          <span>Calendar</span>
+        </div>
+        <div className="hidden h-5 w-px bg-outline-variant/45 sm:block" />
+        <div className="hidden min-w-0 items-baseline gap-2 sm:flex">
+          <span className="truncate text-sm font-semibold">Week schedule</span>
+          <span className="text-xs font-medium text-slate-500">{monthHeaderFormatter.format(weekStart)}</span>
+        </div>
+      </div>
+
+      <div className="flex items-center gap-1.5">
+        <select value={toDateInputValue(weekStart)} onChange={(event) => onWeekChange(fromDateInputValue(event.target.value))} className="hidden h-8 rounded-md border border-outline-variant/45 bg-surface-container-lowest px-2 text-xs font-semibold text-on-surface outline-none sm:block" aria-label="Select week">
+          {weeks.map((week) => <option key={week.toISOString()} value={toDateInputValue(week)}>Week {getWeekRangeLabel(week)}</option>)}
+        </select>
+        <button onClick={onToday} className="h-8 rounded-md border border-outline-variant/45 bg-surface-container-lowest px-3 text-xs font-semibold text-on-surface transition hover:bg-surface-container">Today</button>
+        <div className="flex overflow-hidden rounded-md border border-outline-variant/45">
+          <button onClick={onPrevious} className="flex h-8 w-8 items-center justify-center bg-surface-container-lowest text-on-surface-variant transition hover:bg-surface-container" aria-label="Previous week"><ChevronLeft className="h-4 w-4" /></button>
+          <button onClick={onNext} className="flex h-8 w-8 items-center justify-center border-l border-outline-variant/45 bg-surface-container-lowest text-on-surface-variant transition hover:bg-surface-container" aria-label="Next week"><ChevronRight className="h-4 w-4" /></button>
+        </div>
+        <div className="ml-1 flex h-8 w-8 items-center justify-center rounded-full border border-outline-variant/45 bg-surface-container text-xs font-black text-on-surface">{userInitials}</div>
+      </div>
+    </header>
+  );
 }
 
-function buildMonthDays(monthDate: Date, events: CalendarEvent[]) {
-  const year = monthDate.getFullYear();
-  const month = monthDate.getMonth();
-  const firstDay = new Date(year, month, 1);
-  const gridStart = new Date(year, month, 1 - firstDay.getDay());
-  const today = startOfDay(new Date());
-
-  return Array.from({ length: 42 }, (_, index): CalendarDay => {
-    const date = new Date(gridStart);
-    date.setDate(gridStart.getDate() + index);
-
-    return {
-      date,
-      isCurrentMonth: date.getMonth() === month,
-      isToday: sameDay(date, today),
-      events: sortEvents(events.filter((event) => sameDay(getEventDate(event), date)))
-    };
-  });
+function TimeColumn() {
+  return (
+    <div className="sticky left-0 z-20 border-r border-outline-variant/30 bg-surface-container-lowest" style={{ height: calendarHeight }}>
+      {Array.from({ length: dayEndHour - dayStartHour + 1 }, (_, index) => (
+        <div key={index} className="absolute left-0 right-0 -translate-y-2 pr-2 text-right text-[10px] font-medium text-slate-500" style={{ top: index * hourHeight }}>
+          {getHourLabel(index)}
+        </div>
+      ))}
+    </div>
+  );
 }
 
-function buildWeekDays(selectedDate: Date, events: CalendarEvent[]) {
-  const weekStart = new Date(selectedDate);
-  weekStart.setDate(selectedDate.getDate() - selectedDate.getDay());
-  const today = startOfDay(new Date());
-
-  return Array.from({ length: 7 }, (_, index): CalendarDay => {
-    const date = new Date(weekStart);
-    date.setDate(weekStart.getDate() + index);
-
-    return {
-      date,
-      isCurrentMonth: true,
-      isToday: sameDay(date, today),
-      events: sortEvents(events.filter((event) => sameDay(getEventDate(event), date)))
-    };
-  });
-}
-
-export default function Calendar() {
-  const { events } = useAppStore();
-  const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>(events);
-  const [analyzing, setAnalyzing] = useState(false);
-  const [view, setView] = useState<CalendarView>('week');
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const [pickerMode, setPickerMode] = useState<PickerMode>('month');
-  const [visibleMonth, setVisibleMonth] = useState(() => startOfDay(new Date()));
-  const [selectedDate, setSelectedDate] = useState(() => startOfDay(new Date()));
-  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
-  const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
-  const [formOpen, setFormOpen] = useState(false);
-  const [formDatePickerOpen, setFormDatePickerOpen] = useState(false);
-  const [formDateMonth, setFormDateMonth] = useState(() => startOfDay(new Date()));
-  const [form, setForm] = useState<ScheduleForm>(() => createEmptyForm(new Date()));
-  useWindowDragScroll(formOpen);
-  const sheetDragScroll = useDragScroll();
-
-  const monthDays = buildMonthDays(visibleMonth, calendarEvents);
-  const weekDays = buildWeekDays(selectedDate, calendarEvents);
-  const selectedEvents = sortEvents(calendarEvents.filter((event) => sameDay(getEventDate(event), selectedDate)));
-  const vehicleAssignments = calendarEvents.filter((event) => event.carNeeded).length;
-  const activeYear = visibleMonth.getFullYear();
-  const activeMonth = visibleMonth.getMonth();
-  const yearOptions = buildYearOptions(activeYear);
-  const showDateField = view === 'month' || editingEvent !== null;
-  const formDate = fromDateInputValue(form.date);
-  const formDateDays = buildMonthDays(formDateMonth, []);
-
-  const handleMonthChange = (offset: number) => {
-    setVisibleMonth((current) => {
-      const nextMonth = new Date(current.getFullYear(), current.getMonth() + offset, 1);
-      setSelectedDate(nextMonth);
-      setPickerMode('month');
-      return nextMonth;
-    });
-  };
-
-  const handleWeekChange = (offset: number) => {
-    setSelectedDate((current) => {
-      const nextDate = new Date(current);
-      nextDate.setDate(current.getDate() + offset * 7);
-      setVisibleMonth(new Date(nextDate.getFullYear(), nextDate.getMonth(), 1));
-      setPickerMode('month');
-      return startOfDay(nextDate);
-    });
-  };
-
-  const handlePeriodChange = (offset: number) => {
-    setPickerOpen(false);
-
-    if (view === 'week') {
-      handleWeekChange(offset);
-      return;
-    }
-
-    handleMonthChange(offset);
-  };
-
-  const handleSelectWeek = () => {
-    setView('week');
-    setVisibleMonth(new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1));
-  };
-
-  const handleSelectMonth = () => {
-    setView('month');
-    setVisibleMonth(new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1));
-  };
-
-  const handleSelectDay = (date: Date) => {
-    const normalizedDate = startOfDay(date);
-    setSelectedDate(normalizedDate);
-
-    if (view === 'month') {
-      setVisibleMonth(new Date(date.getFullYear(), date.getMonth(), 1));
-      setView('week');
-    }
-  };
-
-  const handlePickerToggle = () => {
-    setPickerOpen((isOpen) => !isOpen);
-    setPickerMode('month');
-  };
-
-  const handleSelectPickerMonth = (month: number) => {
-    const nextDate = new Date(activeYear, month, 1);
-    setVisibleMonth(nextDate);
-    setSelectedDate(nextDate);
-    setView('month');
-    setPickerOpen(false);
-  };
-
-  const handleSelectPickerYear = (year: number) => {
-    const nextDate = new Date(year, activeMonth, 1);
-    setVisibleMonth(nextDate);
-    setSelectedDate(nextDate);
-    setPickerMode('month');
-  };
-
-  const handlePickerYearOffset = (offset: number) => {
-    setVisibleMonth((current) => new Date(current.getFullYear() + offset, current.getMonth(), 1));
-  };
-
-  const handleOpenAddForm = () => {
-    setEditingEvent(null);
-    setOpenMenuId(null);
-    const nextForm = createEmptyForm(selectedDate);
-    setForm(nextForm);
-    setFormDateMonth(new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1));
-    setFormDatePickerOpen(false);
-    setFormOpen(true);
-  };
-
-  const handleOpenEditForm = (event: CalendarEvent) => {
-    setEditingEvent(event);
-    setOpenMenuId(null);
-    setForm({
-      title: event.title,
-      location: event.location,
-      time: toTimeInputValue(event.time) || '09:00',
-      date: toDateInputValue(getEventDate(event)),
-      carNeeded: event.carNeeded
-    });
-    setFormDateMonth(new Date(getEventDate(event).getFullYear(), getEventDate(event).getMonth(), 1));
-    setFormDatePickerOpen(false);
-    setFormOpen(true);
-  };
-
-  const handleDeleteEvent = (eventId: string) => {
-    setCalendarEvents((current) => current.filter((event) => event.id !== eventId));
-    setOpenMenuId(null);
-  };
-
-  const handleCloseForm = () => {
-    setFormOpen(false);
-    setEditingEvent(null);
-    setFormDatePickerOpen(false);
-  };
-
-  const handleFormDateMonthChange = (offset: number) => {
-    setFormDateMonth((current) => new Date(current.getFullYear(), current.getMonth() + offset, 1));
-  };
-
-  const handleSelectFormDate = (date: Date) => {
-    setForm((current) => ({ ...current, date: toDateInputValue(date) }));
-    setFormDateMonth(new Date(date.getFullYear(), date.getMonth(), 1));
-    setFormDatePickerOpen(false);
-  };
-
-  const handleTimeOffset = (minutes: number) => {
-    setForm((current) => {
-      const [hour, minute] = current.time.split(':').map(Number);
-      const nextTime = new Date(2026, 0, 1, hour, minute + minutes);
-
-      return {
-        ...current,
-        time: `${String(nextTime.getHours()).padStart(2, '0')}:${String(nextTime.getMinutes()).padStart(2, '0')}`
-      };
-    });
-  };
-
-  const handleSubmitSchedule = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-
-    const date = showDateField ? fromDateInputValue(form.date) : selectedDate;
-    const nextEvent: CalendarEvent = {
-      id: editingEvent?.id || `local-${Date.now()}`,
-      title: form.title.trim(),
-      location: form.location.trim(),
-      time: toDisplayTime(form.time),
-      date,
-      carNeeded: form.carNeeded,
-      type: getEventType(form.time),
-      category: 'other',
-      status: form.carNeeded ? 'CAR NEEDED' : undefined
-    };
-
-    if (editingEvent) {
-      setCalendarEvents((current) => current.map((item) => (item.id === editingEvent.id ? nextEvent : item)));
-    } else {
-      setCalendarEvents((current) => [...current, nextEvent]);
-    }
-
-    setSelectedDate(startOfDay(date));
-    setVisibleMonth(new Date(date.getFullYear(), date.getMonth(), 1));
-    handleCloseForm();
-  };
-
-  const handleAnalyze = async () => {
-    setAnalyzing(true);
-    try {
-      const res = await fetch('/api/analyze-schedule', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ events: calendarEvents })
-      });
-      await res.json();
-      setTimeout(() => setAnalyzing(false), 800);
-    } catch (e) {
-      console.error(e);
-      setAnalyzing(false);
-    }
-  };
+function EventBlock({ event, selected, onClick }: { event: CalendarEvent; selected: boolean; onClick: (event: CalendarEvent) => void }) {
+  const { top, height } = getBlockLayout(event);
+  const compact = height < 46;
 
   return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      className="flex flex-col gap-6 pb-20"
+    <button
+      data-event-block="true"
+      onClick={(clickEvent) => { clickEvent.stopPropagation(); onClick(event); }}
+      onPointerDown={(pointerEvent) => pointerEvent.stopPropagation()}
+      className={cn('absolute left-1 right-1 overflow-hidden rounded-md border px-1.5 py-1 text-left shadow-sm transition hover:brightness-105 active:scale-[0.99]', getEventTone(event), selected && 'ring-1 ring-primary/60')}
+      style={{ top, height }}
     >
-      <section className="mt-2 mb-4">
-        <div className="mb-6 flex items-center justify-between gap-3">
-          <div className="min-w-0">
-            <h2 className="truncate text-3xl font-bold tracking-tight text-white">{monthFormatter.format(visibleMonth)}</h2>
-            <p className="mt-1 text-sm font-medium text-slate-400">{vehicleAssignments} pending vehicle assignments</p>
+      <div className="flex h-full min-h-0 flex-col">
+        <div className="flex min-w-0 items-center gap-1">
+          {isChargingEvent(event) ? <BatteryCharging className="h-3 w-3 shrink-0" /> : isRiskEvent(event) ? <AlertTriangle className="h-3 w-3 shrink-0" /> : event.carNeeded ? <Car className="h-3 w-3 shrink-0" /> : <Video className="h-3 w-3 shrink-0" />}
+          <span className="truncate text-[11px] font-semibold leading-tight">{event.title}</span>
+        </div>
+        <span className="mt-0.5 truncate text-[10px] font-medium opacity-80">{minutesToDisplayTime(getEventStart(event))} - {minutesToDisplayTime(getEventEnd(event))}</span>
+        {!compact && <span className="mt-0.5 truncate text-[10px] font-medium opacity-65">{event.location}</span>}
+      </div>
+    </button>
+  );
+}
+
+function DragSelectionBlock({ selection }: { selection: DragSelection }) {
+  const { top, height } = getSelectionLayout(selection);
+  return (
+    <div className="pointer-events-none absolute left-1 right-1 rounded-md border border-primary/45 bg-primary/15" style={{ top, height }}>
+      <div className="px-1.5 py-1 text-[10px] font-semibold text-primary">{minutesToDisplayTime(selection.startMinutes)} - {minutesToDisplayTime(selection.endMinutes)}</div>
+    </div>
+  );
+}
+
+function DayColumn({ day, dayIndex, events, selection, selectedEventId, onEventClick, onSelectDay, onPointerDown, onPointerMove, onPointerUp }: {
+  day: Date;
+  dayIndex: number;
+  events: CalendarEvent[];
+  selection: DragSelection | null;
+  selectedEventId?: string;
+  onEventClick: (event: CalendarEvent) => void;
+  onSelectDay: (date: Date) => void;
+  onPointerDown: (event: ReactPointerEvent<HTMLElement>, dayIndex: number, date: Date) => void;
+  onPointerMove: (event: ReactPointerEvent<HTMLElement>) => void;
+  onPointerUp: (event: ReactPointerEvent<HTMLElement>) => void;
+}) {
+  return (
+    <div className="relative border-r border-outline-variant/30 bg-surface-container-lowest last:border-r-0" style={{ height: calendarHeight }} onClick={() => onSelectDay(day)} onPointerDown={(event) => onPointerDown(event, dayIndex, day)} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp}>
+      {Array.from({ length: dayEndHour - dayStartHour + 1 }, (_, index) => <div key={index} className="absolute left-0 right-0 border-t border-outline-variant/30" style={{ top: index * hourHeight }} />)}
+      {sortEvents(events).map((event) => <EventBlock key={event.id} event={event} selected={event.id === selectedEventId} onClick={onEventClick} />)}
+      {selection?.dayIndex === dayIndex && <DragSelectionBlock selection={selection} />}
+    </div>
+  );
+}
+
+function CalendarWeekView({ weekDays, events, selection, selectedEventId, onEventClick, onSelectDay, onPointerDown, onPointerMove, onPointerUp }: {
+  weekDays: Date[];
+  events: CalendarEvent[];
+  selection: DragSelection | null;
+  selectedEventId?: string;
+  onEventClick: (event: CalendarEvent) => void;
+  onSelectDay: (date: Date) => void;
+  onPointerDown: (event: ReactPointerEvent<HTMLElement>, dayIndex: number, date: Date) => void;
+  onPointerMove: (event: ReactPointerEvent<HTMLElement>) => void;
+  onPointerUp: (event: ReactPointerEvent<HTMLElement>) => void;
+}) {
+  const gridTemplateColumns = `${timeColumnWidth}px repeat(7, minmax(${dayColumnMinWidth}px, 1fr))`;
+
+  return (
+    <section className="min-h-0 overflow-hidden bg-surface">
+      <div className="h-full overflow-auto">
+        <div className="min-w-[976px]">
+          <div className="sticky top-0 z-30 grid border-b border-outline-variant/45 bg-surface-container-low" style={{ gridTemplateColumns }}>
+            <div className="sticky left-0 z-40 flex h-14 items-end justify-end border-r border-outline-variant/45 bg-surface-container-low px-2 pb-2 text-[10px] font-semibold uppercase tracking-wider text-slate-500">GMT+8</div>
+            {weekDays.map((day, index) => (
+              <button key={day.toISOString()} onClick={() => onSelectDay(day)} className="h-14 border-r border-outline-variant/45 bg-surface-container-low px-2.5 py-2 text-left transition hover:bg-surface-container last:border-r-0" aria-label={fullDateFormatter.format(day)}>
+                <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">{dayLabels[index]}</div>
+                <div className="mt-1 flex items-baseline gap-1.5"><span className="text-lg font-semibold leading-none text-on-surface">{dayHeaderFormatter.format(day)}</span><span className="text-[11px] font-medium text-on-surface-variant">{monthLabelFormatter.format(day)}</span></div>
+              </button>
+            ))}
           </div>
-          <div className="flex shrink-0 gap-1 rounded-full border border-white/5 bg-slate-900 p-1">
-            <button
-              onClick={handleSelectWeek}
-              className={cn(
-                "min-h-10 rounded-full px-4 text-sm font-bold transition-colors active:scale-95",
-                view === 'week' ? "bg-blue-500/20 text-blue-400" : "text-slate-400 active:text-slate-200"
-              )}
-            >
-              Week
-            </button>
-            <button
-              onClick={handleSelectMonth}
-              className={cn(
-                "min-h-10 rounded-full px-4 text-sm font-bold transition-colors active:scale-95",
-                view === 'month' ? "bg-blue-500/20 text-blue-400" : "text-slate-400 active:text-slate-200"
-              )}
-            >
-              Month
-            </button>
+          <div className="grid" style={{ gridTemplateColumns }}>
+            <TimeColumn />
+            {weekDays.map((day, index) => (
+              <DayColumn key={day.toISOString()} day={day} dayIndex={index} events={events.filter((event) => sameDay(getEventDate(event), day))} selection={selection} selectedEventId={selectedEventId} onEventClick={onEventClick} onSelectDay={onSelectDay} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} />
+            ))}
           </div>
         </div>
+      </div>
+    </section>
+  );
+}
 
-        <div className="relative rounded-3xl border border-white/5 bg-slate-900">
-          <div className="flex items-center justify-between border-b border-white/5 px-3 py-3">
-            <button
-              onClick={() => handlePeriodChange(-1)}
-              className="flex h-12 w-12 items-center justify-center rounded-full bg-slate-950 text-slate-300 active:scale-95 active:text-white"
-              aria-label={view === 'week' ? 'Previous week' : 'Previous month'}
-            >
-              <ChevronLeft className="h-5 w-5" />
-            </button>
-            <div className="relative">
-              <button
-                onClick={handlePickerToggle}
-                className="flex min-h-12 items-center gap-2 rounded-full px-3 text-sm font-bold text-slate-100 active:scale-95 active:bg-slate-800"
-                aria-expanded={pickerOpen}
-              >
-                <CalendarDays className="h-4 w-4 text-blue-400" />
-                {monthFormatter.format(visibleMonth)}
-              </button>
-
-              {pickerOpen && (
-                <div className="absolute left-1/2 top-14 z-30 w-[min(19rem,calc(100vw-2rem))] -translate-x-1/2">
-                  <motion.div
-                    initial={{ opacity: 0, y: -6, scale: 0.98 }}
-                    animate={{ opacity: 1, y: 0, scale: 1 }}
-                    className="rounded-3xl border border-white/10 bg-slate-900 p-3 shadow-[0_18px_55px_rgba(0,0,0,0.5)]"
-                  >
-                    <div className="mb-3 flex items-center justify-between rounded-2xl bg-slate-950 p-1">
-                      <button
-                        onClick={() => handlePickerYearOffset(pickerMode === 'year' ? -12 : -1)}
-                        className="flex h-11 w-11 items-center justify-center rounded-full text-slate-400 active:scale-95 active:bg-slate-800 active:text-white"
-                        aria-label="Previous year range"
-                      >
-                        <ChevronLeft className="h-4 w-4" />
-                      </button>
-                      <button
-                        onClick={() => setPickerMode((mode) => (mode === 'month' ? 'year' : 'month'))}
-                        className="min-h-11 rounded-full px-5 text-base font-bold text-white active:scale-95 active:bg-slate-800"
-                      >
-                        {activeYear}
-                      </button>
-                      <button
-                        onClick={() => handlePickerYearOffset(pickerMode === 'year' ? 12 : 1)}
-                        className="flex h-11 w-11 items-center justify-center rounded-full text-slate-400 active:scale-95 active:bg-slate-800 active:text-white"
-                        aria-label="Next year range"
-                      >
-                        <ChevronRight className="h-4 w-4" />
-                      </button>
-                    </div>
-
-                    {pickerMode === 'month' ? (
-                      <div className="grid grid-cols-3 gap-2">
-                        {monthNames.map((month, index) => (
-                          <button
-                            key={month}
-                            onClick={() => handleSelectPickerMonth(index)}
-                            className={cn(
-                              "min-h-12 rounded-2xl px-2 text-sm font-bold transition-colors active:scale-95",
-                              index === activeMonth
-                                ? "bg-blue-500 text-white"
-                                : "bg-slate-950 text-slate-300 active:bg-slate-800 active:text-white"
-                            )}
-                          >
-                            {month}
-                          </button>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="grid grid-cols-3 gap-2">
-                        {yearOptions.map((year) => (
-                          <button
-                            key={year}
-                            onClick={() => handleSelectPickerYear(year)}
-                            className={cn(
-                              "min-h-12 rounded-2xl px-2 text-sm font-bold transition-colors active:scale-95",
-                              year === activeYear
-                                ? "bg-blue-500 text-white"
-                                : "bg-slate-950 text-slate-300 active:bg-slate-800 active:text-white"
-                            )}
-                          >
-                            {year}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </motion.div>
-                </div>
-              )}
+function EventSidePanel({ mode, form, editingEvent, onChange, onClose, onDelete, onSubmit }: {
+  mode: EventMode | null;
+  form: ScheduleForm;
+  editingEvent: CalendarEvent | null;
+  onChange: (form: ScheduleForm) => void;
+  onClose: () => void;
+  onDelete: () => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  if (!mode) {
+    return (
+      <aside className="min-h-0 border-t border-outline-variant/45 bg-surface-container-low p-4 text-on-surface lg:border-l lg:border-t-0">
+        <div className="rounded-lg border border-outline-variant/45 bg-surface-container-lowest p-3">
+          <div className="flex items-start gap-3">
+            <BrainCircuit className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+            <div>
+              <h2 className="text-sm font-semibold">MB Sense</h2>
+              <p className="mt-1 text-xs font-medium leading-relaxed text-on-surface-variant">{productTagline}</p>
             </div>
-            <button
-              onClick={() => handlePeriodChange(1)}
-              className="flex h-12 w-12 items-center justify-center rounded-full bg-slate-950 text-slate-300 active:scale-95 active:text-white"
-              aria-label={view === 'week' ? 'Next week' : 'Next month'}
-            >
-              <ChevronRight className="h-5 w-5" />
-            </button>
-          </div>
-
-          <div className="overflow-hidden rounded-b-3xl">
-            {view === 'week' ? (
-              <motion.div
-                drag="x"
-                dragConstraints={{ left: 0, right: 0 }}
-                dragElastic={0.12}
-                onDragEnd={(_, info) => {
-                  if (info.offset.x <= -48) handleWeekChange(1);
-                  if (info.offset.x >= 48) handleWeekChange(-1);
-                }}
-                className="grid cursor-grab touch-pan-y grid-cols-7 gap-2 p-4 active:cursor-grabbing"
-              >
-                {weekDays.map((day) => (
-                  <button
-                    key={day.date.toISOString()}
-                    onClick={() => handleSelectDay(day.date)}
-                    className={cn(
-                      "flex min-h-20 flex-col items-center justify-between rounded-2xl border px-1 py-3 active:scale-95",
-                      sameDay(day.date, selectedDate)
-                        ? "border-blue-500/40 bg-blue-500/20 text-white"
-                        : "border-white/5 bg-slate-950 text-slate-300"
-                    )}
-                  >
-                    <span className="text-[10px] font-bold uppercase text-slate-500">{dayLabels[day.date.getDay()]}</span>
-                    <span className={cn("text-base font-bold", day.isToday && "text-blue-400")}>{day.date.getDate()}</span>
-                    <span className="flex h-4 items-center gap-0.5">
-                      {day.events.slice(0, 3).map((event) => (
-                        <span
-                          key={event.id}
-                          className={cn("h-1.5 w-1.5 rounded-full", event.carNeeded ? "bg-blue-400" : "bg-emerald-400")}
-                        />
-                      ))}
-                    </span>
-                  </button>
-                ))}
-              </motion.div>
-            ) : (
-              <div>
-                <div className="flex items-center justify-between border-t border-white/5 px-4 py-3">
-                  <p className="text-xs font-bold uppercase tracking-widest text-slate-500">
-                    {selectedDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                  </p>
-                  <button
-                    onClick={handleOpenAddForm}
-                    className="flex min-h-12 items-center gap-2 rounded-full bg-blue-500 px-4 text-sm font-bold text-white shadow-[0_12px_30px_rgba(45,126,255,0.2)] active:scale-95"
-                  >
-                    <Plus className="h-4 w-4" />
-                    Add
-                  </button>
-                </div>
-
-                <div className="grid grid-cols-7 border-t border-white/5">
-                  {dayLabels.map((day) => (
-                    <div key={day} className="border-b border-white/5 py-2 text-center text-[10px] font-bold uppercase text-slate-500">
-                      {day}
-                    </div>
-                  ))}
-
-                  {monthDays.map((day) => (
-                    <button
-                      key={day.date.toISOString()}
-                      onClick={() => handleSelectDay(day.date)}
-                      className={cn(
-                        "min-h-[86px] border-b border-r border-white/5 p-1.5 text-left align-top active:bg-slate-800",
-                        !day.isCurrentMonth && "bg-slate-950/60 text-slate-600",
-                        day.isCurrentMonth && "bg-slate-900 text-slate-300",
-                        sameDay(day.date, selectedDate) && "bg-blue-500/10"
-                      )}
-                    >
-                      <div className="mb-1 flex items-center justify-between">
-                        <span
-                          className={cn(
-                            "text-xs font-bold",
-                            day.isToday && "flex h-6 w-6 items-center justify-center rounded-full bg-blue-500 text-white",
-                            !day.isCurrentMonth && "text-slate-600"
-                          )}
-                        >
-                          {day.date.getDate() === 1 ? `${day.date.getDate()} ${shortMonthFormatter.format(day.date)}` : day.date.getDate()}
-                        </span>
-                      </div>
-                      <div className="space-y-1 overflow-hidden">
-                        {day.events.slice(0, 2).map((event) => (
-                          <div key={event.id} className="flex min-w-0 items-center gap-1 text-[9px] font-semibold leading-tight text-slate-100">
-                            <span className={cn("h-2 w-0.5 shrink-0 rounded-full", event.carNeeded ? "bg-blue-400" : "bg-emerald-400")} />
-                            <span className="truncate">{event.title}</span>
-                          </div>
-                        ))}
-                        {day.events.length > 2 && (
-                          <div className="text-[9px] font-bold text-slate-500">+{day.events.length - 2} more</div>
-                        )}
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
           </div>
         </div>
-      </section>
+      </aside>
+    );
+  }
 
-      {openMenuId && (
-        <button
-          className="fixed inset-0 z-10 cursor-default"
-          aria-label="Close schedule menu"
-          onClick={() => setOpenMenuId(null)}
-        />
-      )}
+  const chargingContext = editingEvent ? isChargingEvent(editingEvent) || isRiskEvent(editingEvent) : form.status.toLowerCase().includes('charging') || form.status.toLowerCase().includes('risk') || form.title.toLowerCase().includes('charge');
 
-      {view === 'week' && (
-      <section className="space-y-4">
-        <div className="flex items-center justify-between">
-          <h3 className="text-xs font-bold uppercase tracking-widest text-blue-400">
-            {selectedDate.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })} Agenda
-          </h3>
-          <div className="flex items-center gap-1">
-            <button
-              onClick={handleAnalyze}
-              className="flex min-h-12 min-w-12 items-center justify-center rounded-full text-slate-400 transition-colors active:scale-95 active:bg-slate-900 active:text-white"
-              title="Analyze with AI"
-            >
-              <BrainCircuit className={cn("h-5 w-5", analyzing && "animate-pulse text-blue-400")} />
-            </button>
-            {view === 'week' && (
-              <button
-                onClick={handleOpenAddForm}
-                className="flex min-h-12 min-w-12 items-center justify-center rounded-full bg-blue-500 text-white shadow-[0_12px_30px_rgba(45,126,255,0.25)] active:scale-95"
-                title="Add schedule"
-              >
-                <Plus className="h-5 w-5" />
-              </button>
-            )}
+  return (
+    <aside className="min-h-0 overflow-hidden border-t border-outline-variant/45 bg-surface-container-low text-on-surface lg:border-l lg:border-t-0">
+      <form onSubmit={onSubmit} className="h-full overflow-y-auto p-4 pb-[calc(5rem+env(safe-area-inset-bottom))] lg:pb-4">
+        <div className="mb-4 flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">{mode === 'edit' ? 'Edit event' : 'New event'}</p>
+            <h3 className="mt-1 truncate text-base font-semibold text-on-surface">{form.title || 'Untitled'}</h3>
+            <p className="mt-1 text-xs font-medium text-on-surface-variant">{inputTimeToDisplay(form.startTime)} - {inputTimeToDisplay(form.endTime)}</p>
           </div>
+          <button type="button" onClick={onClose} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-outline-variant/45 bg-surface-container-lowest text-on-surface-variant transition hover:bg-surface-container" aria-label="Close schedule editor"><X className="h-4 w-4" /></button>
         </div>
 
-        {selectedEvents.length === 0 && (
-          <div className="rounded-3xl border border-dashed border-white/10 bg-slate-900 p-6 text-center">
-            <p className="text-sm font-semibold text-slate-200">No schedule for this day</p>
-            <p className="mt-1 text-xs text-slate-500">Use the month controls to check another date.</p>
+        {chargingContext && (
+          <div className="mb-4 rounded-lg border border-outline-variant/45 bg-surface-container-lowest p-3">
+            <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-emerald-500"><BatteryCharging className="h-4 w-4 text-emerald-500" />Charging prediction</div>
+            <div className="grid grid-cols-2 gap-2 text-[11px]">
+              <div className="rounded-md bg-surface-container-low p-2"><p className="text-slate-500">Target</p><p className="mt-1 font-semibold text-on-surface">80%</p></div>
+              <div className="rounded-md bg-surface-container-low p-2"><p className="text-slate-500">Risk</p><p className={cn('mt-1 font-semibold', editingEvent && isRiskEvent(editingEvent) ? 'text-amber-500' : 'text-emerald-500')}>{editingEvent && isRiskEvent(editingEvent) ? 'High' : 'Watch'}</p></div>
+              <div className="rounded-md bg-surface-container-low p-2"><p className="text-slate-500">After schedule</p><p className="mt-1 font-semibold text-on-surface">22-28%</p></div>
+              <div className="rounded-md bg-surface-container-low p-2"><p className="text-slate-500">Window</p><p className="mt-1 font-semibold text-on-surface">Home</p></div>
+            </div>
+            {editingEvent?.aiReason && <p className="mt-3 text-xs font-medium leading-relaxed text-on-surface-variant">{editingEvent.aiReason}</p>}
           </div>
         )}
 
-        {selectedEvents.map((event) => (
-          <div
-            key={event.id}
-            onClick={() => {
-              if (openMenuId === event.id) setOpenMenuId(null);
-            }}
-            className={cn(
-              "group relative rounded-3xl border bg-slate-900 p-6 pr-16 transition-all duration-300 active:scale-[0.99]",
-              openMenuId === event.id && "z-20",
-              event.carNeeded ? "border-white/5 active:border-blue-500/30" : "border-white/5",
-              event.category === 'other' ? "border-amber-500/20" : ""
-            )}
-          >
-            <button
-              onClick={(clickEvent) => {
-                clickEvent.stopPropagation();
-                setOpenMenuId((current) => (current === event.id ? null : event.id));
-              }}
-              className="absolute right-4 top-4 flex h-12 w-12 items-center justify-center rounded-full bg-slate-950 text-slate-400 opacity-100 transition-opacity active:scale-95 active:text-white md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100"
-              aria-label="Schedule options"
-              aria-expanded={openMenuId === event.id}
-            >
-              <MoreVertical className="h-5 w-5" />
-            </button>
-
-            {openMenuId === event.id && (
-              <div
-                className="absolute right-4 top-16 z-30 w-48 rounded-2xl border border-white/10 bg-slate-950 p-1 shadow-[0_16px_40px_rgba(0,0,0,0.45)]"
-                onClick={(clickEvent) => clickEvent.stopPropagation()}
-              >
-                <button
-                  onClick={() => handleOpenEditForm(event)}
-                  className="flex min-h-12 w-full items-center gap-3 rounded-xl px-3 text-left text-sm font-semibold text-slate-200 active:bg-slate-800"
-                >
-                  <Pencil className="h-4 w-4 text-blue-400" />
-                  Edit schedule
-                </button>
-                <button
-                  onClick={() => handleDeleteEvent(event.id)}
-                  className="flex min-h-12 w-full items-center gap-3 rounded-xl px-3 text-left text-sm font-semibold text-rose-300 active:bg-rose-500/10"
-                >
-                  <Trash2 className="h-4 w-4" />
-                  Delete schedule
-                </button>
-              </div>
-            )}
-
-            <div className="space-y-3">
-              <div className="flex items-center gap-2">
-                <span
-                  className={cn(
-                    "flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[10px] font-bold uppercase tracking-widest",
-                    event.carNeeded ? "bg-blue-500/20 text-blue-400" : "bg-slate-800 text-slate-400"
-                  )}
-                >
-                  {event.carNeeded ? <Car className="h-3.5 w-3.5" /> : <MapPin className="h-3.5 w-3.5" />}
-                  {event.status || (event.carNeeded ? 'Vehicle Required' : 'Remote / No Car')}
-                </span>
-              </div>
-
-              <h4 className="text-xl font-bold text-slate-100">{event.title}</h4>
-
-              <div className="flex flex-col items-start gap-2 text-slate-400 sm:flex-row sm:items-center sm:gap-4">
-                <div className="flex items-center gap-1.5 text-sm font-medium">
-                  <Clock className="h-4 w-4" />
-                  {event.time}
-                </div>
-                <div className="flex w-fit items-center gap-1.5 rounded-full border border-white/5 bg-slate-950 px-2.5 py-1 text-sm font-medium">
-                  {event.carNeeded ? <MapPin className="h-4 w-4" /> : <Video className="h-4 w-4" />}
-                  {event.location}
-                </div>
-              </div>
-            </div>
+        <div className="space-y-3">
+          <label className="block">
+            <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-slate-500">Title</span>
+            <input value={form.title} onChange={(event) => onChange({ ...form, title: event.target.value })} required className="h-9 w-full rounded-md border border-outline-variant/45 bg-surface-container-lowest px-2.5 text-xs font-medium text-on-surface outline-none placeholder:text-slate-500 focus:border-primary/45" placeholder="Client strategy review" />
+          </label>
+          <label className="block">
+            <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-slate-500">Date</span>
+            <input type="date" value={form.date} onChange={(event) => onChange({ ...form, date: event.target.value })} required className="h-9 w-full rounded-md border border-outline-variant/45 bg-surface-container-lowest px-2.5 text-xs font-medium text-on-surface outline-none focus:border-primary/45" />
+          </label>
+          <div className="grid grid-cols-2 gap-2">
+            <label className="block">
+              <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-slate-500">Start</span>
+              <input type="time" value={form.startTime} onChange={(event) => onChange({ ...form, startTime: event.target.value })} required className="h-9 w-full rounded-md border border-outline-variant/45 bg-surface-container-lowest px-2.5 text-xs font-medium text-on-surface outline-none focus:border-primary/45" />
+            </label>
+            <label className="block">
+              <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-slate-500">End</span>
+              <input type="time" value={form.endTime} onChange={(event) => onChange({ ...form, endTime: event.target.value })} required className="h-9 w-full rounded-md border border-outline-variant/45 bg-surface-container-lowest px-2.5 text-xs font-medium text-on-surface outline-none focus:border-primary/45" />
+            </label>
           </div>
-        ))}
-      </section>
-      )}
-
-      {formOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-end overflow-y-auto bg-black/60 px-4 pb-[calc(1rem+env(safe-area-inset-bottom))] pt-20 no-scrollbar"
-          onClick={handleCloseForm}
-          onPointerDown={(event) => event.stopPropagation()}
-          onPointerMove={(event) => event.stopPropagation()}
-          onPointerUp={(event) => event.stopPropagation()}
-          onPointerCancel={(event) => event.stopPropagation()}
-          onWheel={(event) => event.stopPropagation()}
-        >
-          <motion.form
-            {...sheetDragScroll}
-            onSubmit={handleSubmitSchedule}
-            onClick={(event) => event.stopPropagation()}
-            onPointerDown={(event) => {
-              sheetDragScroll.onPointerDown(event);
-              event.stopPropagation();
-            }}
-            onPointerMove={(event) => {
-              sheetDragScroll.onPointerMove(event);
-              event.stopPropagation();
-            }}
-            onPointerUp={(event) => {
-              sheetDragScroll.onPointerUp(event);
-              event.stopPropagation();
-            }}
-            onPointerCancel={(event) => {
-              sheetDragScroll.onPointerCancel(event);
-              event.stopPropagation();
-            }}
-            onLostPointerCapture={(event) => {
-              sheetDragScroll.onLostPointerCapture(event);
-              event.stopPropagation();
-            }}
-            initial={{ y: 32, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            className="mx-auto max-h-[82dvh] w-full max-w-lg overflow-y-auto overscroll-contain rounded-t-3xl border border-white/10 bg-slate-900 p-5 shadow-[0_-18px_55px_rgba(0,0,0,0.55)] no-scrollbar"
-          >
-            <div className="mb-5 flex items-center justify-between">
-              <div>
-                <h3 className="text-lg font-bold text-white">{editingEvent ? 'Edit schedule' : 'Add schedule'}</h3>
-                <p className="mt-1 text-xs font-medium text-slate-500">
-                  {showDateField
-                    ? 'Choose the date, time, destination, and vehicle need.'
-                    : selectedDate.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={handleCloseForm}
-                className="flex h-12 w-12 items-center justify-center rounded-full bg-slate-950 text-slate-400 active:scale-95 active:text-white"
-                aria-label="Close schedule form"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
-            <div className="space-y-4">
-              <label className="block">
-                <span className="mb-2 block text-xs font-bold uppercase tracking-widest text-slate-500">Schedule</span>
-                <input
-                  value={form.title}
-                  onChange={(event) => setForm((current) => ({ ...current, title: event.target.value }))}
-                  required
-                  className="h-[52px] w-full rounded-2xl border border-white/5 bg-slate-950 px-4 text-sm font-semibold text-white outline-none focus:border-blue-500/60"
-                  placeholder="Client site visit"
-                />
-              </label>
-
-              {showDateField && (
-                <div className="relative">
-                  <span className="mb-2 block text-xs font-bold uppercase tracking-widest text-slate-500">Date</span>
-                  <button
-                    type="button"
-                    onClick={() => setFormDatePickerOpen((isOpen) => !isOpen)}
-                    className="flex h-[52px] w-full items-center justify-between rounded-2xl border border-white/5 bg-slate-950 px-4 text-left text-sm font-semibold text-white active:scale-[0.98] active:border-blue-500/60"
-                  >
-                    {formDate.toLocaleDateString('en-GB')}
-                    <CalendarDays className="h-4 w-4 text-blue-400" />
-                  </button>
-
-                  {formDatePickerOpen && (
-                    <div className="mt-3 rounded-3xl border border-white/10 bg-slate-900 p-3 shadow-[0_18px_55px_rgba(0,0,0,0.5)]">
-                      <div className="mb-3 flex items-center justify-between rounded-2xl bg-slate-950 p-1">
-                        <button
-                          type="button"
-                          onClick={() => handleFormDateMonthChange(-1)}
-                          className="flex h-11 w-11 items-center justify-center rounded-full text-slate-400 active:scale-95 active:bg-slate-800 active:text-white"
-                          aria-label="Previous form month"
-                        >
-                          <ChevronLeft className="h-4 w-4" />
-                        </button>
-                        <span className="text-sm font-bold text-white">{monthFormatter.format(formDateMonth)}</span>
-                        <button
-                          type="button"
-                          onClick={() => handleFormDateMonthChange(1)}
-                          className="flex h-11 w-11 items-center justify-center rounded-full text-slate-400 active:scale-95 active:bg-slate-800 active:text-white"
-                          aria-label="Next form month"
-                        >
-                          <ChevronRight className="h-4 w-4" />
-                        </button>
-                      </div>
-
-                      <div className="grid grid-cols-7 gap-1">
-                        {dayLabels.map((day) => (
-                          <div key={day} className="py-1 text-center text-[10px] font-bold uppercase text-slate-500">
-                            {day.slice(0, 2)}
-                          </div>
-                        ))}
-                        {formDateDays.map((day) => (
-                          <button
-                            key={day.date.toISOString()}
-                            type="button"
-                            onClick={() => handleSelectFormDate(day.date)}
-                            className={cn(
-                              "flex h-10 items-center justify-center rounded-xl text-sm font-bold active:scale-95",
-                              sameDay(day.date, formDate)
-                                ? "bg-blue-500 text-white"
-                                : day.isCurrentMonth
-                                  ? "bg-slate-950 text-slate-200 active:bg-slate-800"
-                                  : "bg-slate-950/60 text-slate-600 active:bg-slate-800"
-                            )}
-                          >
-                            {day.date.getDate()}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <label className="block">
-                  <span className="mb-2 block text-xs font-bold uppercase tracking-widest text-slate-500">When</span>
-                  <input
-                    type="time"
-                    value={form.time}
-                    onChange={(event) => setForm((current) => ({ ...current, time: event.target.value }))}
-                    required
-                    className="h-[52px] w-full rounded-2xl border border-white/5 bg-slate-950 px-4 text-sm font-semibold text-white outline-none focus:border-blue-500/60"
-                  />
-                  <div className="mt-2 grid grid-cols-2 gap-2">
-                    <button
-                      type="button"
-                      onClick={() => handleTimeOffset(30)}
-                      className="min-h-10 rounded-xl border border-white/5 bg-slate-950 px-3 text-xs font-bold text-slate-300 active:scale-95 active:border-blue-500/40 active:text-white"
-                    >
-                      +30 min
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleTimeOffset(60)}
-                      className="min-h-10 rounded-xl border border-white/5 bg-slate-950 px-3 text-xs font-bold text-slate-300 active:scale-95 active:border-blue-500/40 active:text-white"
-                    >
-                      +1 hour
-                    </button>
-                  </div>
-                </label>
-
-                <label className="block">
-                  <span className="mb-2 block text-xs font-bold uppercase tracking-widest text-slate-500">Vehicle</span>
-                  <button
-                    type="button"
-                    onClick={() => setForm((current) => ({ ...current, carNeeded: !current.carNeeded }))}
-                    className={cn(
-                      "flex h-[52px] w-full items-center justify-center gap-2 rounded-2xl border px-4 text-sm font-bold active:scale-[0.98]",
-                      form.carNeeded
-                        ? "border-blue-500/40 bg-blue-500/20 text-blue-400"
-                        : "border-white/5 bg-slate-950 text-slate-400"
-                    )}
-                  >
-                    {form.carNeeded ? <Car className="h-4 w-4" /> : <Video className="h-4 w-4" />}
-                    {form.carNeeded ? 'Needs car' : 'No car'}
-                  </button>
-                </label>
-              </div>
-
-              <label className="block">
-                <span className="mb-2 block text-xs font-bold uppercase tracking-widest text-slate-500">Where</span>
-                <input
-                  value={form.location}
-                  onChange={(event) => setForm((current) => ({ ...current, location: event.target.value }))}
-                  required
-                  className="h-[52px] w-full rounded-2xl border border-white/5 bg-slate-950 px-4 text-sm font-semibold text-white outline-none focus:border-blue-500/60"
-                  placeholder="Office - Building 4"
-                />
-              </label>
-            </div>
-
-            <button
-              type="submit"
-              disabled={!form.title.trim() || !form.location.trim()}
-              className="mt-6 h-[52px] w-full rounded-2xl bg-blue-500 text-sm font-bold text-white shadow-[0_12px_30px_rgba(45,126,255,0.25)] active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-slate-800 disabled:text-slate-500 disabled:shadow-none"
-            >
-              {editingEvent ? 'Save schedule' : 'Add schedule'}
-            </button>
-          </motion.form>
+          <label className="block">
+            <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-slate-500">Location</span>
+            <input value={form.location} onChange={(event) => onChange({ ...form, location: event.target.value })} required className="h-9 w-full rounded-md border border-outline-variant/45 bg-surface-container-lowest px-2.5 text-xs font-medium text-on-surface outline-none placeholder:text-slate-500 focus:border-primary/45" placeholder="TRX Executive Tower" />
+          </label>
+          <label className="block">
+            <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-slate-500">Type</span>
+            <select value={form.category} onChange={(event) => onChange({ ...form, category: event.target.value as CalendarEvent['category'] })} className="h-9 w-full rounded-md border border-outline-variant/45 bg-surface-container-lowest px-2.5 text-xs font-medium text-on-surface outline-none focus:border-primary/45"><option value="work">Work</option><option value="personal">Personal</option><option value="fitness">Fitness</option><option value="other">Charging / Other</option></select>
+          </label>
+          <label className="block">
+            <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-slate-500">Status</span>
+            <input value={form.status} onChange={(event) => onChange({ ...form, status: event.target.value })} className="h-9 w-full rounded-md border border-outline-variant/45 bg-surface-container-lowest px-2.5 text-xs font-medium text-on-surface outline-none placeholder:text-slate-500 focus:border-primary/45" placeholder="Vehicle Required" />
+          </label>
+          <button type="button" onClick={() => onChange({ ...form, carNeeded: !form.carNeeded, status: !form.carNeeded ? 'Vehicle Required' : 'Remote / No Car' })} className={cn('flex h-9 w-full items-center justify-center gap-2 rounded-md border px-3 text-xs font-semibold transition', form.carNeeded ? 'border-blue-300/35 bg-blue-500/20 text-blue-600' : 'border-outline-variant/45 bg-surface-container-lowest text-on-surface-variant')}>{form.carNeeded ? <Car className="h-3.5 w-3.5" /> : <Video className="h-3.5 w-3.5" />}{form.carNeeded ? 'Drive needed' : 'Remote / no car'}</button>
+          <label className="block">
+            <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-slate-500">Notes</span>
+            <textarea value={form.notes} onChange={(event) => onChange({ ...form, notes: event.target.value })} rows={4} className="w-full resize-none rounded-md border border-outline-variant/45 bg-surface-container-lowest px-2.5 py-2 text-xs font-medium leading-relaxed text-on-surface outline-none placeholder:text-slate-500 focus:border-primary/45" placeholder="Details or charging recommendation context" />
+          </label>
         </div>
-      )}
+
+        <div className="mt-4 flex gap-2">
+          {mode === 'edit' && <button type="button" onClick={onDelete} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-rose-300/25 bg-rose-500/10 text-rose-500 transition hover:bg-rose-500/15" aria-label="Delete schedule"><Trash2 className="h-4 w-4" /></button>}
+          <GlassButton type="submit" disabled={!form.title.trim() || !form.location.trim()} wrapClassName="flex-1 text-[13px]" className="glass-panel-action-button">
+            <Save className="h-3.5 w-3.5" />
+            Save
+          </GlassButton>
+        </div>
+      </form>
+    </aside>
+  );
+}
+
+export default function Calendar() {
+  const { events, user } = useAppStore();
+  const initialDate = useMemo(() => getInitialCalendarDate(), []);
+  const weeks = useMemo(() => getAvailableWeeks(), []);
+  const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>(events);
+  const [selectedDate, setSelectedDate] = useState(() => startOfDay(initialDate));
+  const [weekStart, setWeekStart] = useState(() => startOfWeek(initialDate));
+  const [dragSelection, setDragSelection] = useState<DragSelection | null>(null);
+  const dragStartRef = useRef<DragStartState | null>(null);
+  const [panelMode, setPanelMode] = useState<EventMode | null>(null);
+  const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
+  const [form, setForm] = useState<ScheduleForm>(() => buildEmptyForm(initialDate));
+
+  const weekDays = useMemo(() => getWeekDays(weekStart), [weekStart]);
+  const weekEvents = useMemo(() => {
+    const weekEnd = addDays(weekStart, 7);
+    return calendarEvents.filter((event) => {
+      const date = getEventDate(event);
+      return date >= weekStart && date < weekEnd;
+    });
+  }, [calendarEvents, weekStart]);
+
+  const draftEvent = useMemo<CalendarEvent | null>(() => {
+    if (panelMode !== 'create') return null;
+    const start = parseTimeToMinutes(form.startTime);
+    const parsedEnd = parseTimeToMinutes(form.endTime);
+    const normalizedEnd = parsedEnd > start ? parsedEnd : start + 30;
+
+    return {
+      id: draftEventId,
+      title: form.title.trim() || 'Draft schedule',
+      location: form.location.trim() || 'Selected time block',
+      time: minutesToDisplayTime(start),
+      endTime: minutesToDisplayTime(normalizedEnd),
+      date: fromDateInputValue(form.date),
+      carNeeded: form.carNeeded,
+      type: getEventType(form.startTime),
+      category: form.category,
+      status: form.status.trim() || 'Draft',
+      notes: form.notes.trim() || undefined
+    };
+  }, [form, panelMode]);
+
+  const visibleWeekEvents = useMemo(() => {
+    if (!draftEvent) return weekEvents;
+    const draftDate = getEventDate(draftEvent);
+    const weekEnd = addDays(weekStart, 7);
+    if (draftDate < weekStart || draftDate >= weekEnd) return weekEvents;
+    return [...weekEvents, draftEvent];
+  }, [draftEvent, weekEvents, weekStart]);
+
+  const selectedEventId = panelMode === 'create' ? draftEventId : editingEvent?.id;
+  const userInitials = user.name.split(' ').map((part) => part[0]).join('').slice(0, 2).toUpperCase();
+
+  const setActiveWeek = (date: Date) => {
+    const nextWeek = startOfWeek(date);
+    setWeekStart(nextWeek);
+    setSelectedDate(startOfDay(date));
+  };
+
+  const openPanelForCreate = (date: Date, start = 9 * 60, end = 10 * 60) => {
+    setEditingEvent(null);
+    setForm(buildEmptyForm(date, start, end));
+    setPanelMode('create');
+    setActiveWeek(date);
+  };
+
+  const openPanelForEvent = (event: CalendarEvent) => {
+    const eventDate = getEventDate(event);
+    setEditingEvent(event);
+    setForm(formFromEvent(event));
+    setPanelMode('edit');
+    setActiveWeek(eventDate);
+  };
+
+  const closePanel = () => {
+    setPanelMode(null);
+    setEditingEvent(null);
+  };
+
+  const handleGridPointerDown = (event: ReactPointerEvent<HTMLElement>, dayIndex: number, date: Date) => {
+    if (event.target instanceof Element && event.target.closest('[data-event-block="true"]')) return;
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
+
+    const start = getMinutesFromPointer(event, event.currentTarget);
+    const initialEnd = Math.min(endMinutes, start + 30);
+    dragStartRef.current = { pointerId: event.pointerId, dayIndex, date, startMinutes: start };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setDragSelection({ dayIndex, date, startMinutes: start, endMinutes: initialEnd });
+  };
+
+  const handleGridPointerMove = (event: ReactPointerEvent<HTMLElement>) => {
+    const dragStart = dragStartRef.current;
+    if (!dragStart || dragStart.pointerId !== event.pointerId) return;
+
+    const pointerMinutes = getMinutesFromPointer(event, event.currentTarget);
+    const selectionStart = Math.min(dragStart.startMinutes, pointerMinutes);
+    const selectionEnd = Math.max(dragStart.startMinutes + snapMinutes, pointerMinutes);
+    setDragSelection({ dayIndex: dragStart.dayIndex, date: dragStart.date, startMinutes: selectionStart, endMinutes: Math.min(endMinutes, selectionEnd) });
+  };
+
+  const handleGridPointerUp = (event: ReactPointerEvent<HTMLElement>) => {
+    const dragStart = dragStartRef.current;
+    if (!dragStart || dragStart.pointerId !== event.pointerId) return;
+
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    const selection = dragSelection;
+    dragStartRef.current = null;
+    setDragSelection(null);
+
+    if (!selection) return;
+    const selectedEnd = selection.endMinutes <= selection.startMinutes ? selection.startMinutes + 30 : selection.endMinutes;
+    openPanelForCreate(selection.date, selection.startMinutes, Math.min(endMinutes, selectedEnd));
+  };
+
+  const handleSaveSchedule = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    const start = parseTimeToMinutes(form.startTime);
+    const parsedEnd = parseTimeToMinutes(form.endTime);
+    const normalizedEnd = parsedEnd > start ? parsedEnd : start + 30;
+    const date = fromDateInputValue(form.date);
+    const status = form.status.trim() || (form.carNeeded ? 'Vehicle Required' : 'Remote / No Car');
+    const nextEvent: CalendarEvent = {
+      id: editingEvent?.id ?? `local-${Date.now()}`,
+      title: form.title.trim(),
+      location: form.location.trim(),
+      time: minutesToDisplayTime(start),
+      endTime: minutesToDisplayTime(normalizedEnd),
+      date,
+      carNeeded: form.carNeeded,
+      type: getEventType(form.startTime),
+      category: form.category,
+      status,
+      notes: form.notes.trim() || undefined,
+      aiReason: editingEvent?.aiReason
+    };
+
+    setCalendarEvents((current) => editingEvent ? current.map((item) => item.id === editingEvent.id ? nextEvent : item) : [...current, nextEvent]);
+    setSelectedDate(startOfDay(date));
+    setWeekStart(startOfWeek(date));
+    setEditingEvent(nextEvent);
+    setForm(formFromEvent(nextEvent));
+    setPanelMode('edit');
+  };
+
+  const handleDeleteSchedule = () => {
+    if (!editingEvent) return;
+    setCalendarEvents((current) => current.filter((event) => event.id !== editingEvent.id));
+    closePanel();
+  };
+
+  return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex h-full min-h-0 flex-col overflow-hidden bg-surface text-on-surface">
+      <CalendarHeader
+        userInitials={userInitials}
+        weekStart={weekStart}
+        weeks={weeks}
+        onPrevious={() => setActiveWeek(addDays(weekStart, -7))}
+        onNext={() => setActiveWeek(addDays(weekStart, 7))}
+        onToday={() => setActiveWeek(getInitialCalendarDate())}
+        onWeekChange={setActiveWeek}
+      />
+
+      <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_minmax(240px,34vh)] overflow-hidden lg:grid-cols-[minmax(0,1fr)_300px] lg:grid-rows-1">
+        <CalendarWeekView
+          weekDays={weekDays}
+          events={visibleWeekEvents}
+          selection={dragSelection}
+          selectedEventId={selectedEventId}
+          onEventClick={openPanelForEvent}
+          onSelectDay={(date) => setSelectedDate(startOfDay(date))}
+          onPointerDown={handleGridPointerDown}
+          onPointerMove={handleGridPointerMove}
+          onPointerUp={handleGridPointerUp}
+        />
+
+        <EventSidePanel
+          mode={panelMode}
+          form={form}
+          editingEvent={editingEvent}
+          onChange={setForm}
+          onClose={closePanel}
+          onDelete={handleDeleteSchedule}
+          onSubmit={handleSaveSchedule}
+        />
+      </div>
+
+      <span className="hidden">{selectedDate.toISOString()}</span>
+      <Zap className="hidden" />
     </motion.div>
   );
 }

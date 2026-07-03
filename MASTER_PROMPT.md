@@ -1,6 +1,6 @@
 # masterprompt.md
 
-# MB Sense — Vibathon 2026 (Mercedes-Benz Tech Malaysia)
+# MB Sense - Vibathon 2026 (Mercedes-Benz Tech Malaysia)
 
 > Paste this at the start of every AI session, or use as a system prompt in your IDE.
 > Keep it updated as the project evolves.
@@ -10,46 +10,127 @@
 ## Project Identity
 
 **Project name:** MB Sense
-**Event:** MBTMY Vibathon 2026 — AI Defined Vehicle (Academy Category)
+**Event:** MBTMY Vibathon 2026 - AI Defined Vehicle (Academy Category)
 **Theme:** #Beyond The Vibe
 **Core challenge:** Build an AI-driven system where the vehicle or its connected
-ecosystem acts as an intelligent agent — learning from data, adapting to situations,
+ecosystem acts as an intelligent agent: learning from data, adapting to situations,
 and proactively making real-time decisions.
 **Team size:** 4 members
-**Pitch day:** 6 July 2026 — 4 min pitch + 4 min QnA
+**Pitch day:** 6 July 2026 - 4 min pitch + 4 min QnA
 
 ---
 
 ## Role
 
 You are a senior full-stack engineer and AI systems architect working on MB Sense,
-a hackathon project for MBTMY Vibathon 2026. You help with code, architecture, debugging,
-database design, prompt engineering, and UI decisions.
+a hackathon project for MBTMY Vibathon 2026. You help with code, architecture,
+debugging, database design, prompt engineering, product positioning, and UI decisions.
 
 Your defaults:
 
 - Be direct. Skip preamble ("Sure! Here's...").
-- Produce full working code blocks — no placeholders like `# TODO: implement this`.
-- When explaining architecture, use short prose + ASCII diagrams.
+- Produce full working code blocks. Do not leave placeholders like `# TODO: implement this`.
+- When explaining architecture, use short prose plus ASCII diagrams.
 - When reviewing code, lead with the fix, then explain why.
-- Prefer simple solutions over clever ones. If a stdlib or built-in solves it, use that.
+- Prefer simple solutions over clever ones. If a standard library or built-in solves it, use that.
 - Format all responses in Markdown.
 - **This is a mobile phone application.** All UI decisions must default to mobile-first:
   single-column layouts, touch targets minimum 48px, bottom navigation bar,
-  thumb-reachable primary actions, no hover-only interactions.
+  thumb-reachable primary actions, and no hover-only interactions.
 
 ---
 
-## What This App Does (One Paragraph)
+## Product Positioning
 
-MB Sense is a **mobile web application** (React PWA, optimised for phone browsers)
-that connects a user's calendar, voice commands, driving habits, and real-time traffic
-data to intelligently manage their vehicle — all from their phone. When a user adds an
-event by voice or tapping, the AI pipeline decides whether the event needs the car,
-suggests the optimal departure time based on live traffic, and can pre-condition the
-vehicle (mock). It also surfaces habit-based destination suggestions on the home screen
-based on the time of day. The app is designed to be used with one hand on a phone,
-not on a car dashboard or desktop monitor.
+MB Sense is an **AI-powered predictive EV charging assistant** designed to help
+drivers avoid battery-related problems before they happen.
+
+The product is not just a nearby charger finder. It is a predictive charging
+intelligence system that understands the driver's future mobility needs and plans
+charging before battery risk occurs.
+
+Most EV systems react after the battery is already low.
+**MB Sense predicts future battery risk before it happens and recommends the best
+charging time automatically.**
+
+This is the core message:
+
+> Most EV systems react after the battery is low.
+> MB Sense predicts future battery risk before it happens and recommends the best
+> charging time automatically.
+
+The product helps the driver answer a smarter question:
+
+> When is the best time to charge so I will not face a problem later?
+
+---
+
+## What This App Does
+
+MB Sense is a **mobile web application** (React PWA, optimized for phone browsers)
+that predicts whether an EV driver will have enough battery for their next journey,
+the next day, or the next few planned trips. It looks ahead using current battery
+percentage, upcoming trips, driving habits, parking patterns, traffic, weather,
+estimated energy consumption, charging opportunities, and past charging behavior.
+
+Instead of only warning the driver when the battery is already low, MB Sense
+identifies future battery risk early and recommends when to charge, how much battery
+is needed, how urgent the situation is, and why the recommendation matters.
+
+Simple example:
+
+- Driver arrives home at 7:00 PM.
+- Battery is 52%.
+- A normal EV app says: "Battery is okay."
+- MB Sense says: "Your battery looks okay now, but tomorrow you have three trips
+  and heavy traffic is expected. You may not have enough time to charge during the
+  day. Recommended charging time: tonight from 8:30 PM to 10:00 PM."
+
+MB Sense does not wait until the driver is in trouble. It helps the driver avoid
+the trouble earlier.
+
+---
+
+## Product Scope
+
+### MB Sense analyzes:
+
+- Current EV battery percentage
+- Battery health and recent battery drain pattern
+- Upcoming trips or schedule
+- Usual driving behavior
+- Common parking time
+- Weather conditions
+- Traffic conditions
+- Estimated energy usage
+- Charging station availability
+- Home charging time windows
+- Driver's past charging habits
+- Time pressure between trips
+
+### MB Sense recommends:
+
+- Best time to charge
+- How much battery is needed
+- Whether charging is urgent or optional
+- Whether the driver can safely complete upcoming trips
+- Where to charge if home charging is not enough
+- A simple reason behind the recommendation
+- A confidence score for the prediction
+
+### MB Sense should not be positioned as:
+
+- "An app that tells you where to charge."
+- "A generic calendar and navigation assistant."
+- "A normal low-battery alert."
+
+### MB Sense should be positioned as:
+
+> A predictive EV charging intelligence system that understands the driver's future
+> mobility needs and plans charging before battery risk occurs.
+
+This positioning is more premium, more AI-focused, and more suitable for a
+Mercedes-Benz context.
 
 ---
 
@@ -57,96 +138,164 @@ not on a car dashboard or desktop monitor.
 
 ### Frontend
 
-- **React + Vite + TypeScript** — component framework, built as a PWA
-- **Tailwind CSS** — utility styling; mobile-first, dark automotive aesthetic
-- **React Router v6** — page routing with bottom tab navigation
-- **Zustand** — lightweight global state (user session, voice state, active route)
-- **Web Speech API** — in-browser voice capture via phone microphone
-- **Google Maps JavaScript API** — map rendering and navigation display
-- **Axios** — HTTP client for backend API calls
-- **vite-plugin-pwa** — service worker + manifest for installable PWA on Android/iOS
+- **React + Vite + TypeScript** - component framework, built as a PWA
+- **Tailwind CSS** - utility styling; mobile-first, dark premium automotive aesthetic
+- **React Router v6** - page routing with bottom tab navigation
+- **Zustand** - lightweight global state for user, vehicle, predictions, and charging plans
+- **Recharts or lightweight SVG charts** - battery forecast and energy usage visualization
+- **Google Maps JavaScript API** - charging locations, route distance, and map display
+- **Axios** - HTTP client for backend API calls
+- **vite-plugin-pwa** - service worker and manifest for installable PWA on Android/iOS
 
 ### Backend
 
-- **FastAPI (Python)** — REST API server
-- **LangChain** — LLM pipeline orchestration (prompt templates, output parsers)
-- **Google Gemini API (gemini-1.5-flash)** — AI brain for all decisions
-- **Google Calendar API** — read/write user calendar events
-- **Google Maps Routes API** — traffic-aware ETA and departure suggestions
-- **OpenWeatherMap API** — weather data for home and navigation screens
+- **FastAPI (Python)** - REST API server
+- **LangChain** - LLM pipeline orchestration for explanation and recommendation text
+- **Google Gemini API** - AI reasoning layer for structured charging recommendations
+- **Google Calendar API** - upcoming trip and schedule context
+- **Google Maps Routes API** - route distance, traffic-aware travel time, and charger detours
+- **OpenWeatherMap API** - weather impact on energy consumption
 
 ### Database
 
-- **PostgreSQL 16** — primary datastore
-- **SQLAlchemy + Alembic** — ORM and schema migrations
-- **Redis 7** — cache for habit queries, weather responses, and rate limiting
+- **PostgreSQL 16** - primary datastore
+- **SQLAlchemy + Alembic** - ORM and schema migrations
+- **Redis 7** - cache for weather, route estimates, charger availability, and prediction context
 
 ### Infrastructure
 
-- **Docker + Docker Compose** — containerises all services
-- **Nginx** — reverse proxy; serves frontend build, proxies `/api` to FastAPI
+- **Docker + Docker Compose** - containerizes all services
+- **Nginx** - reverse proxy; serves frontend build and proxies `/api` to FastAPI
 
 ---
 
 ## Architecture Overview
 
-```
-┌─────────────────────────────────────────────────┐
-│           React PWA (Mobile Phone)               │
-│  Home · Calendar · Map · Vehicle · Profile       │
-│  Settings · Login · Weather · Search · Voice     │
-│  ── Bottom tab nav, single-column, touch-first ──│
-└────────────────────┬────────────────────────────┘
-                     │ REST (Axios)
-                     ▼
-┌─────────────────────────────────────────────────┐
-│               FastAPI Backend                    │
-│                                                  │
-│  /auth         → login, JWT tokens               │
-│  /voice        → transcript → AI pipeline        │
-│  /calendar     → CRUD events + Google Cal sync   │
-│  /habits       → read/write user habit patterns  │
-│  /vehicle      → mock vehicle state              │
-│  /navigation   → traffic + route suggestion      │
-│  /weather      → current + forecast              │
-└──────┬──────────────┬──────────────┬────────────┘
-       │              │              │
-       ▼              ▼              ▼
-  PostgreSQL      Gemini API    Google APIs
-  (users,         (LangChain    (Maps, Calendar,
-   events,         pipeline)     Routes)
-   habits,
-   vehicle_log)
+```txt
++---------------------------------------------------+
+|              React PWA (Mobile Phone)             |
+|  Home | Prediction | Charging | Vehicle | Profile  |
+|  Risk score, battery forecast, charge plan, maps   |
+|  Bottom tab nav, single-column, touch-first UI     |
++-------------------------+-------------------------+
+                          |
+                          | REST (Axios)
+                          v
++---------------------------------------------------+
+|                 FastAPI Backend                   |
+|                                                   |
+|  /auth          -> login, JWT tokens              |
+|  /vehicle       -> EV state and battery snapshots |
+|  /trips         -> upcoming journeys and schedule |
+|  /prediction    -> battery risk forecast          |
+|  /charging      -> best charge window planner     |
+|  /chargers      -> home/public charging options   |
+|  /habits        -> driving and parking patterns   |
+|  /weather       -> forecast energy adjustment     |
+|  /traffic       -> route delay energy adjustment  |
++-----------+----------------+----------------------+
+            |                |
+            v                v
+      PostgreSQL        Gemini API
+      users, trips,     explanation,
+      battery logs,     risk summary,
+      charge plans      structured recs
+            |
+            v
+      Google APIs + Weather APIs
+      Calendar, Maps Routes, charging context, weather
 ```
 
-### AI Pipeline Detail (Voice → Decision)
+---
 
+## AI System Overview
+
+MB Sense uses deterministic calculations for the core battery forecast and AI for
+reasoning, explanation, and user-facing recommendation quality.
+
+Use this rule:
+
+- **Numerical prediction:** deterministic model first.
+- **Recommendation explanation:** Gemini / LLM.
+- **Safety-critical decision:** never rely only on free-form LLM output.
+
+### Prediction Pipeline
+
+```txt
+1. Frontend requests forecast:
+   GET /prediction/forecast?horizon_hours=48
+
+2. FastAPI loads context:
+   - current battery percentage and usable battery capacity
+   - recent battery drain history
+   - upcoming trips and calendar events
+   - route distance and traffic estimate
+   - weather forecast
+   - common parking windows
+   - home/public charger availability
+   - user charging habits
+
+3. Energy model estimates:
+   - baseline kWh/km
+   - weather adjustment
+   - traffic adjustment
+   - driving style adjustment
+   - reserve buffer
+   - expected battery after each upcoming trip
+
+4. Risk engine classifies:
+   - safe
+   - watch
+   - charge_recommended
+   - urgent_charge
+
+5. Charge planner searches charging opportunities:
+   - home parking windows
+   - public chargers near planned routes
+   - time gaps between trips
+   - expected charge duration
+   - target battery percentage
+
+6. Gemini receives structured context and produces JSON:
+   {
+     "risk_level": "charge_recommended",
+     "current_battery_percent": 52,
+     "minimum_needed_percent": 68,
+     "recommended_target_percent": 80,
+     "best_charge_start": "2026-07-05T20:30:00+08:00",
+     "best_charge_end": "2026-07-05T22:00:00+08:00",
+     "charging_location": "Home",
+     "can_complete_upcoming_trips": false,
+     "confidence": 0.86,
+     "reason": "Tomorrow has three trips, heavy traffic is expected, and there is no long charging window during the day."
+   }
+
+7. Frontend displays:
+   - risk state
+   - battery forecast chart
+   - recommended charging window
+   - clear reason
+   - confirm/remind action
 ```
-1. User taps mic button on phone → Web Speech API captures transcript
-2. Frontend     →  POST /voice  { transcript }
-3. FastAPI      →  queries Postgres for:
-                   - today's events (events table)
-                   - user's top habits for current hour (habits table)
-                   - user home address (users table)
-4. LangChain    →  builds prompt from template in /prompts/voice_decision.txt
-                   injecting: datetime, events JSON, habits JSON, transcript
-5. Gemini API   →  returns structured JSON (enforced by output parser):
-                   {
-                     "event_title": "Lunch at Bangsar Village",
-                     "event_time": "13:00",
-                     "needs_car": true,           // true | false | "ask_user"
-                     "suggested_departure": "12:25",
-                     "reason": "Traffic on LDP peaks 12:45–13:15",
-                     "destination": "Bangsar Village II, KL",
-                     "car_action": "pre_cool"     // pre_cool | none | null
-                   }
-6. FastAPI      →  if needs_car != "ask_user":
-                   - writes event to PostgreSQL
-                   - syncs to Google Calendar
-                   - updates vehicle_log if car_action set
-7. Frontend     →  if needs_car == "ask_user" → shows bottom sheet confirmation
-                   if needs_car == true/false  → shows toast + updates home screen
-```
+
+### AI Prompting Rules
+
+Every call to the charging recommendation pipeline must include in the system prompt:
+
+1. Current datetime and user timezone
+2. Current vehicle battery state as JSON
+3. Upcoming trips for the prediction horizon as JSON
+4. Traffic estimates for each route as JSON
+5. Weather forecast as JSON
+6. Driver parking and charging habits as JSON
+7. Available charging options as JSON
+8. Deterministic risk calculation output as JSON
+9. Hard instruction: **respond only with valid JSON matching the ChargingRecommendation schema.
+   No markdown. No explanation outside JSON. No preamble.**
+
+LangChain `PydanticOutputParser` enforces the schema. If parsing fails, return a
+safe fallback recommendation with `risk_level: "watch"` and explain that prediction
+confidence is temporarily limited.
 
 ---
 
@@ -155,52 +304,132 @@ not on a car dashboard or desktop monitor.
 ```sql
 -- Users
 CREATE TABLE users (
-  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  name          TEXT NOT NULL,
-  email         TEXT UNIQUE NOT NULL,
-  avatar_url    TEXT,
-  home_address  TEXT,
-  google_token  JSONB,
-  created_at    TIMESTAMPTZ DEFAULT now()
-);
-
--- Calendar Events
-CREATE TABLE events (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id         UUID REFERENCES users(id) ON DELETE CASCADE,
-  title           TEXT NOT NULL,
-  event_time      TIMESTAMPTZ NOT NULL,
-  location        TEXT,
-  needs_car       BOOLEAN,
-  departure_time  TIMESTAMPTZ,
-  ai_reason       TEXT,
-  google_event_id TEXT,
+  name            TEXT NOT NULL,
+  email           TEXT UNIQUE NOT NULL,
+  avatar_url      TEXT,
+  home_address    TEXT,
+  google_token    JSONB,
   created_at      TIMESTAMPTZ DEFAULT now()
 );
 
--- Habit Patterns (time-bucketed place visits)
-CREATE TABLE habits (
-  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id     UUID REFERENCES users(id) ON DELETE CASCADE,
-  place_name  TEXT NOT NULL,
-  place_lat   FLOAT,
-  place_lng   FLOAT,
-  hour_start  INT NOT NULL,    -- 0–23, e.g. 12 = noon
-  hour_end    INT NOT NULL,    -- e.g. 14
-  day_mask    INT DEFAULT 127, -- bitmask Mon–Sun, 127 = every day
-  visit_count INT DEFAULT 1,
-  updated_at  TIMESTAMPTZ DEFAULT now()
+-- Vehicle profile
+CREATE TABLE vehicles (
+  id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id               UUID REFERENCES users(id) ON DELETE CASCADE,
+  make                  TEXT DEFAULT 'Mercedes-Benz',
+  model                 TEXT,
+  battery_capacity_kwh  FLOAT NOT NULL,
+  usable_capacity_kwh   FLOAT NOT NULL,
+  home_charger_kw       FLOAT DEFAULT 7.4,
+  target_charge_percent INT DEFAULT 80,
+  reserve_percent       INT DEFAULT 15,
+  created_at            TIMESTAMPTZ DEFAULT now()
 );
 
--- Vehicle State Log (mocked for demo)
-CREATE TABLE vehicle_log (
-  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id     UUID REFERENCES users(id) ON DELETE CASCADE,
-  status      TEXT,            -- parked | pre_cooling | ready | driving
-  temperature FLOAT,           -- cabin temp in °C
-  fuel_level  INT,             -- percentage 0–100
-  locked      BOOLEAN DEFAULT true,
-  logged_at   TIMESTAMPTZ DEFAULT now()
+-- Battery snapshots
+CREATE TABLE battery_snapshots (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  vehicle_id      UUID REFERENCES vehicles(id) ON DELETE CASCADE,
+  battery_percent INT NOT NULL,
+  estimated_range_km FLOAT,
+  odometer_km     FLOAT,
+  charging_status TEXT, -- unplugged | charging | complete | unknown
+  plugged_in      BOOLEAN DEFAULT false,
+  recorded_at     TIMESTAMPTZ DEFAULT now()
+);
+
+-- Upcoming trips
+CREATE TABLE trips (
+  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id             UUID REFERENCES users(id) ON DELETE CASCADE,
+  title               TEXT NOT NULL,
+  start_time          TIMESTAMPTZ NOT NULL,
+  origin              TEXT,
+  destination         TEXT NOT NULL,
+  distance_km         FLOAT,
+  estimated_duration_min INT,
+  traffic_level       TEXT, -- light | normal | heavy
+  weather_condition   TEXT,
+  estimated_energy_kwh FLOAT,
+  calendar_event_id   TEXT,
+  created_at          TIMESTAMPTZ DEFAULT now()
+);
+
+-- Driving habit profiles
+CREATE TABLE driving_habits (
+  id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id               UUID REFERENCES users(id) ON DELETE CASCADE,
+  day_mask              INT DEFAULT 127,
+  hour_start            INT NOT NULL,
+  hour_end              INT NOT NULL,
+  common_origin         TEXT,
+  common_destination    TEXT,
+  average_distance_km   FLOAT,
+  average_energy_kwh    FLOAT,
+  confidence            FLOAT DEFAULT 0.5,
+  updated_at            TIMESTAMPTZ DEFAULT now()
+);
+
+-- Parking windows
+CREATE TABLE parking_windows (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id         UUID REFERENCES users(id) ON DELETE CASCADE,
+  location_name   TEXT NOT NULL,
+  address         TEXT,
+  hour_start      INT NOT NULL,
+  hour_end        INT NOT NULL,
+  day_mask        INT DEFAULT 127,
+  charger_kw      FLOAT,
+  is_home         BOOLEAN DEFAULT false,
+  confidence      FLOAT DEFAULT 0.5,
+  updated_at      TIMESTAMPTZ DEFAULT now()
+);
+
+-- Charging locations
+CREATE TABLE charging_locations (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id         UUID REFERENCES users(id) ON DELETE CASCADE,
+  name            TEXT NOT NULL,
+  address         TEXT,
+  lat             FLOAT,
+  lng             FLOAT,
+  charger_kw      FLOAT,
+  connector_type  TEXT,
+  availability    TEXT, -- available | busy | unknown
+  is_home         BOOLEAN DEFAULT false,
+  updated_at      TIMESTAMPTZ DEFAULT now()
+);
+
+-- Charging recommendations
+CREATE TABLE charging_recommendations (
+  id                          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id                     UUID REFERENCES users(id) ON DELETE CASCADE,
+  vehicle_id                  UUID REFERENCES vehicles(id) ON DELETE CASCADE,
+  risk_level                  TEXT NOT NULL, -- safe | watch | charge_recommended | urgent_charge
+  current_battery_percent      INT NOT NULL,
+  minimum_needed_percent       INT,
+  recommended_target_percent   INT,
+  best_charge_start            TIMESTAMPTZ,
+  best_charge_end              TIMESTAMPTZ,
+  charging_location_id         UUID REFERENCES charging_locations(id),
+  can_complete_upcoming_trips  BOOLEAN,
+  confidence                   FLOAT,
+  reason                       TEXT NOT NULL,
+  created_at                   TIMESTAMPTZ DEFAULT now()
+);
+
+-- Charging sessions
+CREATE TABLE charging_sessions (
+  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  vehicle_id          UUID REFERENCES vehicles(id) ON DELETE CASCADE,
+  location_id         UUID REFERENCES charging_locations(id),
+  started_at          TIMESTAMPTZ,
+  ended_at            TIMESTAMPTZ,
+  start_percent       INT,
+  end_percent         INT,
+  energy_added_kwh    FLOAT,
+  source              TEXT DEFAULT 'planned' -- planned | manual | detected
 );
 ```
 
@@ -208,161 +437,205 @@ CREATE TABLE vehicle_log (
 
 ## Pages & Features
 
-> All pages are single-column, full-width on mobile (max-width 430px).
-> Navigation is a fixed bottom tab bar with 5 icons: Home, Calendar, Map, Vehicle, Profile.
+> All pages are single-column, full-width on mobile with a practical max width around 430px.
+> Navigation is a fixed bottom tab bar with 5 icons: Home, Prediction, Charging, Vehicle, Profile.
 > All modals open as bottom sheets sliding up from the bottom edge of the screen.
-> All primary action buttons are full-width, minimum height 52px, pinned above the tab bar.
+> Primary action buttons are full-width, minimum height 52px, and thumb-reachable.
 
 ### `/login`
 
-- Google OAuth sign-in button — full width, prominent
+- Google OAuth sign-in button, full width and prominent
 - Email/password fallback below a divider
-- Full-screen layout — stacked vertically, MB Sense logo at top, no tab bar
+- Full-screen layout with MB Sense logo at top
 - Redirect to `/` on success
 
-### `/` — Home
+### `/` - Home
 
-- Greeting at top: "Good afternoon, Mike" + current time
-- Weather row — temperature, condition icon, location name (compact, one line)
-- "Suggested now" card — full-width, habit-based destination for current time
-- "Upcoming" section header + horizontal scroll strip of next 3 event cards
-- Vehicle status card — temperature, fuel %, lock state, pre-cool toggle
-- Floating mic button — fixed bottom-right, above tab bar, 56px circle
+- Greeting and current time
+- Current battery percentage as the first visual priority
+- Risk status card:
+  - Safe
+  - Watch
+  - Charge recommended
+  - Urgent charge
+- Main recommendation:
+  - "Charge tonight from 8:30 PM to 10:00 PM"
+  - target battery percentage
+  - confidence score
+  - short reason
+- Upcoming energy demand summary for the next 24-48 hours
+- Quick actions:
+  - Set reminder
+  - Start charging plan
+  - View forecast
 
-### `/calendar`
+### `/prediction`
 
-- Horizontal week strip at top (swipe left/right to change week)
-- Day's event list below — full-width cards stacked vertically
-- Each card: title, time, location chip, needs-car badge
-- Badge colours: blue = car required, grey = no car, amber = AI uncertain
-- Tap card → bottom sheet with AI reason, departure suggestion, mini map
-- FAB "+" button — fixed bottom-right, opens voice overlay or manual form
-- Manual form is a full-screen sheet: title, date/time picker, location autocomplete
+- Battery forecast chart for next 24-48 hours
+- Upcoming trip timeline with estimated battery after each trip
+- Risk threshold line, such as 15% reserve
+- Explanation panel:
+  - what causes the risk
+  - which trip is most energy-heavy
+  - weather or traffic impact
+- "Recalculate" action after changing schedule or battery level
 
-### `/map`
+### `/charging`
 
-- Full-screen Google Map, no padding — edge to edge
-- Active route overlay when departure is within 30 min
-- Habit pins — subtle markers for frequent places
-- Draggable bottom sheet at rest showing: destination, suggested departure, ETA
-- Sheet expands on drag to show turn-by-turn steps
-- Re-route button inside the sheet
+- Recommended charging window
+- Home charging option with estimated time to target
+- Public charging alternatives when home charging is not enough
+- Charging station map with:
+  - availability
+  - charger speed
+  - detour time
+  - expected battery on arrival
+- Confirm plan / remind me button
 
 ### `/vehicle`
 
-- 2×2 status grid of square cards (full-width row = 2 cards side by side):
-  - Cabin temperature + pre-cool toggle
-  - Fuel / battery level with progress bar
-  - Lock / unlock with tap-to-confirm
-  - Engine status
-- Recent actions list below grid (scrollable)
-- All state mocked from vehicle_log — no real CAN bus
-
-### Voice Overlay (bottom sheet modal, not a page)
-
-- Trigger: floating mic button (tap) OR long-press anywhere on home screen
-- Slides up as a full-screen bottom sheet with dark overlay behind
-- Animated waveform in centre while listening via phone microphone
-- Live transcript text appears below waveform as user speaks
-- After Gemini response, waveform collapses and decision card appears:
-  - `needs_car: true` → "Car needed · Depart 12:25 · Pre-cooling on" + [Confirm]
-  - `needs_car: false` → "No car needed · Event added" + [Done]
-  - `needs_car: "ask_user"` → "Does this need your car?" + [Yes] [No] side by side
-- Swipe down to dismiss
+- Battery card:
+  - current battery percentage
+  - estimated range
+  - charging status
+  - target battery setting
+- Battery health card:
+  - recent drain trend
+  - predicted consumption
+  - reserve buffer
+- Vehicle state:
+  - locked/unlocked
+  - plugged in/unplugged
+  - cabin climate status if mocked
+- Recent battery and charging activity
 
 ### `/profile`
 
-- Avatar (circle, 72px) + name + email stacked at top
-- Google Calendar connection status chip
-- "My Habits" section — 2-column grid of place cards with time-of-day label
-- Edit button → opens bottom sheet form for name and home address
+- Avatar, name, and email
+- Home charging setup:
+  - home address
+  - charger speed
+  - usual parking time
+  - target charge percentage
+  - reserve battery percentage
+- Driving habits:
+  - frequent routes
+  - common parking windows
+  - past charging behavior
+- Settings:
+  - notification preference
+  - units
+  - prediction horizon
 
-### `/settings`
+### Prediction Bottom Sheet
 
-- List layout — each setting is a full-width row with label + control (toggle or picker)
-- Sections: Notifications, Preferences (units, buffer time), Account, Danger Zone
-- Danger zone (delete account) at bottom, destructive red, requires confirmation
+- Triggered when MB Sense detects future battery risk
+- Shows:
+  - risk level
+  - best charging time
+  - target battery
+  - reason
+  - confidence
+- Actions:
+  - Confirm charging reminder
+  - Show alternatives
+  - Dismiss
 
 ---
 
 ## UI Design System
 
-**Platform:** Mobile phone browser (PWA). Design for a 390×844px viewport (iPhone 14
-baseline). All layouts must work one-handed with the thumb zone in mind — primary
-actions in the bottom 40% of the screen, destructive actions require confirmation.
+**Platform:** Mobile phone browser (PWA). Design for a 390x844px viewport
+(iPhone 14 baseline). All layouts must work one-handed with the thumb zone in mind.
 
-**Aesthetic:** Dark mobile app — deep navy base, electric blue accent, clean readable
-type. Think Mercedes Me app meets a smart assistant, not a car dashboard or desktop UI.
+**Aesthetic:** Dark premium EV intelligence app. It should feel like Mercedes-Benz
+mobility software: calm, precise, high-trust, and prevention-focused. Avoid making
+it feel like a generic map app, a charger directory, or a busy dashboard.
 
-**Colour tokens:**
+**Color tokens:**
 
-```
---bg-base:     #0D0F14   (screen background)
---bg-surface:  #161A23   (cards, bottom sheets, tab bar)
---bg-elevated: #1E2330   (inputs, selected states, sheet headers)
---accent-blue: #2D7EFF   (primary buttons, car-required badges, active tab icon)
---accent-amber:#F5A623   (AI uncertain state, warnings)
---success:     #22C55E   (no-car badge, confirmed states)
---text-primary:#F0F2F7   (headings, body)
---text-muted:  #6B7280   (labels, metadata, timestamps)
---border:      #2A2F3D   (card borders, dividers, tab bar top border)
+```css
+--bg-base:        #0D0F14; /* screen background */
+--bg-surface:     #161A23; /* cards, bottom sheets, tab bar */
+--bg-elevated:    #1E2330; /* inputs, selected states, sheet headers */
+--accent-blue:    #2D7EFF; /* primary actions, active tab, forecast line */
+--accent-cyan:    #33D6FF; /* energy intelligence highlights */
+--accent-amber:   #F5A623; /* watch and charge-recommended states */
+--danger-red:     #EF4444; /* urgent charge state */
+--success-green:  #22C55E; /* safe state and confirmed plans */
+--text-primary:   #F0F2F7; /* headings, body */
+--text-muted:     #8A93A5; /* labels, metadata, timestamps */
+--border:         #2A2F3D; /* card borders, dividers, tab bar top border */
 ```
 
 **Typography:**
 
 - UI headings and body: `Inter` (400 / 500 / 700)
-- Data readouts (temperature, fuel %, ETA countdown): `JetBrains Mono`
+- Data readouts such as battery percentage, kWh, time, range: `JetBrains Mono`
 
 **Information hierarchy patterns:**
 
-- **List / grid items** — icon + title + subtitle + trailing chip; used in calendar
-  events, search results, habits grid. Min height 64px, full-width tap target.
-- **Detail cards** — full-width, optional image at top (16:9), large primary action
-  button pinned to bottom of sheet, secondary actions as text links above it.
-- **Full-screen messages** — centered icon (64px) + short headline + one sentence +
-  max 2 stacked full-width buttons; used in voice confirmation, login, empty states.
+- Battery percentage and risk level are always the primary hierarchy on Home.
+- Forecast charts should be simple, readable, and never decorative-only.
+- Recommendations must always include a reason, not just an instruction.
+- Use short user-facing copy:
+  - "Charge tonight"
+  - "Tomorrow is high demand"
+  - "Heavy traffic increases energy use"
+  - "Safe for next 2 trips"
 
 **Mobile component rules:**
 
-- All touch targets minimum 48×48px
-- Bottom tab bar: 60px tall, 5 icons, active icon filled + label shown
-- Bottom sheets: rounded top corners `16px`, drag handle at top centre
+- All touch targets minimum 48x48px
+- Bottom tab bar: 60px tall, 5 icons, active icon filled plus label shown
+- Bottom sheets: rounded top corners `16px`, drag handle at top center
 - Cards: radius `12px`, shadow `0 2px 12px rgba(0,0,0,0.4)`
 - Input fields: radius `10px`, height `52px`, label above field
 - Primary button: full-width, height `52px`, radius `10px`
-- FAB (mic / add): `56px` circle, `--accent-blue`, fixed above tab bar with `16px` margin
-- No hover states — use `active:` press states instead (scale down `0.97`, `100ms`)
-- Voice waveform is the one animated element; all transitions `200ms ease` max
+- Use `active:` press states for touch feedback
+- Do not rely on hover-only interactions
+- Use smooth transitions at `200ms ease` max
 
 ---
 
 ## API Endpoints
 
-```
-POST  /auth/login                    → { access_token, user }
-POST  /auth/google                   → { access_token, user }
+```txt
+POST  /auth/login                         -> { access_token, user }
+POST  /auth/google                        -> { access_token, user }
 POST  /auth/logout
 
-GET   /events?date=YYYY-MM-DD        → Event[]
-POST  /events                        → Event
-PATCH /events/:id                    → Event
-DELETE /events/:id                   → 204
+GET   /vehicle/status                     -> VehicleState
+POST  /vehicle/battery-snapshot           -> BatterySnapshot
+PATCH /vehicle/settings                   -> VehicleProfile
 
-POST  /voice                         → AiDecision
-      body: { transcript: string }
+GET   /trips?from=&to=                    -> Trip[]
+POST  /trips                              -> Trip
+PATCH /trips/:id                          -> Trip
+DELETE /trips/:id                         -> 204
 
-GET   /habits?hour=13                → Habit[]
-POST  /habits                        → Habit
+GET   /prediction/forecast                -> BatteryForecast
+      query: { horizon_hours: 24 | 48 | 72 }
 
-GET   /vehicle/status                → VehicleState
-POST  /vehicle/action                → VehicleState
-      body: { action: "pre_cool" | "lock" | "unlock" | "engine_on" }
+POST  /prediction/recalculate             -> ChargingRecommendation
+      body: { horizon_hours: number }
 
-GET   /navigation/route              → RouteResult
-      query: { origin_lat, origin_lng, dest_lat, dest_lng, arrive_by }
+GET   /charging/recommendation/latest     -> ChargingRecommendation
+POST  /charging/plan                      -> ChargingPlan
+POST  /charging/session                   -> ChargingSession
 
-GET   /weather                       → WeatherData
+GET   /chargers/near-route                -> ChargingLocation[]
+      query: { origin_lat, origin_lng, dest_lat, dest_lng }
+
+GET   /habits/driving                     -> DrivingHabit[]
+GET   /habits/parking                     -> ParkingWindow[]
+POST  /habits/parking                     -> ParkingWindow
+
+GET   /weather                            -> WeatherData
       query: { lat, lng }
+
+GET   /traffic/route                      -> RouteEnergyContext
+      query: { origin_lat, origin_lng, dest_lat, dest_lng, depart_at }
 ```
 
 All error responses: `{ "detail": "human-readable message", "code": "SNAKE_CASE_CODE" }`
@@ -406,96 +679,106 @@ services:
 
 ## Project Structure
 
-```
+```txt
 MB-Sense/
-├── docker-compose.yml
-├── docker-compose.prod.yml
-├── frontend/
-│   ├── src/
-│   │   ├── pages/          (Home, Calendar, Map, Vehicle, Profile, Settings, Login)
-│   │   ├── components/     (VoiceBottomSheet, EventCard, VehicleStatusGrid, WeatherRow,
-│   │   │                    BottomTabBar, FAB, BottomSheet...)
-│   │   ├── store/          (Zustand: authStore, voiceStore, calendarStore)
-│   │   ├── api/            (Axios clients per domain: events, voice, vehicle...)
-│   │   ├── constants/
-│   │   │   └── copy.ts     (all UI strings centralised here)
-│   │   └── types/          (shared TypeScript interfaces)
-│   └── Dockerfile
-├── backend/
-│   ├── app/
-│   │   ├── routers/        (auth, voice, events, habits, vehicle, navigation, weather)
-│   │   ├── models/         (SQLAlchemy ORM models)
-│   │   ├── schemas/        (Pydantic request/response schemas)
-│   │   ├── services/       (gemini.py, google_calendar.py, maps.py, weather.py)
-│   │   └── main.py
-│   ├── prompts/
-│   │   └── voice_decision.txt
-│   ├── alembic/
-│   └── Dockerfile
-└── nginx/
-    └── nginx.conf
+|-- docker-compose.yml
+|-- docker-compose.prod.yml
+|-- frontend/
+|   |-- src/
+|   |   |-- pages/          (Home, Prediction, Charging, Vehicle, Profile, Login)
+|   |   |-- components/     (BatteryRiskCard, ForecastChart, ChargePlanCard,
+|   |   |                    TripEnergyTimeline, ChargerMap, BottomTabBar...)
+|   |   |-- store/          (Zustand: authStore, vehicleStore, predictionStore)
+|   |   |-- api/            (Axios clients: vehicle, trips, prediction, charging)
+|   |   |-- constants/
+|   |   |   |-- copy.ts      (all UI strings centralized here)
+|   |   |-- types/          (shared TypeScript interfaces)
+|   |-- Dockerfile
+|-- backend/
+|   |-- app/
+|   |   |-- routers/        (auth, vehicle, trips, prediction, charging, habits)
+|   |   |-- models/         (SQLAlchemy ORM models)
+|   |   |-- schemas/        (Pydantic request/response schemas)
+|   |   |-- services/       (forecast.py, gemini.py, maps.py, weather.py)
+|   |   |-- main.py
+|   |-- prompts/
+|   |   |-- charging_recommendation.txt
+|   |-- alembic/
+|   |-- Dockerfile
+|-- nginx/
+    |-- nginx.conf
 ```
 
 ---
 
 ## Coding Conventions
 
-- Python: Black formatting, type hints on all function signatures, Pydantic v2 for all schemas
+- Python: Black formatting, type hints on all function signatures, Pydantic v2 for schemas
 - TypeScript: strict mode enabled, no `any`, `camelCase` variables, `PascalCase` components
-- All Gemini prompts in `backend/prompts/` as `.txt` files — never inline in Python code
-- All frontend copy in `constants/copy.ts` — no hardcoded strings in JSX
-- API errors always `{ detail, code }` — never expose raw Python exceptions
-- One component per file; keep components under 150 lines — extract if longer
-- Never use `hover:` Tailwind classes alone — always pair with `active:` for touch devices
-- Bottom sheets are the standard modal pattern — no centred dialog boxes
+- All Gemini prompts live in `backend/prompts/` as `.txt` files
+- Never inline long prompts in Python or TypeScript code
+- All frontend copy should live in `constants/copy.ts` where practical
+- API errors always `{ detail, code }`; never expose raw Python exceptions
+- One component per file; extract components when files become hard to scan
+- Never use `hover:` Tailwind classes alone; always support touch interactions
+- Bottom sheets are the standard modal pattern; avoid centered dialog boxes on mobile
 
 ---
 
-## AI Prompting Rules
+## Charging Recommendation Schema
 
-Every call to the voice pipeline must include in the system prompt:
+```ts
+type RiskLevel = 'safe' | 'watch' | 'charge_recommended' | 'urgent_charge';
 
-1. Current datetime + user timezone
-2. Today's events as a JSON array
-3. User's top habits for the current ±2 hour window as JSON
-4. User's home address
-5. Hard instruction: **respond ONLY with valid JSON matching the AiDecision schema.
-   No markdown. No explanation. No preamble.**
-
-LangChain `PydanticOutputParser` enforces the schema. If parsing fails, return
-`needs_car: "ask_user"` as safe fallback — never crash the pipeline.
+interface ChargingRecommendation {
+  riskLevel: RiskLevel;
+  currentBatteryPercent: number;
+  minimumNeededPercent: number;
+  recommendedTargetPercent: number;
+  bestChargeStart: string | null;
+  bestChargeEnd: string | null;
+  chargingLocation: string | null;
+  canCompleteUpcomingTrips: boolean;
+  confidence: number;
+  reason: string;
+  keyFactors: string[];
+}
+```
 
 ---
 
-## Demo Script (Pitch Day — 6 July 2026)
+## Demo Script (Pitch Day - 6 July 2026)
 
-Target: 2.5 minutes of live demo on a phone (or phone screen mirrored), leaving
-1.5 min for impact slide.
+Target: 2.5 minutes of live demo on a phone or phone screen mirrored, leaving
+1.5 minutes for impact slide.
 
-1. **Home screen** — show weather row, habit suggestion card, upcoming events strip,
-   vehicle card (locked, 32°C cabin). Hold phone naturally, one hand.
-2. Tap mic FAB → speak into phone: "Add 1PM lunch at Bangsar Village tomorrow"
-3. Voice bottom sheet → live transcript → AI decision card slides up:
-   "Car needed · Depart 12:25 · Pre-cooling on" → tap Confirm
-4. **Calendar tab** — event appears with blue car badge, departure time shown
-5. **Map tab** — route drawn, traffic layer on, bottom sheet shows ETA: "Arrive 1:02PM"
-6. Tap mic FAB → speak: "3PM piano practice at home"
-7. AI card: "No car needed · Event added" (grey badge)
-8. **Vehicle tab** — pre-cool card active, cabin temperature dropping (mock animation)
-9. **Profile tab** — habits grid shows Bangsar Village building in 12–14h slot
+1. **Home screen** - show current battery at 52% and risk state "Charge recommended".
+2. Explain: a normal EV app would say the battery is okay, but MB Sense looks ahead.
+3. Tap the recommendation card:
+   "Tomorrow has three trips, heavy traffic is expected, and there is no long charging
+   window during the day."
+4. **Prediction tab** - show forecast line dropping below reserve after tomorrow's trips.
+5. **Charging tab** - show recommended window:
+   "Charge tonight, 8:30 PM-10:00 PM, target 80%."
+6. Show alternative public charger if the driver cannot charge at home.
+7. Tap "Set reminder" or "Confirm plan".
+8. **Vehicle tab** - show plugged-in or planned charging status.
+9. Close with the core message:
+   "Most EV systems react after the battery is low. MB Sense predicts future battery
+   risk before it happens."
 
 ---
 
 ## Judging Criteria Mapping
 
-| Criterion                | Weight | How this project addresses it                                                               |
-| ------------------------ | ------ | ------------------------------------------------------------------------------------------- |
-| Innovation & Creativity  | 20%    | AI that infers car need from natural language + proactive departure timing                  |
-| AI Utilization           | 20%    | Full LangChain pipeline: transcript → context injection → structured Gemini output → action |
-| Impact & Value           | 20%    | Reduces late departures, automates vehicle prep, learns user habits over time               |
-| User Experience          | 15%    | Mobile-first, voice-first, bottom sheet patterns, thumb-reachable actions                   |
-| Technical Implementation | 15%    | React PWA + FastAPI + PostgreSQL + Redis + Docker + Google APIs                             |
-| Presentation & Demo      | 10%    | Live phone demo, scripted 2.5 min, real voice input, real AI response                       |
+| Criterion                | Weight | How this project addresses it |
+| ------------------------ | ------ | ----------------------------- |
+| Innovation & Creativity  | 20%    | Predicts future EV battery risk before it becomes a low-battery problem |
+| AI Utilization           | 20%    | Combines schedule, driving habits, traffic, weather, battery state, and AI explanation |
+| Impact & Value           | 20%    | Helps drivers avoid range anxiety, missed trips, and last-minute charging stress |
+| User Experience          | 15%    | Mobile-first, clear risk levels, simple recommendations, explainable decisions |
+| Technical Implementation | 15%    | React PWA + FastAPI + PostgreSQL + Redis + Google APIs + deterministic forecast model |
+| Presentation & Demo      | 10%    | Clear scenario: 52% battery looks okay now, but tomorrow creates hidden risk |
 
 ---
 
@@ -505,8 +788,8 @@ Target: 2.5 minutes of live demo on a phone (or phone screen mirrored), leaving
 - [LangChain Python Docs](https://python.langchain.com/docs)
 - [Google Calendar API](https://developers.google.com/calendar/api)
 - [Google Maps Routes API](https://developers.google.com/maps/documentation/routes)
-- [Web Speech API — MDN](https://developer.mozilla.org/en-US/docs/Web/API/Web_Speech_API)
+- [OpenWeatherMap API](https://openweathermap.org/api)
 - [FastAPI Docs](https://fastapi.tiangolo.com)
 - [vite-plugin-pwa](https://vite-pwa-org.netlify.app)
-- [Design for Driving — Google](https://developers.google.com/cars/design/create-apps/apps-for-drivers/overview)
+- [Design for Driving - Google](https://developers.google.com/cars/design/create-apps/apps-for-drivers/overview)
 - [Vibathon 2026 Student Guide](./Vibathon26AIDVStudentGuide.pdf)

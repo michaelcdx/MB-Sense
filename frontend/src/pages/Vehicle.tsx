@@ -22,8 +22,8 @@ export default function Vehicle() {
       {/* Hero Visual */}
       <div className="relative w-full aspect-[16/9] rounded-3xl overflow-hidden bg-surface-container-lowest border border-outline-variant/45 shadow-ambient-lg">
         <img 
-          src="https://images.unsplash.com/photo-1560958089-b8a1929cea89?q=80&w=2071&auto=format&fit=crop" 
-          alt="Vehicle" 
+          src="https://upload.wikimedia.org/wikipedia/commons/e/ef/Mercedes-Benz_V297_Classic-Days_2022_DSC_0016.jpg" 
+          alt="Mercedes-Benz EQS electric vehicle" 
           className={cn(
             "w-full h-full object-cover transition-opacity duration-1000",
             imgLoaded ? "opacity-85" : "opacity-0"
@@ -33,8 +33,8 @@ export default function Vehicle() {
         />
         <div className="absolute inset-0 bg-gradient-to-t from-white/92 via-white/30 to-transparent" />
         <div className="absolute bottom-6 left-6">
-          <p className="text-xs text-primary font-bold uppercase tracking-[0.2em] mb-1">Model S-X Active</p>
-          <h2 className="text-3xl font-bold text-on-surface tracking-tight">Vanguard-01</h2>
+          <p className="text-xs text-primary font-bold uppercase tracking-[0.2em] mb-1">Mercedes-Benz EQS Active</p>
+          <h2 className="text-3xl font-bold text-on-surface tracking-tight">EQS 580 4MATIC</h2>
         </div>
       </div>
 

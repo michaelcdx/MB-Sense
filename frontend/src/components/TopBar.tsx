@@ -1,11 +1,13 @@
-import { MapPin, Home, Calendar, Map as MapIcon, Car, User } from 'lucide-react';
+import { MapPin, Home, Calendar, Map as MapIcon, Car, BrainCircuit } from 'lucide-react';
 import { useAppStore } from '../store/useAppStore';
-import { Link, useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { cn } from '../lib/utils';
 import { motion } from 'motion/react';
+import GlassButton from './GlassButton';
 
 export default function TopBar() {
   const { user, isAuthenticated } = useAppStore();
+  const navigate = useNavigate();
   const location = useLocation();
   const path = location.pathname;
 
@@ -14,57 +16,49 @@ export default function TopBar() {
     { name: 'Calendar', path: '/calendar', icon: Calendar },
     { name: 'Map', path: '/map', icon: MapIcon },
     { name: 'Vehicle', path: '/vehicle', icon: Car },
-    { name: 'Profile', path: isAuthenticated ? '/profile' : '/signin', icon: User },
+    { name: 'AI', path: '/ai', icon: BrainCircuit }
   ];
-  
+
+  const initials = user.name
+    .split(' ')
+    .map((part) => part[0])
+    .join('')
+    .slice(0, 2)
+    .toUpperCase();
+
   return (
-    <header className="fixed inset-x-0 top-0 z-40 flex h-16 w-full items-center justify-between border-b border-outline-variant/45 bg-surface-container-lowest/90 px-4 shadow-ambient backdrop-blur-xl sm:px-6 lg:px-8">
-      <div className="flex flex-none justify-start sm:flex-1">
-        <Link to="/" className="flex items-center gap-2 text-primary hover:text-primary-dim transition-colors">
-          <MapPin className="w-5 h-5" />
-          <h1 className="text-lg font-extrabold tracking-wide uppercase sm:text-xl">MB SENSE</h1>
-        </Link>
+    <header className="pointer-events-none fixed inset-x-0 top-0 z-50 flex h-16 items-center justify-between px-3 sm:px-5 lg:px-8">
+      <div className="pointer-events-auto flex flex-1 justify-start">
+        <GlassButton onClick={() => navigate('/')} wrapClassName="text-[13px]" className="glass-brand-button">
+          <MapPin className="h-4 w-4" />
+          MB Sense
+        </GlassButton>
       </div>
 
-      {/* Desktop Navigation */}
-      <nav className="hidden sm:flex justify-center items-center gap-6 lg:gap-10 h-16">
-        {tabs.map((tab) => {
-          const isActive = path === tab.path;
-          return (
-            <Link
-              key={tab.name}
-              to={tab.path}
-              className={cn(
-                "relative flex h-full items-center justify-center transition-all duration-300",
-                isActive ? "text-primary" : "text-on-surface-variant hover:text-on-surface"
-              )}
-            >
-              <span className={cn(
-                "text-sm lg:text-base tracking-wide font-semibold",
-                isActive && "font-bold"
-              )}>
-                {tab.name}
-              </span>
-              {isActive && (
-                <motion.div
-                  layoutId="desktop-nav-indicator"
-                  className="absolute bottom-0 left-0 right-0 h-[3px] bg-primary rounded-t-full"
-                  transition={{ type: "spring", stiffness: 300, damping: 30 }}
-                  style={{ willChange: "transform" }}
-                />
-              )}
-            </Link>
-          );
-        })}
+      <nav className="pointer-events-auto absolute left-1/2 top-3 hidden -translate-x-1/2 sm:block" aria-label="Primary navigation">
+        <div className="glass-selection-pane">
+          {tabs.map((tab) => {
+            const isActive = path === tab.path;
+            return (
+              <button
+                key={tab.name}
+                type="button"
+                onClick={() => navigate(tab.path)}
+                className={cn('glass-selection-item', isActive && 'is-active')}
+              >
+                {isActive && <motion.span layoutId="topbar-glass-selection" className="glass-selection-active" transition={{ type: 'spring', stiffness: 320, damping: 32 }} />}
+                <tab.icon className="relative z-10 h-4 w-4" />
+                <span className="relative z-10">{tab.name}</span>
+              </button>
+            );
+          })}
+        </div>
       </nav>
 
-      <div className="ml-auto flex flex-none justify-end items-center gap-4 sm:flex-1">
-        <Link 
-          to={isAuthenticated ? "/profile" : "/signin"}
-          className="w-10 h-10 rounded-full bg-primary-container/35 flex items-center justify-center border border-primary/20 overflow-hidden hover:ring-2 hover:ring-primary/35 transition-all cursor-pointer"
-        >
-          <span className="text-sm text-primary font-bold uppercase">{user.name.slice(0,2)}</span>
-        </Link>
+      <div className="pointer-events-auto flex flex-1 justify-end">
+        <GlassButton onClick={() => navigate(isAuthenticated ? '/profile' : '/signin')} wrapClassName="text-[13px]" className="glass-avatar-button" aria-label="Open profile">
+          {initials}
+        </GlassButton>
       </div>
     </header>
   );
