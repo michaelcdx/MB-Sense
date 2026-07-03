@@ -6,6 +6,7 @@ import Calendar from './pages/Calendar';
 import MapView from './pages/Map';
 import Vehicle from './pages/Vehicle';
 import AI from './pages/AI';
+import Simulation from './pages/Simulation';
 import Profile from './pages/Profile';
 import SignIn from './pages/SignIn';
 import CreateAccount from './pages/CreateAccount';
@@ -36,6 +37,7 @@ function AppShell() {
             <Route path="/map" element={<MapView />} />
             <Route path="/vehicle" element={<Vehicle />} />
             <Route path="/ai" element={<AI />} />
+            <Route path="/simulation" element={<Simulation />} />
             <Route path="/profile" element={<Profile />} />
             <Route path="/signin" element={<SignIn />} />
             <Route path="/register" element={<CreateAccount />} />

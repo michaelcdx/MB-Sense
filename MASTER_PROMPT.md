@@ -18,6 +18,7 @@ and proactively making real-time decisions.
 **Team size:** 4 members
 **Pitch day:** 6 July 2026 - 4 min pitch + 4 min QnA
 
+
 ---
 
 ## Role

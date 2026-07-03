@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { MapPin, Home, Calendar, Map as MapIcon, Car, BrainCircuit, ChevronLeft, ChevronRight } from 'lucide-react';
+import { MapPin, Home, Calendar, Map as MapIcon, Car, BrainCircuit, SlidersHorizontal } from 'lucide-react';
 import { useAppStore } from '../store/useAppStore';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { cn } from '../lib/utils';
@@ -19,15 +19,16 @@ export default function TopBar() {
   const location = useLocation();
   const path = location.pathname;
   const isCalendar = path === '/calendar';
-  const calendarWeeks = useMemo(() => getAvailableCalendarWeeks(), []);
-  const { weekStart, setActiveWeek, goToPreviousWeek, goToNextWeek, goToTodayWeek } = useCalendarViewStore();
+  const calendarMonths = useMemo(() => getAvailableCalendarWeeks(), []);
+  const { weekStart, setActiveWeek } = useCalendarViewStore();
 
   const tabs = [
     { name: 'Home', path: '/', icon: Home },
     { name: 'Calendar', path: '/calendar', icon: Calendar },
     { name: 'Map', path: '/map', icon: MapIcon },
     { name: 'Vehicle', path: '/vehicle', icon: Car },
-    { name: 'AI', path: '/ai', icon: BrainCircuit }
+    { name: 'AI', path: '/ai', icon: BrainCircuit },
+    { name: 'Simulation', path: '/simulation', icon: SlidersHorizontal }
   ];
 
   const initials = user.name
@@ -74,17 +75,12 @@ export default function TopBar() {
               value={toCalendarDateInputValue(weekStart)}
               onChange={(event) => setActiveWeek(fromCalendarDateInputValue(event.target.value))}
               className="h-9 rounded-lg border border-outline-variant/45 bg-surface-container-lowest/88 px-2.5 text-xs font-semibold text-on-surface shadow-ambient outline-none backdrop-blur-xl transition focus:border-primary/45"
-              aria-label="Select week"
+              aria-label="Select month"
             >
-              {calendarWeeks.map((week) => (
-                <option key={week.toISOString()} value={toCalendarDateInputValue(week)}>Week {getCalendarWeekRangeLabel(week)}</option>
+              {calendarMonths.map((month) => (
+                <option key={month.toISOString()} value={toCalendarDateInputValue(month)}>{getCalendarWeekRangeLabel(month)}</option>
               ))}
             </select>
-            <button onClick={goToTodayWeek} className="h-9 rounded-lg border border-outline-variant/45 bg-surface-container-lowest/88 px-3 text-xs font-semibold text-on-surface transition hover:bg-surface-container">Today</button>
-            <div className="flex overflow-hidden rounded-lg border border-outline-variant/45 bg-surface-container-lowest/88 shadow-ambient backdrop-blur-xl">
-              <button onClick={goToPreviousWeek} className="flex h-9 w-9 items-center justify-center text-on-surface-variant transition hover:bg-surface-container" aria-label="Previous week"><ChevronLeft className="h-4 w-4" /></button>
-              <button onClick={goToNextWeek} className="flex h-9 w-9 items-center justify-center border-l border-outline-variant/45 text-on-surface-variant transition hover:bg-surface-container" aria-label="Next week"><ChevronRight className="h-4 w-4" /></button>
-            </div>
           </div>
         )}
         <GlassButton onClick={() => navigate(isAuthenticated ? '/profile' : '/signin')} wrapClassName="text-[13px]" className="glass-avatar-button" aria-label="Open profile">

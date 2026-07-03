@@ -3,10 +3,49 @@ import { CalendarEvent, useAppStore } from '../store/useAppStore';
 import { AlertTriangle, BatteryCharging, BrainCircuit, Car, Save, Trash2, Video, X, Zap } from 'lucide-react';
 import { cn } from '../lib/utils';
 import GlassButton from '../components/GlassButton';
-import { FormEvent, PointerEvent as ReactPointerEvent, useMemo, useRef, useState } from 'react';
+import { FormEvent, PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { useCalendarViewStore } from '../store/useCalendarViewStore';
 
 type EventMode = 'create' | 'edit';
+type EventColor = 'graphite' | 'blue' | 'green' | 'amber' | 'rose' | 'violet' | 'cream' | 'general' | 'study' | 'assignment' | 'urgent' | 'charging' | 'risk';
+type EventTextColor = 'dark' | 'light' | 'light3' | 'light4' | 'cream5' | 'rose6' | 'green7' | 'amber8';
+
+const eventColorOptions: { value: EventColor; label: string; backgroundColor: string; textColor: string }[] = [
+  { value: 'general', label: 'Work / Meeting', backgroundColor: '#243B53', textColor: '#F8FAFC' },
+  { value: 'study', label: 'Class / Study', backgroundColor: '#3B2F63', textColor: '#F8FAFC' },
+  { value: 'assignment', label: 'Assignment / Deadline', backgroundColor: '#6B2E2E', textColor: '#FFF7ED' },
+  { value: 'urgent', label: 'Important / Urgent', backgroundColor: '#7A1F2B', textColor: '#FFF1F2' },
+  { value: 'charging', label: 'AI Charging Recommendation', backgroundColor: '#14532D', textColor: '#ECFDF5' },
+  { value: 'risk', label: 'Battery Risk Warning', backgroundColor: '#7C4A03', textColor: '#FFFBEB' },
+  { value: 'graphite', label: 'Graphite', backgroundColor: '#0b0f10', textColor: '#f5f7f9' },
+  { value: 'blue', label: 'Blue', backgroundColor: '#172554', textColor: '#f5f7f9' },
+  { value: 'green', label: 'Green', backgroundColor: '#064e3b', textColor: '#f5f7f9' },
+  { value: 'amber', label: 'Amber', backgroundColor: '#78350f', textColor: '#f5f7f9' },
+  { value: 'rose', label: 'Rose', backgroundColor: '#881337', textColor: '#f5f7f9' },
+  { value: 'violet', label: 'Violet', backgroundColor: '#4c1d95', textColor: '#f5f7f9' },
+  { value: 'cream', label: 'Cream', backgroundColor: '#FFF7ED', textColor: '#2c2f31' }
+];
+
+const eventColorStyles: Record<EventColor, { backgroundColor: string }> = eventColorOptions.reduce((styles, option) => ({
+  ...styles,
+  [option.value]: { backgroundColor: option.backgroundColor }
+}), {} as Record<EventColor, { backgroundColor: string }>);
+
+const eventTextColorOptions: { value: EventTextColor; label: string; color: string }[] = [
+  { value: 'dark', label: 'Text 1', color: '#1E3A5F' },
+  { value: 'light', label: 'Text 2', color: '#F8FAFC' },
+  { value: 'light3', label: 'Text 3', color: '#F8FAFC' },
+  { value: 'light4', label: 'Text 4', color: '#F8FAFC' },
+  { value: 'cream5', label: 'Text 5', color: '#FFF7ED' },
+  { value: 'rose6', label: 'Text 6', color: '#FFF1F2' },
+  { value: 'green7', label: 'Text 7', color: '#ECFDF5' },
+  { value: 'amber8', label: 'Text 8', color: '#FFFBEB' }
+];
+
+const eventTextColorStyles: Record<EventTextColor, { color: string }> = eventTextColorOptions.reduce((styles, option) => ({
+  ...styles,
+  [option.value]: { color: option.color }
+}), {} as Record<EventTextColor, { color: string }>);
 
 type ScheduleForm = {
   title: string;
@@ -18,6 +57,8 @@ type ScheduleForm = {
   category: CalendarEvent['category'];
   status: string;
   notes: string;
+  color: EventColor;
+  textColor: EventTextColor;
 };
 
 type DragSelection = {
@@ -32,6 +73,12 @@ type DragStartState = {
   dayIndex: number;
   date: Date;
   startMinutes: number;
+};
+
+type EventHorizontalLayout = {
+  leftPercent: number;
+  widthPercent: number;
+  zIndex: number;
 };
 
 const productTagline = 'Predict battery risk before it happens.';
@@ -51,8 +98,6 @@ const demoEnd = new Date(2026, 6, 30);
 const fallbackDemoDate = new Date(2026, 6, 1);
 
 const dayHeaderFormatter = new Intl.DateTimeFormat('en-US', { day: 'numeric' });
-const monthLabelFormatter = new Intl.DateTimeFormat('en-US', { month: 'short' });
-const monthHeaderFormatter = new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' });
 const weekRangeFormatter = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' });
 const fullDateFormatter = new Intl.DateTimeFormat('en-US', { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' });
 
@@ -90,8 +135,16 @@ function getAvailableWeeks() {
   return weeks;
 }
 
-function getWeekDays(weekStart: Date) {
-  return Array.from({ length: 7 }, (_, index) => addDays(weekStart, index));
+function getTimelineDays(monthStart: Date) {
+  const start = new Date(monthStart.getFullYear(), monthStart.getMonth(), 1);
+  const end = new Date(monthStart.getFullYear(), monthStart.getMonth() + 1, 0);
+  const days: Date[] = [];
+
+  for (let cursor = start; cursor <= end; cursor = addDays(cursor, 1)) {
+    days.push(new Date(cursor));
+  }
+
+  return days;
 }
 
 function getWeekRangeLabel(weekStart: Date) {
@@ -207,13 +260,47 @@ function isRiskEvent(event: CalendarEvent) {
   return text.includes('risk') || text.includes('warning') || text.includes('urgent');
 }
 
-function getEventTone(event: CalendarEvent) {
-  if (isRiskEvent(event)) return 'calendar-solid-event border-amber-400/35 bg-amber-400/20 text-amber-500';
-  if (isChargingEvent(event)) return 'calendar-solid-event border-emerald-400/35 bg-emerald-400/20 text-emerald-500';
-  if ((event.status ?? '').toLowerCase().includes('important')) return 'calendar-solid-event border-rose-400/35 bg-rose-500/20 text-rose-500';
-  if (event.category === 'personal' || event.category === 'fitness') return 'calendar-solid-event border-violet-300/35 bg-violet-350/20 text-violet-350';
-  if (!event.carNeeded) return 'calendar-solid-event border-outline-variant/45 bg-surface-container text-on-surface';
-  return 'calendar-solid-event border-blue-300/35 bg-blue-500/20 text-blue-600';
+function getDefaultEventColor(event: Pick<CalendarEvent, 'category' | 'carNeeded'> & { title?: string; status?: string }) {
+  const text = `${event.title ?? ''} ${event.status ?? ''}`.toLowerCase();
+
+  if (event.category === 'important') return 'urgent';
+  if (event.category === 'risk') return 'risk';
+  if (text.includes('risk') || text.includes('warning')) return 'risk';
+  if (text.includes('urgent')) return 'urgent';
+  if (event.category === 'charging') return 'charging';
+  if (text.includes('charge') || text.includes('charging')) return 'charging';
+  if (text.includes('important')) return 'rose';
+  if (!event.carNeeded) return 'blue';
+  if (event.category === 'study') return 'study';
+  if (event.category === 'assignment') return 'assignment';
+  if (event.category === 'personal') return 'violet';
+  if (event.category === 'fitness') return 'green';
+  if (event.category === 'other') return 'amber';
+  return 'general';
+}
+
+function getEventColor(event: CalendarEvent) {
+  return ((event as CalendarEvent & { color?: EventColor }).color ?? getDefaultEventColor(event));
+}
+
+function getEventTone(_event: CalendarEvent) {
+  return 'calendar-solid-event text-inverse-on-surface';
+}
+
+function getEventColorStyle(event: CalendarEvent) {
+  return eventColorStyles[getEventColor(event)];
+}
+
+function getDefaultEventTextColor(background: EventColor) {
+  return background === 'cream' ? 'dark' : background === 'assignment' ? 'cream5' : background === 'urgent' ? 'rose6' : background === 'charging' ? 'green7' : background === 'risk' ? 'amber8' : 'light';
+}
+
+function getEventTextColor(event: CalendarEvent) {
+  return ((event as CalendarEvent & { textColor?: EventTextColor }).textColor ?? getDefaultEventTextColor(getEventColor(event)));
+}
+
+function getEventTextColorStyle(event: CalendarEvent) {
+  return eventTextColorStyles[getEventTextColor(event)];
 }
 
 function buildEmptyForm(date: Date, start = 9 * 60, end = 10 * 60): ScheduleForm {
@@ -226,7 +313,9 @@ function buildEmptyForm(date: Date, start = 9 * 60, end = 10 * 60): ScheduleForm
     carNeeded: true,
     category: 'work',
     status: 'Vehicle Required',
-    notes: ''
+    notes: '',
+    color: 'general',
+    textColor: 'light'
   };
 }
 
@@ -242,12 +331,72 @@ function formFromEvent(event: CalendarEvent): ScheduleForm {
     carNeeded: event.carNeeded,
     category: event.category,
     status: event.status ?? (event.carNeeded ? 'Vehicle Required' : 'Remote / No Car'),
-    notes: event.notes ?? ''
+    notes: event.notes ?? '',
+    color: getEventColor(event),
+    textColor: getEventTextColor(event)
   };
 }
 
 function sortEvents(events: CalendarEvent[]) {
-  return [...events].sort((a, b) => getEventStart(a) - getEventStart(b));
+  return [...events].sort((a, b) => getEventStart(a) - getEventStart(b) || getEventEnd(b) - getEventEnd(a));
+}
+
+function eventsOverlap(a: CalendarEvent, b: CalendarEvent) {
+  return getEventStart(a) < getEventEnd(b) && getEventStart(b) < getEventEnd(a);
+}
+
+function eventContains(outer: CalendarEvent, inner: CalendarEvent) {
+  const outerStart = getEventStart(outer);
+  const outerEnd = getEventEnd(outer);
+  const innerStart = getEventStart(inner);
+  const innerEnd = getEventEnd(inner);
+
+  return outerStart <= innerStart && outerEnd >= innerEnd && (outerStart < innerStart || outerEnd > innerEnd);
+}
+
+function buildEventHorizontalLayouts(events: CalendarEvent[]) {
+  const sorted = sortEvents(events);
+  const layouts = new Map<string, EventHorizontalLayout>();
+
+  sorted.forEach((event, index) => {
+    layouts.set(event.id, { leftPercent: 0, widthPercent: 100, zIndex: index + 1 });
+  });
+
+  sorted.forEach((event, index) => {
+    for (let nextIndex = index + 1; nextIndex < sorted.length; nextIndex += 1) {
+      const next = sorted[nextIndex];
+      if (!eventsOverlap(event, next)) continue;
+
+      if (eventContains(event, next)) {
+        layouts.set(next.id, { leftPercent: 5, widthPercent: 95, zIndex: 50 + nextIndex });
+        continue;
+      }
+
+      if (eventContains(next, event)) {
+        layouts.set(event.id, { leftPercent: 5, widthPercent: 95, zIndex: 50 + index });
+        continue;
+      }
+
+      const eventStart = getEventStart(event);
+      const nextStart = getEventStart(next);
+      const earlier = eventStart <= nextStart ? event : next;
+      const later = earlier === event ? next : event;
+      const earlierLayout = layouts.get(earlier.id);
+      const laterLayout = layouts.get(later.id);
+
+      if (earlierLayout?.widthPercent !== 95) {
+        layouts.set(earlier.id, { leftPercent: 0, widthPercent: 50, zIndex: earlierLayout?.zIndex ?? index + 1 });
+      }
+      if (laterLayout?.widthPercent !== 95) {
+        layouts.set(later.id, { leftPercent: 50, widthPercent: 50, zIndex: laterLayout?.zIndex ?? nextIndex + 1 });
+      }
+    }
+  });
+
+  return sorted.map((event) => ({
+    event,
+    horizontalLayout: layouts.get(event.id) ?? { leftPercent: 0, widthPercent: 100, zIndex: 1 }
+  }));
 }
 
 function TimeColumn() {
@@ -262,7 +411,7 @@ function TimeColumn() {
   );
 }
 
-function EventBlock({ event, selected, onClick }: { event: CalendarEvent; selected: boolean; onClick: (event: CalendarEvent) => void }) {
+function EventBlock({ event, horizontalLayout, selected, onClick }: { event: CalendarEvent; horizontalLayout: EventHorizontalLayout; selected: boolean; onClick: (event: CalendarEvent) => void }) {
   const { top, height } = getBlockLayout(event);
   const compact = height < 46;
 
@@ -271,16 +420,24 @@ function EventBlock({ event, selected, onClick }: { event: CalendarEvent; select
       data-event-block="true"
       onClick={(clickEvent) => { clickEvent.stopPropagation(); onClick(event); }}
       onPointerDown={(pointerEvent) => pointerEvent.stopPropagation()}
-      className={cn('absolute left-1 right-1 overflow-hidden rounded-md border px-1.5 py-1 text-left shadow-sm transition hover:brightness-105 active:scale-[0.99]', getEventTone(event), selected && 'ring-1 ring-primary/60')}
-      style={{ top, height }}
+      className={cn('absolute overflow-hidden rounded-md px-1.5 py-1 text-left opacity-100 shadow-sm transition hover:brightness-105 active:scale-[0.99]', getEventTone(event), selected && 'ring-1 ring-primary/60')}
+      style={{
+        top,
+        height,
+        left: `calc(${horizontalLayout.leftPercent}% + 0.25rem)`,
+        width: `calc(${horizontalLayout.widthPercent}% - 0.5rem)`,
+        zIndex: selected ? horizontalLayout.zIndex + 30 : horizontalLayout.zIndex,
+        ...getEventColorStyle(event),
+        ...getEventTextColorStyle(event)
+      }}
     >
       <div className="flex h-full min-h-0 flex-col">
         <div className="flex min-w-0 items-center gap-1">
           {isChargingEvent(event) ? <BatteryCharging className="h-3 w-3 shrink-0" /> : isRiskEvent(event) ? <AlertTriangle className="h-3 w-3 shrink-0" /> : event.carNeeded ? <Car className="h-3 w-3 shrink-0" /> : <Video className="h-3 w-3 shrink-0" />}
           <span className="truncate text-[11px] font-semibold leading-tight">{event.title}</span>
         </div>
-        <span className="mt-0.5 truncate text-[10px] font-medium opacity-80">{minutesToDisplayTime(getEventStart(event))} - {minutesToDisplayTime(getEventEnd(event))}</span>
-        {!compact && <span className="mt-0.5 truncate text-[10px] font-medium opacity-65">{event.location}</span>}
+        <span className="mt-0.5 truncate text-[10px] font-medium">{minutesToDisplayTime(getEventStart(event))} - {minutesToDisplayTime(getEventEnd(event))}</span>
+        {!compact && <span className="mt-0.5 truncate text-[10px] font-medium">{event.location}</span>}
       </div>
     </button>
   );
@@ -307,17 +464,20 @@ function DayColumn({ day, dayIndex, events, selection, selectedEventId, onEventC
   onPointerMove: (event: ReactPointerEvent<HTMLElement>) => void;
   onPointerUp: (event: ReactPointerEvent<HTMLElement>) => void;
 }) {
+  const laidOutEvents = buildEventHorizontalLayouts(events);
+
   return (
     <div className="relative border-r border-outline-variant/30 bg-surface-container-lowest last:border-r-0" style={{ height: calendarHeight }} onClick={() => onSelectDay(day)} onPointerDown={(event) => onPointerDown(event, dayIndex, day)} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp}>
       {Array.from({ length: dayEndHour - dayStartHour + 1 }, (_, index) => <div key={index} className="absolute left-0 right-0 border-t border-outline-variant/30" style={{ top: index * hourHeight }} />)}
-      {sortEvents(events).map((event) => <EventBlock key={event.id} event={event} selected={event.id === selectedEventId} onClick={onEventClick} />)}
+      {laidOutEvents.map(({ event, horizontalLayout }) => <EventBlock key={event.id} event={event} horizontalLayout={horizontalLayout} selected={event.id === selectedEventId} onClick={onEventClick} />)}
       {selection?.dayIndex === dayIndex && <DragSelectionBlock selection={selection} />}
     </div>
   );
 }
 
-function CalendarWeekView({ weekDays, events, selection, selectedEventId, onEventClick, onSelectDay, onPointerDown, onPointerMove, onPointerUp }: {
-  weekDays: Date[];
+function CalendarWeekView({ days, weekStart, events, selection, selectedEventId, onEventClick, onSelectDay, onPointerDown, onPointerMove, onPointerUp }: {
+  days: Date[];
+  weekStart: Date;
   events: CalendarEvent[];
   selection: DragSelection | null;
   selectedEventId?: string;
@@ -327,24 +487,31 @@ function CalendarWeekView({ weekDays, events, selection, selectedEventId, onEven
   onPointerMove: (event: ReactPointerEvent<HTMLElement>) => void;
   onPointerUp: (event: ReactPointerEvent<HTMLElement>) => void;
 }) {
-  const gridTemplateColumns = `${timeColumnWidth}px repeat(7, minmax(${dayColumnMinWidth}px, 1fr))`;
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const gridTemplateColumns = `${timeColumnWidth}px repeat(${days.length}, minmax(${dayColumnMinWidth}px, 1fr))`;
+
+  useEffect(() => {
+    const weekIndex = days.findIndex((day) => sameDay(day, weekStart));
+    if (weekIndex < 0 || !scrollRef.current) return;
+    scrollRef.current.scrollTo({ left: weekIndex * dayColumnMinWidth, behavior: 'smooth' });
+  }, [days, weekStart]);
 
   return (
     <section className="min-h-0 overflow-hidden bg-surface">
-      <div className="h-full overflow-auto">
-        <div className="min-w-[976px]">
+      <div ref={scrollRef} className="h-full overflow-auto">
+        <div style={{ minWidth: `${timeColumnWidth + days.length * dayColumnMinWidth}px` }}>
           <div className="sticky top-0 z-30 grid border-b border-outline-variant/45 bg-surface-container-low" style={{ gridTemplateColumns }}>
-            <div className="sticky left-0 z-40 flex h-14 items-end justify-end border-r border-outline-variant/45 bg-surface-container-low px-2 pb-2 text-[10px] font-semibold uppercase tracking-wider text-slate-500">GMT+8</div>
-            {weekDays.map((day, index) => (
-              <button key={day.toISOString()} onClick={() => onSelectDay(day)} className="h-14 border-r border-outline-variant/45 bg-surface-container-low px-2.5 py-2 text-left transition hover:bg-surface-container last:border-r-0" aria-label={fullDateFormatter.format(day)}>
-                <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">{dayLabels[index]}</div>
-                <div className="mt-1 flex items-baseline gap-1.5"><span className="text-lg font-semibold leading-none text-on-surface">{dayHeaderFormatter.format(day)}</span><span className="text-[11px] font-medium text-on-surface-variant">{monthLabelFormatter.format(day)}</span></div>
+            <div className="sticky left-0 z-40 flex h-8 items-center justify-end border-r border-outline-variant/45 bg-surface-container-low px-2 text-[9px] font-semibold text-slate-500">GMT+8</div>
+            {days.map((day, index) => (
+              <button key={day.toISOString()} onClick={() => onSelectDay(day)} className="flex h-8 items-center justify-center gap-1.5 border-r border-outline-variant/45 bg-surface-container-low px-2 text-[11px] font-semibold text-on-surface transition hover:bg-surface-container last:border-r-0" aria-label={fullDateFormatter.format(day)}>
+                <span>{dayLabels[(day.getDay() + 6) % 7]}</span>
+                <span>{dayHeaderFormatter.format(day)}</span>
               </button>
             ))}
           </div>
           <div className="grid" style={{ gridTemplateColumns }}>
             <TimeColumn />
-            {weekDays.map((day, index) => (
+            {days.map((day, index) => (
               <DayColumn key={day.toISOString()} day={day} dayIndex={index} events={events.filter((event) => sameDay(getEventDate(event), day))} selection={selection} selectedEventId={selectedEventId} onEventClick={onEventClick} onSelectDay={onSelectDay} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} />
             ))}
           </div>
@@ -430,13 +597,46 @@ function EventSidePanel({ mode, form, editingEvent, onChange, onClose, onDelete,
             <input value={form.location} onChange={(event) => onChange({ ...form, location: event.target.value })} required className="h-9 w-full rounded-md border border-outline-variant/45 bg-surface-container-lowest px-2.5 text-xs font-medium text-on-surface outline-none placeholder:text-slate-500 focus:border-primary/45" placeholder="TRX Executive Tower" />
           </label>
           <label className="block">
-            <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-slate-500">Type</span>
-            <select value={form.category} onChange={(event) => onChange({ ...form, category: event.target.value as CalendarEvent['category'] })} className="h-9 w-full rounded-md border border-outline-variant/45 bg-surface-container-lowest px-2.5 text-xs font-medium text-on-surface outline-none focus:border-primary/45"><option value="work">Work</option><option value="personal">Personal</option><option value="fitness">Fitness</option><option value="other">Charging / Other</option></select>
+            <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-slate-500">Event Type / Use</span>
+            <select value={form.category} onChange={(event) => { const category = event.target.value as CalendarEvent['category']; const color = getDefaultEventColor({ title: form.title, status: form.status, carNeeded: form.carNeeded, category }); onChange({ ...form, category, color, textColor: getDefaultEventTextColor(color) }); }} className="h-9 w-full rounded-md border border-outline-variant/45 bg-surface-container-lowest px-2.5 text-xs font-medium text-on-surface outline-none focus:border-primary/45"><option value="work">Work / Meeting</option><option value="study">Class / Study</option><option value="assignment">Assignment / Deadline</option><option value="important">Important / Urgent</option><option value="charging">AI Charging Recommendation</option><option value="risk">Battery Risk Warning</option><option value="personal">Personal</option><option value="fitness">Fitness</option><option value="other">Charging / Other</option></select>
           </label>
           <label className="block">
             <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-slate-500">Status</span>
             <input value={form.status} onChange={(event) => onChange({ ...form, status: event.target.value })} className="h-9 w-full rounded-md border border-outline-variant/45 bg-surface-container-lowest px-2.5 text-xs font-medium text-on-surface outline-none placeholder:text-slate-500 focus:border-primary/45" placeholder="Vehicle Required" />
           </label>
+          <div>
+            <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-slate-500">Background</span>
+            <div className="grid grid-cols-5 sm:grid-cols-10 gap-1.5">
+              {eventColorOptions.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => onChange({ ...form, color: option.value, textColor: getDefaultEventTextColor(option.value) })}
+                  className={cn('flex h-9 items-center justify-center rounded-md text-[0px] transition active:scale-95', form.color === option.value && 'ring-2 ring-primary ring-offset-2 ring-offset-surface-container-low')}
+                  style={{ backgroundColor: option.backgroundColor }}
+                  aria-label={`Use ${option.label} schedule color`}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-slate-500">Text</span>
+            <div className="grid grid-cols-2 gap-1.5">
+              {eventTextColorOptions.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => onChange({ ...form, textColor: option.value })}
+                  className={cn('flex h-9 items-center justify-center rounded-md border text-[10px] font-black uppercase tracking-widest transition active:scale-95', form.textColor === option.value ? 'border-primary ring-2 ring-primary ring-offset-2 ring-offset-surface-container-low' : 'border-outline-variant/45')}
+                  style={{ backgroundColor: option.color, color: option.value === 'dark' ? '#F8FAFC' : '#1E3A5F' }}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
           <button type="button" onClick={() => onChange({ ...form, carNeeded: !form.carNeeded, status: !form.carNeeded ? 'Vehicle Required' : 'Remote / No Car' })} className={cn('flex h-9 w-full items-center justify-center gap-2 rounded-md border px-3 text-xs font-semibold transition', form.carNeeded ? 'border-blue-300/35 bg-blue-500/20 text-blue-600' : 'border-outline-variant/45 bg-surface-container-lowest text-on-surface-variant')}>{form.carNeeded ? <Car className="h-3.5 w-3.5" /> : <Video className="h-3.5 w-3.5" />}{form.carNeeded ? 'Drive needed' : 'Remote / no car'}</button>
           <label className="block">
             <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-slate-500">Notes</span>
@@ -467,23 +667,24 @@ export default function Calendar() {
   const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
   const [form, setForm] = useState<ScheduleForm>(() => buildEmptyForm(initialDate));
 
-  const weekDays = useMemo(() => getWeekDays(weekStart), [weekStart]);
-  const weekEvents = useMemo(() => {
-    const weekEnd = addDays(weekStart, 7);
+  const timelineDays = useMemo(() => getTimelineDays(weekStart), [weekStart]);
+  const timelineEvents = useMemo(() => {
+    const timelineStart = timelineDays[0] ?? startOfDay(weekStart);
+    const timelineEnd = addDays(timelineDays[timelineDays.length - 1] ?? demoEnd, 1);
     return calendarEvents.filter((event) => {
       const date = getEventDate(event);
-      return date >= weekStart && date < weekEnd;
+      return date >= timelineStart && date < timelineEnd;
     });
-  }, [calendarEvents, weekStart]);
+  }, [calendarEvents, timelineDays]);
 
-  const draftEvent = useMemo<CalendarEvent | null>(() => {
-    if (panelMode !== 'create') return null;
+  const draftEvent = useMemo<(CalendarEvent & { color: EventColor; textColor: EventTextColor }) | null>(() => {
+    if (!panelMode) return null;
     const start = parseTimeToMinutes(form.startTime);
     const parsedEnd = parseTimeToMinutes(form.endTime);
     const normalizedEnd = parsedEnd > start ? parsedEnd : start + 30;
 
     return {
-      id: draftEventId,
+      id: panelMode === 'edit' && editingEvent ? editingEvent.id : draftEventId,
       title: form.title.trim() || 'Draft schedule',
       location: form.location.trim() || 'Selected time block',
       time: minutesToDisplayTime(start),
@@ -493,17 +694,22 @@ export default function Calendar() {
       type: getEventType(form.startTime),
       category: form.category,
       status: form.status.trim() || 'Draft',
-      notes: form.notes.trim() || undefined
+      notes: form.notes.trim() || undefined,
+      color: form.color,
+      textColor: form.textColor,
+      aiReason: editingEvent?.aiReason
     };
-  }, [form, panelMode]);
+  }, [editingEvent, form, panelMode]);
 
   const visibleWeekEvents = useMemo(() => {
-    if (!draftEvent) return weekEvents;
+    if (!draftEvent) return timelineEvents;
     const draftDate = getEventDate(draftEvent);
-    const weekEnd = addDays(weekStart, 7);
-    if (draftDate < weekStart || draftDate >= weekEnd) return weekEvents;
-    return [...weekEvents, draftEvent];
-  }, [draftEvent, weekEvents, weekStart]);
+    const timelineStart = timelineDays[0] ?? startOfDay(weekStart);
+    const timelineEnd = addDays(timelineDays[timelineDays.length - 1] ?? demoEnd, 1);
+    const baseEvents = editingEvent ? timelineEvents.filter((event) => event.id !== editingEvent.id) : timelineEvents;
+    if (draftDate < timelineStart || draftDate >= timelineEnd) return baseEvents;
+    return [...baseEvents, draftEvent];
+  }, [draftEvent, editingEvent, timelineEvents, timelineDays]);
 
   const selectedEventId = panelMode === 'create' ? draftEventId : editingEvent?.id;
 
@@ -570,7 +776,7 @@ export default function Calendar() {
     const normalizedEnd = parsedEnd > start ? parsedEnd : start + 30;
     const date = fromDateInputValue(form.date);
     const status = form.status.trim() || (form.carNeeded ? 'Vehicle Required' : 'Remote / No Car');
-    const nextEvent: CalendarEvent = {
+    const nextEvent: CalendarEvent & { color: EventColor; textColor: EventTextColor } = {
       id: editingEvent?.id ?? `local-${Date.now()}`,
       title: form.title.trim(),
       location: form.location.trim(),
@@ -582,6 +788,8 @@ export default function Calendar() {
       category: form.category,
       status,
       notes: form.notes.trim() || undefined,
+      color: form.color,
+      textColor: form.textColor,
       aiReason: editingEvent?.aiReason
     };
 
@@ -602,7 +810,8 @@ export default function Calendar() {
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex h-full min-h-0 flex-col overflow-hidden bg-surface text-on-surface">
       <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_minmax(240px,34vh)] overflow-hidden lg:grid-cols-[minmax(0,1fr)_300px] lg:grid-rows-1">
         <CalendarWeekView
-          weekDays={weekDays}
+          days={timelineDays}
+          weekStart={weekStart}
           events={visibleWeekEvents}
           selection={dragSelection}
           selectedEventId={selectedEventId}

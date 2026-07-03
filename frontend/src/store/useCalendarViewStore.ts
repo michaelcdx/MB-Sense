@@ -4,7 +4,6 @@ const demoStart = new Date(2026, 5, 15);
 const demoEnd = new Date(2026, 6, 30);
 const fallbackDemoDate = new Date(2026, 6, 1);
 
-const weekRangeFormatter = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' });
 const monthHeaderFormatter = new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' });
 
 export function startOfCalendarDay(date: Date) {
@@ -18,9 +17,19 @@ export function startOfCalendarWeek(date: Date) {
   return normalized;
 }
 
+export function startOfCalendarMonth(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), 1);
+}
+
 export function addCalendarDays(date: Date, amount: number) {
   const next = new Date(date);
   next.setDate(next.getDate() + amount);
+  return next;
+}
+
+export function addCalendarMonths(date: Date, amount: number) {
+  const next = startOfCalendarMonth(date);
+  next.setMonth(next.getMonth() + amount);
   return next;
 }
 
@@ -30,16 +39,15 @@ export function getInitialCalendarDate() {
 }
 
 export function getAvailableCalendarWeeks() {
-  const weeks: Date[] = [];
-  for (let cursor = startOfCalendarWeek(demoStart); cursor <= startOfCalendarWeek(demoEnd); cursor = addCalendarDays(cursor, 7)) {
-    weeks.push(new Date(cursor));
+  const months: Date[] = [];
+  for (let cursor = startOfCalendarMonth(demoStart); cursor <= startOfCalendarMonth(demoEnd); cursor = addCalendarMonths(cursor, 1)) {
+    months.push(new Date(cursor));
   }
-  return weeks;
+  return months;
 }
 
-export function getCalendarWeekRangeLabel(weekStart: Date) {
-  const weekEnd = addCalendarDays(weekStart, 6);
-  return `${weekRangeFormatter.format(weekStart)} - ${weekRangeFormatter.format(weekEnd)}`;
+export function getCalendarWeekRangeLabel(monthStart: Date) {
+  return monthHeaderFormatter.format(monthStart);
 }
 
 export function getCalendarMonthHeaderLabel(weekStart: Date) {
@@ -72,31 +80,31 @@ const initialDate = getInitialCalendarDate();
 
 export const useCalendarViewStore = create<CalendarViewStore>((set) => ({
   selectedDate: startOfCalendarDay(initialDate),
-  weekStart: startOfCalendarWeek(initialDate),
+  weekStart: startOfCalendarMonth(initialDate),
   setSelectedDate: (date) => set({ selectedDate: startOfCalendarDay(date) }),
   setActiveWeek: (date) => set({
     selectedDate: startOfCalendarDay(date),
-    weekStart: startOfCalendarWeek(date),
+    weekStart: startOfCalendarMonth(date),
   }),
   goToPreviousWeek: () => set((state) => {
-    const previousWeek = addCalendarDays(state.weekStart, -7);
+    const previousWeek = addCalendarMonths(state.weekStart, -1);
     return {
       selectedDate: startOfCalendarDay(previousWeek),
-      weekStart: startOfCalendarWeek(previousWeek),
+      weekStart: startOfCalendarMonth(previousWeek),
     };
   }),
   goToNextWeek: () => set((state) => {
-    const nextWeek = addCalendarDays(state.weekStart, 7);
+    const nextWeek = addCalendarMonths(state.weekStart, 1);
     return {
       selectedDate: startOfCalendarDay(nextWeek),
-      weekStart: startOfCalendarWeek(nextWeek),
+      weekStart: startOfCalendarMonth(nextWeek),
     };
   }),
   goToTodayWeek: () => {
     const today = getInitialCalendarDate();
     set({
       selectedDate: startOfCalendarDay(today),
-      weekStart: startOfCalendarWeek(today),
+      weekStart: startOfCalendarMonth(today),
     });
   },
 }));
