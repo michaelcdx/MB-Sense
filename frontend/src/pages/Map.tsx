@@ -6,7 +6,6 @@ import {
   Banknote,
   BatteryCharging,
   Check,
-  CloudRain,
   Coffee,
   LocateFixed,
   MapPin,
@@ -117,7 +116,7 @@ type FutureDriveAction = 'Optimize Selected Plan' | 'Compare Rescue Routes' | 'S
 type FutureDrivePlanId = 'planA' | 'planB' | 'planC';
 type FutureDriveRiskTone = 'safe' | 'watch' | 'high' | 'critical';
 type BatteryStatusColor = 'green' | 'yellow' | 'red';
-type FutureDrivePreviewMode = 'tomorrow' | 'nextDrivingDay' | 'empty' | 'calendarUnavailable';
+type FutureDrivePreviewMode = 'tomorrow' | 'tomorrowEmpty' | 'nextDrivingDay' | 'empty' | 'calendarUnavailable';
 type RouteVariant = 'recommended' | 'comfort' | 'eco';
 
 type MockDestination = {
@@ -272,6 +271,8 @@ type FutureDriveStop = {
   batteryUsePercent?: number;
   traffic?: string;
   weatherImpactPercent?: number;
+  departureTime?: string;
+  eventTime?: string;
 };
 
 type FutureDriveSegment = {
@@ -473,7 +474,7 @@ function getDrivingEventsForDate(events: CalendarEvent[], targetDate: Date) {
     .sort((a, b) => parseCalendarTimeToMinutes(a.departureTime ?? a.time) - parseCalendarTimeToMinutes(b.departureTime ?? b.time));
 }
 
-function getPreviewDrivingDay(events: CalendarEvent[], today: Date): FutureDrivePreviewSelection {
+function getPreviewDrivingDay(events: CalendarEvent[], today: Date, shouldCheckNextDrivingDay = false): FutureDrivePreviewSelection {
   const tomorrow = addCalendarDays(today, 1);
   const tomorrowEvents = getDrivingEventsForDate(events, tomorrow);
 
@@ -485,7 +486,15 @@ function getPreviewDrivingDay(events: CalendarEvent[], today: Date): FutureDrive
     };
   }
 
-  for (let dayOffset = 1; dayOffset <= 7; dayOffset += 1) {
+  if (!shouldCheckNextDrivingDay) {
+    return {
+      date: null,
+      events: [],
+      mode: 'tomorrowEmpty',
+    };
+  }
+
+  for (let dayOffset = 2; dayOffset <= 8; dayOffset += 1) {
     const targetDate = addCalendarDays(today, dayOffset);
     const drivingEvents = getDrivingEventsForDate(events, targetDate);
 
@@ -507,6 +516,14 @@ function getPreviewDrivingDay(events: CalendarEvent[], today: Date): FutureDrive
 
 function formatFutureDriveDate(date: Date) {
   return date.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' });
+}
+
+function formatFutureDriveCompactDate(date: Date) {
+  const parts = new Intl.DateTimeFormat('en-GB', { weekday: 'long', day: 'numeric', month: 'long' }).formatToParts(date);
+  const weekday = parts.find((part) => part.type === 'weekday')?.value;
+  const day = parts.find((part) => part.type === 'day')?.value;
+  const month = parts.find((part) => part.type === 'month')?.value;
+  return [weekday, day, month].filter(Boolean).join(' ');
 }
 
 function formatDurationMinutes(minutes?: number | null) {
@@ -683,6 +700,8 @@ function buildFutureDrivePreviewData(plan: ChargingPlan, selection: FutureDriveP
       batteryUsePercent: trip.batteryUsePercent,
       traffic: trip.traffic,
       weatherImpactPercent: trip.weatherImpactPercent,
+      departureTime: trip.departureTime,
+      eventTime: trip.eventTime,
     };
     stops.push(activityStop);
     activityStops.push(activityStop);
@@ -718,7 +737,7 @@ function buildFutureDrivePreviewData(plan: ChargingPlan, selection: FutureDriveP
     title: selection.mode === 'tomorrow' ? "Tomorrow's Energy Forecast" : 'Next Driving Day Forecast',
     subtitle: selection.mode === 'tomorrow'
       ? previewDateLabel
-      : `No driving activities tomorrow. Showing ${previewDateLabel}.`,
+      : `Showing next driving day: ${formatFutureDriveCompactDate(selection.date)}`,
     previewMode: selection.mode,
     previewDate: selection.date,
     previewDateLabel,
@@ -1581,23 +1600,46 @@ function MapStatePill({
 function FutureDrivePreviewSheet({
   preview,
   emptyMessage,
+  emptyActionLabel,
   rescuePlans,
   selectedPlan,
   selectedPlanId,
   prediction,
   onPlanSelect,
+  onEmptyAction,
   onAction,
 }: {
   preview: FutureDrivePreviewData | null;
   emptyMessage: string;
+  emptyActionLabel?: string;
   rescuePlans: FutureDriveRescuePlan[];
   selectedPlan: FutureDriveRescuePlan;
   selectedPlanId: FutureDrivePlanId;
   prediction: FutureDrivePrediction;
   onPlanSelect: (planId: FutureDrivePlanId) => void;
+  onEmptyAction?: () => void;
   onAction: (action: FutureDriveAction) => void;
 }) {
   const riskVisual = futureDriveRiskVisuals[prediction.riskTone];
+  const [showActivityList, setShowActivityList] = useState(false);
+  const [expandedActivityId, setExpandedActivityId] = useState<string | null>(null);
+
+  useEffect(() => {
+    setShowActivityList(false);
+    setExpandedActivityId(null);
+  }, [preview?.previewDateLabel]);
+
+  const handleActivityListToggle = () => {
+    const nextShowState = !showActivityList;
+    setShowActivityList(nextShowState);
+    if (!nextShowState) {
+      setExpandedActivityId(null);
+    }
+  };
+
+  const handleActivityDetailToggle = (activityId: string) => {
+    setExpandedActivityId((current) => (current === activityId ? null : activityId));
+  };
 
   if (!preview) {
     return (
@@ -1607,19 +1649,64 @@ function FutureDrivePreviewSheet({
       >
         <div className="flex min-h-0 flex-1 items-center justify-center px-5 text-center">
           <div>
-            <span className="mx-auto flex h-10 w-10 items-center justify-center rounded-full border border-amber-200/22 bg-amber-300/10 text-amber-100">
+            <span className="mx-auto flex h-10 w-10 items-center justify-center rounded-full border border-primary/30 bg-primary/12 text-primary shadow-ambient">
               <AlertTriangle className="h-5 w-5" />
             </span>
             <h2 className="mt-3 text-[17px] font-semibold text-white">{emptyMessage}</h2>
             <p className="mt-2 text-[12px] font-medium leading-relaxed text-slate-400">
               {emptyMessage}
             </p>
+            {emptyActionLabel && onEmptyAction && (
+              <button
+                type="button"
+                onClick={onEmptyAction}
+                className="mt-4 inline-flex min-h-10 items-center justify-center rounded-[14px] border border-primary/25 bg-primary px-4 text-[10px] font-semibold uppercase tracking-[0.05em] text-on-primary shadow-ambient transition duration-200 ease-out active:scale-[0.98]"
+              >
+                {emptyActionLabel}
+              </button>
+            )}
           </div>
         </div>
       </section>
     );
   }
   const timelineActivities = preview.activityStops;
+  const timelineNodes = [
+    {
+      id: 'timeline-start',
+      label: 'Start',
+      batteryPercent: preview.currentBattery,
+      batteryStatus: getBatteryStatusColor(preview.currentBattery),
+    },
+    ...timelineActivities.map((stop) => ({
+      id: stop.id,
+      label: stop.timelineLabel ?? `A${stop.activityNumber ?? ''}`,
+      batteryPercent: stop.batteryPercent,
+      batteryStatus: stop.batteryStatus,
+    })),
+  ];
+  const timelineIsScrollable = timelineNodes.length > 5;
+  const timelineMinWidth = timelineIsScrollable ? `${Math.max(timelineNodes.length * 92, 440)}px` : undefined;
+  const highestEnergyStop =
+    timelineActivities.reduce<FutureDriveStop | null>((current, stop) => {
+      if (typeof stop.batteryUsePercent !== 'number') return current;
+      if (!current || stop.batteryUsePercent > (current.batteryUsePercent ?? -1)) return stop;
+      return current;
+    }, null) ?? timelineActivities[0] ?? null;
+  const trafficImpactLabel = highestEnergyStop?.traffic
+    ? `${highestEnergyStop.traffic.charAt(0).toUpperCase()}${highestEnergyStop.traffic.slice(1)}`
+    : null;
+  const weatherImpactLabel =
+    typeof highestEnergyStop?.weatherImpactPercent === 'number' ? `${highestEnergyStop.weatherImpactPercent}%` : null;
+  const batteryUseImpactLabel =
+    typeof highestEnergyStop?.batteryUsePercent === 'number' ? `${highestEnergyStop.batteryUsePercent}%` : null;
+  const riskReasonRows = [
+    { label: 'Highest energy segment', value: highestEnergyStop?.name },
+    { label: 'Traffic', value: trafficImpactLabel },
+    { label: 'Weather impact', value: weatherImpactLabel },
+    { label: 'Battery use impact', value: batteryUseImpactLabel },
+  ].filter((row): row is { label: string; value: string } => Boolean(row.value));
+  const fallbackRiskReason = preview.rootCause.split('. ').find(Boolean);
 
   return (
     <section
@@ -1634,10 +1721,10 @@ function FutureDrivePreviewSheet({
               <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-primary/25 bg-primary/10 text-primary">
                 <Sparkles className="h-3.5 w-3.5" />
               </span>
-              <p className="text-[8.5px] font-semibold uppercase tracking-[0.15em] text-primary">FutureDrive Preview</p>
+              <p className="text-[8.5px] font-semibold uppercase tracking-[0.15em] text-primary">FUTUREDRIVE PREVIEW</p>
             </div>
             <h2 className="mt-1.5 text-[17px] font-semibold leading-tight text-white">{preview.title}</h2>
-            <p className="mt-1 text-[11.5px] font-medium text-slate-400">{preview.subtitle}</p>
+            <p className="mt-1 text-[11.5px] font-medium leading-relaxed text-slate-300">{preview.subtitle}</p>
           </div>
           <span
             className="shrink-0 rounded-full border px-2.5 py-1 text-[8.5px] font-semibold uppercase tracking-[0.08em]"
@@ -1649,7 +1736,7 @@ function FutureDrivePreviewSheet({
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-        <div className="rounded-[18px] border border-white/[0.08] bg-white/[0.04] px-3.5 py-3.5">
+        <div className="rounded-[18px] border border-white/[0.08] bg-white/[0.04] px-3.5 py-3">
           <div className="mb-2.5 flex items-center justify-between gap-3">
             <p className="text-[8.5px] font-semibold uppercase tracking-[0.14em] text-slate-200">Timeline Prediction</p>
             <span className="rounded-full border px-2 py-0.5 text-[8.5px] font-semibold uppercase tracking-[0.08em]" style={{ borderColor: `${riskVisual.color}32`, backgroundColor: `${riskVisual.color}12`, color: riskVisual.color }}>
@@ -1657,120 +1744,204 @@ function FutureDrivePreviewSheet({
             </span>
           </div>
 
-          <div className="flex overflow-hidden rounded-full bg-white/[0.09]">
-            {timelineActivities.map((stop) => {
-              const visual = batteryStatusVisuals[stop.batteryStatus];
-              return (
-                <span
-                  key={`timeline-segment-${stop.id}`}
-                  className="h-2"
-                  style={{ flex: 1, backgroundColor: visual.color, boxShadow: `0 0 10px ${visual.glow}` }}
-                />
-              );
-            })}
-          </div>
-          <div className="mt-3 flex gap-2">
-            {timelineActivities.map((stop) => {
-              const visual = batteryStatusVisuals[stop.batteryStatus];
-              return (
-                <div key={`timeline-point-${stop.id}`} className="min-w-0 flex-1 text-center">
-                  <div
-                    className="mx-auto flex h-8 w-8 items-center justify-center rounded-full border text-[9px] font-black uppercase tracking-[0.04em] shadow-ambient"
-                    style={{
-                      borderColor: `${visual.color}52`,
-                      backgroundColor: `${visual.color}18`,
-                      color: visual.color,
-                      boxShadow: `0 0 16px ${visual.glow}`,
-                    }}
-                  >
-                    {stop.timelineLabel}
+          <div className="overflow-x-auto pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            <div className="flex min-h-[3.85rem] items-start" style={{ minWidth: timelineMinWidth }}>
+              {timelineNodes.map((node, index) => {
+                const visual = batteryStatusVisuals[node.batteryStatus];
+                const nextNode = timelineNodes[index + 1];
+                const segmentVisual = nextNode ? batteryStatusVisuals[nextNode.batteryStatus] : visual;
+
+                return (
+                  <div key={`timeline-flow-${node.id}`} className="contents">
+                    <div className="flex w-16 shrink-0 flex-col items-center text-center">
+                      <div
+                        className="flex h-9 w-9 items-center justify-center rounded-full border text-[8.5px] font-black uppercase tracking-[0.03em] shadow-ambient"
+                        style={{
+                          borderColor: `${visual.color}52`,
+                          backgroundColor: `${visual.color}18`,
+                          color: visual.color,
+                          boxShadow: `0 0 16px ${visual.glow}`,
+                        }}
+                      >
+                        {node.label}
+                      </div>
+                      <p className="mt-1.5 text-[11px] font-semibold leading-none" style={{ color: visual.color }}>
+                        {node.batteryPercent}%
+                      </p>
+                    </div>
+                    {nextNode && (
+                      <div
+                        className="mt-[1.05rem] h-1.5 min-w-8 flex-1 rounded-full"
+                        style={{ backgroundColor: segmentVisual.color, boxShadow: `0 0 10px ${segmentVisual.glow}` }}
+                      />
+                    )}
                   </div>
-                  <p className="mt-1 text-[11px] font-semibold leading-none" style={{ color: visual.color }}>
-                    {stop.batteryPercent}%
-                  </p>
-                </div>
-              );
-            })}
+                );
+              })}
+              {timelineNodes.length === 1 && (
+                <div className="mt-[1.05rem] h-1.5 flex-1 rounded-full bg-slate-500/45" />
+              )}
+            </div>
+            {timelineIsScrollable && (
+              <p className="text-center text-[8.5px] font-semibold uppercase tracking-[0.10em] text-slate-400">
+                Scroll for more activities
+              </p>
+            )}
           </div>
 
-          <div className="mt-3 divide-y divide-white/[0.07]">
-            {timelineActivities.map((stop) => {
-              const visual = batteryStatusVisuals[stop.batteryStatus];
-              return (
-                <div key={`timeline-row-${stop.id}`} className="flex items-center justify-between gap-3 py-2.5">
-                  <div className="flex min-w-0 items-center gap-2.5">
-                    <span
-                      className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-[8px] font-black uppercase tracking-[0.04em]"
-                      style={{ borderColor: `${visual.color}38`, backgroundColor: `${visual.color}18` }}
+          <div className="mt-1.5 border-t border-white/[0.07] pt-2">
+            <button
+              type="button"
+              onClick={handleActivityListToggle}
+              className="flex min-h-10 w-full items-center justify-center rounded-[14px] border border-primary/20 bg-primary/10 px-3 text-[10px] font-semibold uppercase tracking-[0.08em] text-primary transition duration-200 ease-out hover:bg-primary/15 active:scale-[0.99]"
+            >
+              {showActivityList ? 'Hide activities' : 'Click to expand activities'}
+            </button>
+
+            {showActivityList && (
+              <div className="mt-2 grid gap-1.5">
+                {timelineActivities.map((stop) => {
+                  const visual = batteryStatusVisuals[stop.batteryStatus];
+                  const isExpanded = expandedActivityId === stop.id;
+                  const timeLabel = stop.departureTime && stop.eventTime
+                    ? `${stop.departureTime} depart - ${stop.eventTime}`
+                    : stop.eventTime ?? stop.departureTime ?? 'Time unavailable';
+
+                  return (
+                    <div
+                      key={`future-activity-${stop.id}`}
+                      className="rounded-[16px] border border-white/[0.075] bg-white/[0.035] px-3 py-2.5"
                     >
-                      <span style={{ color: visual.color }}>{stop.timelineLabel}</span>
-                    </span>
-                    <span className="min-w-0">
-                      <span className="block text-[9px] font-semibold uppercase tracking-[0.12em] text-slate-300">
-                        Activity {stop.activityNumber}
-                      </span>
-                      <span className="block truncate text-[12px] font-semibold text-white">{stop.name}</span>
-                    </span>
-                  </div>
-                  <span className="shrink-0 text-right">
-                    <span className="block text-[12px] font-semibold" style={{ color: visual.color }}>
-                      {stop.batteryPercent}%
-                    </span>
-                    <span className="block text-[8px] font-semibold uppercase tracking-[0.08em]" style={{ color: visual.color }}>
-                      {visual.label}
-                    </span>
-                  </span>
-                </div>
-              );
-            })}
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex min-w-0 flex-1 items-center gap-2.5">
+                          <span
+                            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-[8.5px] font-black uppercase tracking-[0.04em]"
+                            style={{ borderColor: `${visual.color}38`, backgroundColor: `${visual.color}18`, color: visual.color }}
+                          >
+                            {stop.timelineLabel}
+                          </span>
+                          <div className="min-w-0">
+                            <p className="text-[8.5px] font-semibold uppercase tracking-[0.12em] text-slate-300">
+                              Activity {stop.activityNumber}
+                            </p>
+                            <p className="mt-0.5 text-[12px] font-semibold leading-snug text-white">{stop.name}</p>
+                          </div>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-2">
+                          <span className="text-right">
+                            <span className="block text-[12px] font-semibold" style={{ color: visual.color }}>
+                              {stop.batteryPercent}%
+                            </span>
+                            <span className="block text-[8px] font-semibold uppercase tracking-[0.08em]" style={{ color: visual.color }}>
+                              {visual.label}
+                            </span>
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleActivityDetailToggle(stop.id)}
+                            className="rounded-full border border-white/[0.10] bg-white/[0.045] px-2.5 py-1 text-[8.5px] font-semibold uppercase tracking-[0.06em] text-slate-100 transition hover:bg-white/[0.07] active:scale-[0.97]"
+                          >
+                            {isExpanded ? 'Hide' : 'Details'}
+                          </button>
+                        </div>
+                      </div>
+
+                      {isExpanded && (
+                        <div className="mt-2.5 grid grid-cols-2 gap-2 border-t border-white/[0.07] pt-2.5">
+                          <div className="min-w-0">
+                            <p className="text-[8px] font-bold uppercase tracking-[0.12em] text-slate-400">Time</p>
+                            <p className="mt-0.5 text-[11px] font-semibold leading-snug text-slate-100">{timeLabel}</p>
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-[8px] font-bold uppercase tracking-[0.12em] text-slate-400">Battery After Arrival</p>
+                            <p className="mt-0.5 text-[11px] font-semibold leading-snug" style={{ color: visual.color }}>{stop.batteryPercent}%</p>
+                          </div>
+                          <div className="min-w-0 col-span-2">
+                            <p className="text-[8px] font-bold uppercase tracking-[0.12em] text-slate-400">Location</p>
+                            <p className="mt-0.5 break-words text-[11px] font-semibold leading-snug text-slate-100">
+                              {stop.destinationLocation ?? stop.name}
+                            </p>
+                          </div>
+                          {typeof stop.batteryUsePercent === 'number' && (
+                            <div className="min-w-0">
+                              <p className="text-[8px] font-bold uppercase tracking-[0.12em] text-slate-400">Battery Used</p>
+                              <p className="mt-0.5 text-[11px] font-semibold leading-snug text-slate-100">{stop.batteryUsePercent}%</p>
+                            </div>
+                          )}
+                          {stop.traffic && (
+                            <div className="min-w-0">
+                              <p className="text-[8px] font-bold uppercase tracking-[0.12em] text-slate-400">Traffic Impact</p>
+                              <p className="mt-0.5 text-[11px] font-semibold leading-snug text-slate-100">{stop.traffic}</p>
+                            </div>
+                          )}
+                          {typeof stop.weatherImpactPercent === 'number' && (
+                            <div className="min-w-0">
+                              <p className="text-[8px] font-bold uppercase tracking-[0.12em] text-slate-400">Weather Impact</p>
+                              <p className="mt-0.5 text-[11px] font-semibold leading-snug text-slate-100">+{stop.weatherImpactPercent}%</p>
+                            </div>
+                          )}
+                          {preview.recommendation && (
+                            <div className="min-w-0 col-span-2">
+                              <p className="text-[8px] font-bold uppercase tracking-[0.12em] text-slate-400">Recommendation</p>
+                              <p className="mt-0.5 break-words text-[11px] font-medium leading-relaxed text-slate-100">
+                                {preview.recommendation}
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </div>
 
         <div className="mt-3 grid grid-cols-2 gap-2.5">
           <div className="rounded-[16px] border border-white/[0.08] bg-white/[0.04] px-3.5 py-3">
-            <p className="text-[8.5px] font-bold uppercase tracking-[0.12em] text-slate-300">Preview Date</p>
-            <p className="mt-1 text-[13px] font-semibold leading-snug text-white">{preview.previewDateLabel}</p>
-          </div>
-          <div className="rounded-[16px] border border-white/[0.08] bg-white/[0.04] px-3.5 py-3">
-            <p className="text-[8.5px] font-bold uppercase tracking-[0.12em] text-slate-300">Activities</p>
-            <p className="mt-1 text-[15px] font-semibold text-white">{preview.drivingActivityCount} driving</p>
-          </div>
-        </div>
-        <div className="mt-2.5 grid grid-cols-2 gap-2.5">
-          <div className="rounded-[16px] border border-white/[0.08] bg-white/[0.04] px-3.5 py-3">
             <p className="text-[8.5px] font-bold uppercase tracking-[0.12em] text-slate-300">Current Battery</p>
-            <p className="mt-1 text-[17px] font-semibold text-white">{preview.currentBattery}%</p>
+            <p className="mt-1 text-[18px] font-semibold text-white">{preview.currentBattery}%</p>
           </div>
           <div
             className="rounded-[16px] border px-3.5 py-3"
             style={{ borderColor: `${riskVisual.color}24`, backgroundColor: `${riskVisual.color}0f` }}
           >
             <p className="text-[8.5px] font-bold uppercase tracking-[0.12em]" style={{ color: `${riskVisual.color}` }}>Lowest Battery</p>
-            <p className="mt-1 text-[17px] font-semibold text-white">{prediction.lowestBattery}%</p>
+            <p className="mt-1 text-[18px] font-semibold text-white">{prediction.lowestBattery}%</p>
           </div>
           <div className="rounded-[16px] border border-white/[0.08] bg-white/[0.04] px-3.5 py-3">
             <p className="text-[8.5px] font-bold uppercase tracking-[0.12em] text-slate-300">Reserve Limit</p>
-            <p className="mt-1 text-[17px] font-semibold text-white">{preview.reserveLimit}%</p>
+            <p className="mt-1 text-[18px] font-semibold text-white">{preview.reserveLimit}%</p>
           </div>
           <div
             className="rounded-[16px] border px-3.5 py-3"
             style={{ borderColor: `${riskVisual.color}24`, backgroundColor: `${riskVisual.color}0f` }}
           >
             <p className="text-[8.5px] font-bold uppercase tracking-[0.12em]" style={{ color: riskVisual.color }}>Risk Level</p>
-            <p className="mt-1 text-[17px] font-semibold text-white">{prediction.riskLabel}</p>
+            <p className="mt-1 text-[18px] font-semibold text-white">{prediction.riskLabel}</p>
           </div>
         </div>
 
-        <div className="mt-3 rounded-[18px] border border-white/[0.08] bg-white/[0.04] px-3.5 py-3">
+        <div className="mt-3 rounded-[18px] border border-amber-300 bg-amber-50 px-3.5 py-3 shadow-ambient">
           <div className="flex items-start gap-3">
-            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-orange-100/22 bg-orange-200/12 text-orange-100">
-              <CloudRain className="h-4 w-4" />
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-amber-400 bg-amber-100 text-amber-700">
+              <AlertTriangle className="h-4 w-4" />
             </span>
-            <div className="min-w-0">
-              <p className="text-[8.5px] font-semibold uppercase tracking-[0.14em] text-orange-100">Cause</p>
-              <p className="mt-1.5 text-[12px] font-medium leading-relaxed text-slate-100">
-                {preview.rootCause}
-              </p>
+            <div className="min-w-0 flex-1">
+              <p className="text-[9px] font-black uppercase tracking-[0.14em] text-amber-700">Risk Reason</p>
+              <div className="mt-2 grid gap-2">
+                {riskReasonRows.length > 0 ? (
+                  riskReasonRows.map((row) => (
+                    <div key={row.label} className="min-w-0">
+                      <p className="text-[8px] font-bold uppercase tracking-[0.12em] text-slate-500">{row.label}</p>
+                      <p className="mt-0.5 break-words text-[12px] font-semibold leading-snug text-neutral-900">{row.value}</p>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-[12px] font-semibold leading-snug text-neutral-900">{fallbackRiskReason}</p>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -1784,24 +1955,7 @@ function FutureDrivePreviewSheet({
               <div className="min-w-0">
                 <p className="text-[8.5px] font-semibold uppercase tracking-[0.14em] text-red-100">Critical Warning</p>
                 <p className="mt-1.5 text-[12px] font-medium leading-relaxed text-slate-100">
-                  {preview.criticalStop.name} drops to {preview.criticalStop.batteryPercent}%, below the 25% critical threshold.
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {preview.suggestedCharger && (
-          <div className="mt-3 rounded-[18px] border border-cyan-100/22 bg-cyan-300/[0.065] px-3.5 py-3">
-            <div className="flex items-start gap-3">
-              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-cyan-100/18 bg-cyan-200/10 text-cyan-100">
-                <Plug className="h-4 w-4" />
-              </span>
-              <div className="min-w-0">
-                <p className="text-[8.5px] font-semibold uppercase tracking-[0.14em] text-cyan-100">Suggested Charger</p>
-                <p className="mt-1.5 text-[12px] font-semibold leading-snug text-white">{preview.suggestedCharger.name}</p>
-                <p className="mt-1 text-[11px] font-medium leading-relaxed text-slate-300">
-                  {preview.suggestedCharger.detail} - {preview.chargingTimeEstimate}
+                  {preview.criticalStop.timelineLabel} drops to {preview.criticalStop.batteryPercent}%, below reserve.
                 </p>
               </div>
             </div>
@@ -1813,22 +1967,26 @@ function FutureDrivePreviewSheet({
           style={{ borderColor: `${riskVisual.color}22`, backgroundColor: `${riskVisual.color}0c` }}
         >
           <p className="text-[8.5px] font-semibold uppercase tracking-[0.14em]" style={{ color: riskVisual.color }}>
-            Selected Plan Result
+            Recommendation
           </p>
           <p className="mt-1.5 text-[12px] font-medium leading-relaxed text-slate-100">
-            {selectedPlan.title} selected: {selectedPlan.action}. Expected battery after planned route: {prediction.finalBattery}%.
+            {selectedPlan.title}: {selectedPlan.action}. Expected final battery: {prediction.finalBattery}%.
           </p>
-          <p className="mt-1.5 text-[11px] font-medium leading-relaxed text-slate-300">{prediction.explanation}</p>
-        </div>
+          {preview.suggestedCharger && (
+            <div className="mt-2.5 rounded-[14px] border border-cyan-100/18 bg-cyan-300/[0.055] px-3 py-2.5">
+              <div className="flex items-start gap-2.5">
+                <Plug className="mt-0.5 h-3.5 w-3.5 shrink-0 text-cyan-100" />
+                <div className="min-w-0">
+                  <p className="text-[11.5px] font-semibold leading-snug text-white">{preview.suggestedCharger.name}</p>
+                  <p className="mt-0.5 text-[10.5px] font-medium leading-relaxed text-slate-300">
+                    {preview.suggestedCharger.detail} - {preview.chargingTimeEstimate}
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
 
-        <div className="mt-3.5">
-          <div className="mb-2 flex items-center justify-between gap-3">
-            <p className="text-[8.5px] font-semibold uppercase tracking-[0.14em] text-slate-300">Rescue Plans</p>
-            <span className="rounded-full border border-white/[0.07] bg-white/[0.035] px-2 py-0.5 text-[8.5px] font-semibold text-slate-300">
-              Final {prediction.finalBattery}%
-            </span>
-          </div>
-          <div className="grid gap-1.5">
+          <div className="mt-2.5 grid grid-cols-[repeat(auto-fit,minmax(5.75rem,1fr))] gap-1.5">
             {rescuePlans.map((plan) => {
               const isSelected = selectedPlanId === plan.id;
               const accent = toneAccentColors[plan.tone];
@@ -1839,34 +1997,21 @@ function FutureDrivePreviewSheet({
                   type="button"
                   onClick={() => onPlanSelect(plan.id)}
                   className={cn(
-                    'w-full rounded-[18px] border px-3.5 py-3 text-left transition duration-200 ease-out active:scale-[0.99]',
-                    isSelected ? 'bg-white/[0.055]' : 'border-white/[0.075] bg-white/[0.035] hover:bg-white/[0.045]'
+                    'min-h-16 rounded-[14px] border px-2.5 py-2 text-left transition duration-200 ease-out active:scale-[0.99]',
+                    isSelected ? 'bg-white/[0.06]' : 'border-white/[0.075] bg-white/[0.035] hover:bg-white/[0.045]'
                   )}
                   style={{
                     borderColor: isSelected ? `${accent}42` : undefined,
                     boxShadow: isSelected ? `0 0 0 1px ${accent}24, 0 12px 26px rgba(0,0,0,0.15)` : undefined,
                   }}
                 >
-                  <span className="flex items-start justify-between gap-3">
-                    <span className="min-w-0">
-                      <span className="flex items-center gap-2">
-                        <span className="text-[12px] font-semibold text-white">{plan.title}</span>
-                        <span
-                          className="rounded-full border px-2 py-0.5 text-[8px] font-semibold uppercase tracking-[0.08em]"
-                          style={{ borderColor: `${accent}30`, backgroundColor: `${accent}10`, color: accent }}
-                        >
-                          {plan.label}
-                        </span>
-                      </span>
-                      <span className="mt-1 block text-[11px] font-medium leading-relaxed text-slate-300">{plan.action}</span>
-                    </span>
-                      <span className="shrink-0 text-right">
-                        <span className="block text-[8.5px] font-semibold uppercase tracking-[0.12em] text-slate-300">End</span>
-                        <span className="mt-0.5 block text-[13px] font-semibold" style={{ color: accent }}>
-                          {plan.canComplete ? `${plan.resultBattery}%` : 'N/A'}
-                        </span>
-                      </span>
-                    </span>
+                  <span className="block text-[10px] font-semibold text-white">{plan.title}</span>
+                  <span className="mt-0.5 block text-[8px] font-semibold uppercase tracking-[0.08em]" style={{ color: accent }}>
+                    {plan.label}
+                  </span>
+                  <span className="mt-1 block text-[12px] font-semibold" style={{ color: accent }}>
+                    {plan.canComplete ? `${plan.resultBattery}%` : 'N/A'}
+                  </span>
                 </button>
               );
             })}
@@ -1875,30 +2020,30 @@ function FutureDrivePreviewSheet({
 
       </div>
 
-      <div className="grid shrink-0 grid-cols-[repeat(auto-fit,minmax(7.5rem,1fr))] gap-2 border-t border-outline-variant/45 bg-surface-container-low p-2.5">
+      <div className="grid shrink-0 grid-cols-3 gap-1.5 border-t border-outline-variant/45 bg-surface-container-low p-2.5">
         <button
           type="button"
           onClick={() => onAction('Optimize Selected Plan')}
-          className="flex min-h-10 min-w-0 items-center justify-center gap-2 rounded-[16px] bg-primary px-3 text-center text-[10px] font-semibold uppercase leading-tight tracking-[0.05em] text-on-primary shadow-ambient transition duration-200 ease-out active:scale-[0.98]"
+          className="flex min-h-10 min-w-0 items-center justify-center gap-1.5 rounded-[14px] bg-primary px-2 text-center text-[9.5px] font-semibold uppercase leading-tight tracking-[0.02em] text-on-primary shadow-ambient transition duration-200 ease-out active:scale-[0.98]"
         >
-          <Check className="h-4 w-4 shrink-0" />
-          Optimize Selected Plan
+          <Check className="h-3.5 w-3.5 shrink-0" />
+          Optimize
         </button>
         <button
           type="button"
           onClick={() => onAction('Compare Rescue Routes')}
-          className="flex min-h-10 min-w-0 items-center justify-center gap-2 rounded-[16px] border border-red-100/22 bg-surface-container-lowest px-3 text-center text-[10px] font-semibold uppercase leading-tight tracking-[0.05em] text-slate-100 shadow-ambient transition duration-200 ease-out active:scale-[0.98]"
+          className="flex min-h-10 min-w-0 items-center justify-center gap-1.5 rounded-[14px] border border-red-100/22 bg-surface-container-lowest px-2 text-center text-[9.5px] font-semibold uppercase leading-tight tracking-[0.02em] text-slate-100 shadow-ambient transition duration-200 ease-out active:scale-[0.98]"
         >
-          <Route className="h-4 w-4 shrink-0 text-red-100" />
-          Compare Rescue Routes
+          <Route className="h-3.5 w-3.5 shrink-0 text-primary" />
+          Compare
         </button>
         <button
           type="button"
           onClick={() => onAction('Set Charging Reminder')}
-          className="flex min-h-10 min-w-0 items-center justify-center gap-2 rounded-[16px] border border-cyan-100/18 bg-surface-container-lowest px-3 text-center text-[10px] font-semibold uppercase leading-tight tracking-[0.05em] text-slate-100 shadow-ambient transition duration-200 ease-out active:scale-[0.98]"
+          className="flex min-h-10 min-w-0 items-center justify-center gap-1.5 rounded-[14px] border border-primary/24 bg-surface-container-lowest px-2 text-center text-[9.5px] font-semibold uppercase leading-tight tracking-[0.02em] text-slate-100 shadow-ambient transition duration-200 ease-out active:scale-[0.98]"
         >
-          <BatteryCharging className="h-4 w-4 shrink-0 text-cyan-100" />
-          Set Charging Reminder
+          <BatteryCharging className="h-3.5 w-3.5 shrink-0 text-primary" />
+          Reminder
         </button>
       </div>
     </section>
@@ -2428,6 +2573,7 @@ export default function MapView() {
   const [selectedEvStop, setSelectedEvStop] = useState<(typeof evStations)[number] | null>(null);
   const [selectedFavoriteStop, setSelectedFavoriteStop] = useState<FavoriteStop | null>(null);
   const [selectedRouteVariant, setSelectedRouteVariant] = useState<RouteVariant>('recommended');
+  const [futureDriveNextDayRequested, setFutureDriveNextDayRequested] = useState(false);
   const [transientToast, setTransientToast] = useState<{ title: string; detail: string; tone: MapTone } | null>(null);
   const [cameraState, setCameraState] = useState<MapCameraState>({
     cameraMode: 'routeOverview',
@@ -2451,10 +2597,10 @@ export default function MapView() {
   const previewDrivingDay = useMemo<FutureDrivePreviewSelection>(
     () => (
       calendarDataAvailable
-        ? getPreviewDrivingDay(events, calendarToday)
+        ? getPreviewDrivingDay(events, calendarToday, futureDriveNextDayRequested)
         : { date: null, events: [], mode: 'calendarUnavailable' }
     ),
-    [calendarDataAvailable, calendarToday, events]
+    [calendarDataAvailable, calendarToday, events, futureDriveNextDayRequested]
   );
   const chargingPlan = useMemo(() => {
     if (!previewDrivingDay.date || previewDrivingDay.events.length === 0) return null;
@@ -2471,9 +2617,12 @@ export default function MapView() {
   const futureDriveEmptyMessage =
     previewDrivingDay.mode === 'calendarUnavailable'
       ? 'Calendar data unavailable.'
+      : previewDrivingDay.mode === 'tomorrowEmpty'
+        ? 'No driving activities scheduled for tomorrow.'
       : previewDrivingDay.mode === 'empty'
-        ? 'No driving activities scheduled in the next 7 days.'
+        ? 'No driving activities found in the next 7 days.'
         : 'Prediction data unavailable.';
+  const futureDriveEmptyActionLabel = previewDrivingDay.mode === 'tomorrowEmpty' ? 'Check Next Driving Day' : undefined;
   const futureDriveRescuePlans = futureDrivePreview?.rescuePlans ?? [getUnavailableFutureDrivePlan()];
   const selectedFuturePlan =
     futureDriveRescuePlans.find((plan) => plan.id === selectedFuturePlanId) ?? futureDriveRescuePlans[0];
@@ -3411,17 +3560,9 @@ export default function MapView() {
 
       <div
         data-map-ui="true"
-        className={cn(
-          'absolute z-30 transition-all duration-300 ease-out',
-          isFutureDrivePreview
-            ? 'left-3 right-3 top-[4.65rem] md:left-auto md:right-5 md:top-[5.35rem] md:w-[330px] lg:right-8 lg:top-[5.65rem] lg:w-[350px]'
-            : cn(
-                'left-3 right-3 sm:left-5 sm:right-5',
-                isManualExplore || activeNavigation ? 'top-[5.15rem] sm:top-[5.25rem]' : 'top-[3.75rem] sm:top-[3.75rem]'
-              )
-        )}
+        className="absolute left-1/2 top-[88px] z-30 w-[min(calc(100vw-1.5rem),410px)] -translate-x-1/2 transition-all duration-300 ease-out"
       >
-        <div className={cn(isFutureDrivePreview ? 'mx-auto max-w-[390px] md:mx-0 md:max-w-none' : 'mx-auto max-w-[410px]')}>
+        <div className="w-full">
           <div className="flex items-center gap-1">
           <form
             onSubmit={(event) => {
@@ -3620,11 +3761,13 @@ export default function MapView() {
           <FutureDrivePreviewSheet
             preview={futureDrivePreview}
             emptyMessage={futureDriveEmptyMessage}
+            emptyActionLabel={futureDriveEmptyActionLabel}
             rescuePlans={futureDriveRescuePlans}
             selectedPlan={selectedFuturePlan}
             selectedPlanId={selectedFuturePlanIdForView}
             prediction={futureDrivePrediction}
             onPlanSelect={handleFuturePlanSelect}
+            onEmptyAction={() => setFutureDriveNextDayRequested(true)}
             onAction={handleFutureDriveAction}
           />
         ) : (
