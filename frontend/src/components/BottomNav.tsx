@@ -1,5 +1,5 @@
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Home, Calendar, Map as MapIcon, Car, BrainCircuit, SlidersHorizontal } from 'lucide-react';
+import { Home, Calendar, Map as MapIcon, Car, BrainCircuit } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { motion } from 'motion/react';
 
@@ -13,8 +13,7 @@ export default function BottomNav() {
     { name: 'Calendar', path: '/calendar', icon: Calendar },
     { name: 'Map', path: '/map', icon: MapIcon },
     { name: 'Vehicle', path: '/vehicle', icon: Car },
-    { name: 'AI', path: '/ai', icon: BrainCircuit },
-    { name: 'Simulation', path: '/simulation', icon: SlidersHorizontal }
+    { name: 'AI', path: '/ai', icon: BrainCircuit }
   ];
 
   return (

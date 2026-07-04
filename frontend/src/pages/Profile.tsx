@@ -1,10 +1,12 @@
 import { useAppStore } from '../store/useAppStore';
 import { motion } from 'motion/react';
-import { Settings, Shield, ChevronRight, Zap, TrendingUp, History, Eye, EyeOff } from 'lucide-react';
+import { Shield, Zap, TrendingUp, History, Eye, EyeOff, LogOut } from 'lucide-react';
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 export default function Profile() {
-  const { user, updateUser } = useAppStore();
+  const { user, updateUser, logout } = useAppStore();
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<'profile' | 'settings'>('profile');
   
   // Settings Form State
@@ -28,6 +30,11 @@ export default function Profile() {
       }
     });
     // Normally you'd also handle password change here
+  };
+
+  const handleLogout = () => {
+    logout();
+    navigate('/signin', { replace: true });
   };
 
   return (
@@ -223,14 +230,25 @@ export default function Profile() {
             </div>
            </section>
 
-           <button 
-             onClick={handleSaveChanges}
-             className="w-full bg-primary text-on-primary font-bold text-sm py-3 rounded-xl mt-8 hover:bg-primary-dim transition-colors active:scale-[0.98]"
-           >
-             Save Changes
-           </button>
+           <div className="grid gap-3 pt-4 sm:grid-cols-2">
+             <button 
+               onClick={handleSaveChanges}
+               className="w-full bg-primary text-on-primary font-bold text-sm py-3 rounded-xl hover:bg-primary-dim transition-colors active:scale-[0.98]"
+             >
+               Save Changes
+             </button>
+             <button
+               type="button"
+               onClick={handleLogout}
+               className="flex w-full items-center justify-center gap-2 rounded-xl border border-rose-500/25 bg-rose-950/40 py-3 text-sm font-bold text-rose-300 transition-colors hover:bg-rose-950/60 active:scale-[0.98]"
+             >
+               <LogOut className="h-4 w-4" />
+               Logout
+             </button>
+           </div>
          </div>
       )}
     </motion.div>
   );
 }
+

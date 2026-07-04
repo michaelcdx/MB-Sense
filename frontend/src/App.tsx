@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from 'react';
-import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom';
+import { BrowserRouter, Navigate, Routes, Route, useLocation } from 'react-router-dom';
 import TopBar from './components/TopBar';
 import BottomNav from './components/BottomNav';
 import Home from './pages/Home';
@@ -7,7 +7,6 @@ import Calendar from './pages/Calendar';
 import MapView from './pages/Map';
 import Vehicle from './pages/Vehicle';
 import AI from './pages/AI';
-import Simulation from './pages/Simulation';
 import Profile from './pages/Profile';
 import SignIn from './pages/SignIn';
 import CreateAccount from './pages/CreateAccount';
@@ -34,6 +33,7 @@ function buildScheduleSignature(events: CalendarEvent[]) {
 }
 
 function ChargingPlannerSync() {
+  const isAuthenticated = useAppStore((state) => state.isAuthenticated);
   const events = useAppStore((state) => state.events);
   const vehicle = useAppStore((state) => state.vehicle);
   const weather = useAppStore((state) => state.weather);
@@ -46,6 +46,7 @@ function ChargingPlannerSync() {
   const lastSubmittedSignatureRef = useRef('');
 
   useEffect(() => {
+    if (!isAuthenticated) return;
     if (plannerInputSignature === lastSubmittedSignatureRef.current) return;
 
     lastSubmittedSignatureRef.current = plannerInputSignature;
@@ -55,7 +56,7 @@ function ChargingPlannerSync() {
     const timer = window.setTimeout(() => {
       requestChargingPlan(plannerInput)
         .then((plan) => {
-          if (!cancelled) setAiChargingPlan(plan, plan.id.includes('fallback') ? 'fallback' : 'ready');
+          if (!cancelled) setAiChargingPlan(plan, plan.id === 'ai-charge-na' ? 'fallback' : 'ready');
         })
         .catch(() => {
           if (!cancelled) setAiChargingPlan(null, 'error');
@@ -66,15 +67,46 @@ function ChargingPlannerSync() {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [plannerInput, plannerInputSignature, setAiChargingPlan, setAiChargingPlanStatus]);
+  }, [isAuthenticated, plannerInput, plannerInputSignature, setAiChargingPlan, setAiChargingPlanStatus]);
 
   return null;
 }
+
+function AuthRoutes() {
+  const location = useLocation();
+
+  return (
+    <Routes>
+      <Route path="/signin" element={<SignIn />} />
+      <Route path="/register" element={<CreateAccount />} />
+      <Route path="*" element={<Navigate to="/signin" replace state={{ from: location.pathname }} />} />
+    </Routes>
+  );
+}
+
+function AppRoutes() {
+  return (
+    <Routes>
+      <Route path="/" element={<Home />} />
+      <Route path="/calendar" element={<Calendar />} />
+      <Route path="/map" element={<MapView />} />
+      <Route path="/vehicle" element={<Vehicle />} />
+      <Route path="/ai" element={<AI />} />
+      <Route path="/profile" element={<Profile />} />
+      <Route path="/signin" element={<Navigate to="/" replace />} />
+      <Route path="/register" element={<Navigate to="/" replace />} />
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
+  );
+}
+
 function AppShell() {
   const location = useLocation();
+  const isAuthenticated = useAppStore((state) => state.isAuthenticated);
   const isMap = location.pathname === '/map';
   const isCalendar = location.pathname === '/calendar';
-  const isAuth = location.pathname === '/signin' || location.pathname === '/register';
+
+  if (!isAuthenticated) return <AuthRoutes />;
 
   return (
     <div className="min-h-dvh bg-surface text-on-surface font-sans selection:bg-primary-fixed/35 overflow-x-hidden">
@@ -85,21 +117,10 @@ function AppShell() {
             'w-full overflow-x-hidden',
             isMap && 'fixed inset-0 px-0 pb-0 pt-0',
             isCalendar && 'fixed inset-x-0 bottom-0 top-16 overflow-hidden px-0 pb-0 pt-0',
-            !isMap && !isCalendar && 'mx-auto max-w-7xl px-4 pt-20 sm:px-6 lg:px-8',
-            isAuth && 'flex min-h-dvh items-center justify-center pt-16 sm:pt-16'
+            !isMap && !isCalendar && 'mx-auto max-w-7xl px-4 pt-20 sm:px-6 lg:px-8'
           )}
         >
-          <Routes>
-            <Route path="/" element={<Home />} />
-            <Route path="/calendar" element={<Calendar />} />
-            <Route path="/map" element={<MapView />} />
-            <Route path="/vehicle" element={<Vehicle />} />
-            <Route path="/ai" element={<AI />} />
-            <Route path="/simulation" element={<Simulation />} />
-            <Route path="/profile" element={<Profile />} />
-            <Route path="/signin" element={<SignIn />} />
-            <Route path="/register" element={<CreateAccount />} />
-          </Routes>
+          <AppRoutes />
         </main>
         <BottomNav />
       </div>

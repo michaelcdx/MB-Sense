@@ -24,7 +24,7 @@ export type ChargingCalendarMeta = {
   mode: 'AC' | 'DC';
   targetBattery: number;
   minutesNeeded: number;
-  connector: 'CCS2';
+  connector: 'CCS2' | 'Tesla CCS2';
   anchorLocation: string;
   previousLocation?: string;
   nextLocation?: string;
@@ -92,7 +92,7 @@ interface AppStore {
   calendarRevision: number;
   recentActions: {icon: string, title: string, time: string, description: string}[];
   // Actions
-  login: () => void;
+  login: (email: string, password: string) => boolean;
   logout: () => void;
   register: () => void;
   updateUser: (data: Partial<AppStore['user']>) => void;
@@ -191,7 +191,6 @@ const businessCalendarSeeds: BusinessCalendarSeed[] = [
   { day: 16, monthIndex: 5, suffix: 'fleet-client', title: 'Fleet client discussion', time: '01:15 PM', endTime: '02:00 PM', location: businessLocations.bangsar, options: { status: 'Vehicle Required', departureTime: '12:45 PM' } },
   { day: 16, monthIndex: 5, suffix: 'battery-review', title: 'Battery health review', time: '04:15 PM', endTime: '05:00 PM', location: businessLocations.hq, options: { carNeeded: false, status: 'Office', notes: 'Review battery reserve assumptions for the MB Sense demo.' } },
   { day: 17, monthIndex: 5, suffix: 'gov-briefing', title: 'Government EV briefing', time: '10:00 AM', endTime: '11:00 AM', location: businessLocations.putrajaya, options: { status: 'Important', departureTime: '09:10 AM' } },
-  { day: 17, monthIndex: 5, suffix: 'charge-plan', title: 'AI charging recommendation', time: '08:00 PM', endTime: '09:15 PM', location: businessLocations.charger, options: { carNeeded: false, category: 'charging', status: 'AI CHARGING RECOMMENDATION', notes: 'Top up before Thursday cross-city appointments.', aiReason: 'Thursday includes Cyberjaya and Petaling Jaya stops with limited daytime charging flexibility.' } },
   { day: 18, monthIndex: 5, suffix: 'regional-partner', title: 'Regional partnership meeting', time: '09:45 AM', endTime: '11:15 AM', location: businessLocations.cyberjaya, options: { status: 'Important', departureTime: '08:55 AM' } },
   { day: 18, monthIndex: 5, suffix: 'handover', title: 'Customer handover appointment', time: '02:30 PM', endTime: '03:15 PM', location: businessLocations.dealerService, options: { status: 'Vehicle Required', departureTime: '01:55 PM' } },
   { day: 18, monthIndex: 5, suffix: 'wellness', title: 'Executive wellness session', time: '05:15 PM', endTime: '06:00 PM', location: businessLocations.royalLake, options: { category: 'fitness', status: 'Personal', notes: 'Short recovery block after service center visit.' } },
@@ -199,7 +198,6 @@ const businessCalendarSeeds: BusinessCalendarSeed[] = [
   { day: 19, monthIndex: 5, suffix: 'charging-infra', title: 'Charging infrastructure check', time: '11:30 AM', endTime: '12:15 PM', location: businessLocations.shahAlam, options: { status: 'Charging Review', departureTime: '10:55 AM' } },
   { day: 19, monthIndex: 5, suffix: 'investor-coffee', title: 'Investor coffee debrief', time: '03:00 PM', endTime: '03:45 PM', location: businessLocations.klcc, options: { status: 'Vehicle Required', departureTime: '02:25 PM' } },
   { day: 20, monthIndex: 5, suffix: 'saturday-wellness', title: 'Executive wellness session', time: '08:30 AM', endTime: '09:30 AM', location: businessLocations.royalLake, options: { category: 'fitness', status: 'Personal' } },
-  { day: 21, monthIndex: 5, suffix: 'sunday-charge', title: 'AI charging recommendation', time: '08:15 PM', endTime: '09:30 PM', location: businessLocations.charger, options: { carNeeded: false, category: 'charging', status: 'AI CHARGING RECOMMENDATION', notes: 'Prepare for Monday client and board schedule.', aiReason: 'Monday has lunch travel and late product decisions. A short Sunday charge keeps reserve above 20%.' } },
 
   // Week Jun 22 - Jun 28: investor preparation and partner arrivals.
   { day: 22, monthIndex: 5, suffix: 'board-risk', title: 'Board pre-read and risk review', time: '09:15 AM', endTime: '10:00 AM', location: businessLocations.trx, options: { carNeeded: false, category: 'risk', status: 'BATTERY RISK', notes: 'Flag schedule density and charging reserve assumptions.' } },
@@ -219,13 +217,11 @@ const businessCalendarSeeds: BusinessCalendarSeed[] = [
   { day: 26, monthIndex: 5, suffix: 'pipeline-review', title: 'Corporate sales pipeline review', time: '02:00 PM', endTime: '02:45 PM', location: businessLocations.hq, options: { carNeeded: false, status: 'Office' } },
   { day: 26, monthIndex: 5, suffix: 'family', title: 'Family dinner', time: '07:30 PM', endTime: '09:00 PM', location: businessLocations.damansara, options: { category: 'personal', status: 'Personal', notes: 'Protected personal time.' } },
   { day: 27, monthIndex: 5, suffix: 'investor-dinner', title: 'Private investor dinner', time: '07:30 PM', endTime: '10:00 PM', location: businessLocations.montKiara, options: { status: 'Important', departureTime: '06:55 PM', notes: 'Relationship dinner with strategic investors.' } },
-  { day: 28, monthIndex: 5, suffix: 'sunday-charge', title: 'Recommended charging time', time: '08:30 PM', endTime: '09:45 PM', location: businessLocations.charger, options: { carNeeded: false, category: 'charging', status: 'AI CHARGING RECOMMENDATION', notes: 'Charge before Q3 operating week.', aiReason: 'The next week contains Shah Alam, TRX, and Putrajaya travel blocks.' } },
 
   // Week Jun 29 - Jul 5: Q3 planning and Vibathon preparation.
   { day: 29, monthIndex: 5, suffix: 'q3-plan', title: 'Q3 operating plan review', time: '08:45 AM', endTime: '10:15 AM', location: businessLocations.hq, options: { carNeeded: false, status: 'Office' } },
   { day: 29, monthIndex: 5, suffix: 'board-lunch', title: 'Board member lunch', time: '12:15 PM', endTime: '01:45 PM', location: businessLocations.klcc, options: { status: 'Important', departureTime: '11:45 AM' } },
   { day: 29, monthIndex: 5, suffix: 'launch-planning', title: 'Product launch planning', time: '03:30 PM', endTime: '04:45 PM', location: businessLocations.trx, options: { status: 'Important', departureTime: '03:00 PM' } },
-  { day: 29, monthIndex: 5, suffix: 'charge-plan', title: 'Recommended charging time', time: '08:30 PM', endTime: '10:00 PM', location: businessLocations.charger, options: { carNeeded: false, category: 'charging', status: 'AI CHARGING RECOMMENDATION', notes: 'Home charge to support Tuesday site visits.', aiReason: 'Tuesday combines dealer and charging infrastructure visits with limited downtime.' } },
   { day: 30, monthIndex: 5, suffix: 'handover', title: 'Customer handover appointment', time: '09:10 AM', endTime: '09:55 AM', location: businessLocations.dealerService, options: { status: 'Vehicle Required', departureTime: '08:40 AM' } },
   { day: 30, monthIndex: 5, suffix: 'charging-check', title: 'Charging infrastructure check', time: '11:30 AM', endTime: '01:00 PM', location: businessLocations.shahAlam, options: { status: 'Charging Review', departureTime: '10:55 AM' } },
   { day: 30, monthIndex: 5, suffix: 'service-inspection', title: 'Service center inspection', time: '02:45 PM', endTime: '03:45 PM', location: businessLocations.dealerService, options: { status: 'Charging Service Check', departureTime: '02:20 PM' } },
@@ -243,7 +239,6 @@ const businessCalendarSeeds: BusinessCalendarSeed[] = [
   { day: 4, monthIndex: 6, suffix: 'class', title: 'AI systems class', time: '09:00 AM', endTime: '10:30 AM', location: businessLocations.mbTech, options: { category: 'study', status: 'Vehicle Required', departureTime: '08:15 AM', notes: 'Rain and morning traffic increase the energy forecast.' } },
   { day: 4, monthIndex: 6, suffix: 'meeting', title: 'Startup partner meeting', time: '01:00 PM', endTime: '02:00 PM', location: businessLocations.trx, options: { status: 'Vehicle Required', departureTime: '12:20 PM', notes: 'Midday cross-city trip with limited charging time before evening.' } },
   { day: 4, monthIndex: 6, suffix: 'evening-event', title: 'Vibathon networking event', time: '06:00 PM', endTime: '08:30 PM', location: businessLocations.klcc, options: { category: 'important', status: 'Important', departureTime: '05:10 PM', notes: 'Heavy evening traffic makes this the mobility risk peak.' } },
-  { day: 5, monthIndex: 6, suffix: 'prepitch-charge', title: 'AI charging recommendation', time: '08:00 PM', endTime: '09:45 PM', location: businessLocations.charger, options: { carNeeded: false, category: 'charging', status: 'AI CHARGING RECOMMENDATION', notes: 'Charge before Vibathon pitch day.', aiReason: 'Monday has a long pitch block and judge networking, so charging tonight prevents next-day reserve risk.' } },
 
   // Week Jul 6 - Jul 12: pitch day and post-demo follow-through.
   { day: 6, monthIndex: 6, suffix: 'vibathon', title: 'MBTMY Vibathon pitch day', time: '09:00 AM', endTime: '01:00 PM', location: businessLocations.mbTech, options: { status: 'Important', departureTime: '08:15 AM', notes: 'Final 4-minute pitch, QnA, and judge networking.' } },
@@ -256,10 +251,8 @@ const businessCalendarSeeds: BusinessCalendarSeed[] = [
   { day: 9, monthIndex: 6, suffix: 'partnership-review', title: 'Regional partnership meeting', time: '02:45 PM', endTime: '03:45 PM', location: businessLocations.cyberjaya, options: { status: 'Vehicle Required', departureTime: '01:55 PM' } },
   { day: 10, monthIndex: 6, suffix: 'board-readout', title: 'Vibathon board readout', time: '09:45 AM', endTime: '10:30 AM', location: businessLocations.hq, options: { carNeeded: false, status: 'Office' } },
   { day: 10, monthIndex: 6, suffix: 'client-dinner', title: 'Client renewal dinner', time: '07:00 PM', endTime: '09:15 PM', location: businessLocations.montKiara, options: { status: 'Important', departureTime: '06:25 PM' } },
-  { day: 12, monthIndex: 6, suffix: 'charge-plan', title: 'AI charging recommendation', time: '08:30 PM', endTime: '10:00 PM', location: businessLocations.charger, options: { carNeeded: false, category: 'charging', status: 'AI CHARGING RECOMMENDATION', notes: 'Prepare for Singapore investor travel week.', aiReason: 'The following week includes airport travel and late return, so a Sunday top-up protects reserve.' } },
 
   // Week Jul 13 - Jul 19: Singapore investor trip and recovery.
-  { day: 13, monthIndex: 6, suffix: 'pretrip-charge', title: 'AI charging recommendation', time: '08:00 PM', endTime: '10:00 PM', location: businessLocations.charger, options: { carNeeded: false, status: 'AI CHARGING RECOMMENDATION', category: 'charging', notes: 'Charge to 80% before the Singapore investor day trip.', aiReason: 'The next day combines airport travel, meetings, and late return. Charging tonight prevents reserve risk.' } },
   { day: 14, monthIndex: 6, suffix: 'singapore', title: 'Singapore investor day trip', time: '06:30 AM', endTime: '08:30 PM', location: 'KLIA / Singapore CBD', options: { status: 'Important', departureTime: '05:30 AM', notes: 'Long mobility day. MB Sense should recommend charging the night before.', aiReason: 'Airport transfer plus late return leaves limited charging flexibility.' } },
   { day: 15, monthIndex: 6, suffix: 'recovery-review', title: 'Investor follow-up review', time: '11:00 AM', endTime: '12:00 PM', location: businessLocations.online, options: { carNeeded: false, status: 'Remote' } },
   { day: 15, monthIndex: 6, suffix: 'fleet-client', title: 'Fleet client discussion', time: '03:15 PM', endTime: '04:15 PM', location: businessLocations.bangsar, options: { status: 'Vehicle Required', departureTime: '02:40 PM' } },
@@ -273,7 +266,6 @@ const businessCalendarSeeds: BusinessCalendarSeed[] = [
   { day: 20, monthIndex: 6, suffix: 'runway-review', title: 'July close and runway review', time: '09:00 AM', endTime: '10:15 AM', location: businessLocations.hq, options: { carNeeded: false, status: 'Office' } },
   { day: 20, monthIndex: 6, suffix: 'commercial-lunch', title: 'Commercial strategy lunch', time: '12:30 PM', endTime: '01:45 PM', location: businessLocations.klcc, options: { status: 'Vehicle Required', departureTime: '11:55 AM' } },
   { day: 21, monthIndex: 6, suffix: 'partner-success', title: 'Fleet partner success review', time: '09:45 AM', endTime: '11:00 AM', location: businessLocations.bangsar, options: { status: 'Vehicle Required', departureTime: '09:10 AM' } },
-  { day: 21, monthIndex: 6, suffix: 'charging-window', title: 'Recommended charging time', time: '08:30 PM', endTime: '09:45 PM', location: businessLocations.charger, options: { carNeeded: false, category: 'charging', status: 'AI CHARGING RECOMMENDATION', notes: 'Top up before board preparation day.', aiReason: 'Wednesday and Thursday include back-to-back TRX and Cyberjaya appointments.' } },
   { day: 22, monthIndex: 6, suffix: 'product-bets', title: 'August product bets council', time: '08:30 AM', endTime: '09:45 AM', location: businessLocations.trx, options: { status: 'Important', departureTime: '08:00 AM' } },
   { day: 22, monthIndex: 6, suffix: 'battery-review', title: 'Battery health review', time: '02:00 PM', endTime: '02:45 PM', location: businessLocations.hq, options: { carNeeded: false, status: 'Office' } },
   { day: 23, monthIndex: 6, suffix: 'oem-review', title: 'Regional OEM partnership review', time: '10:15 AM', endTime: '11:45 AM', location: businessLocations.cyberjaya, options: { status: 'Vehicle Required', departureTime: '09:25 AM' } },
@@ -416,8 +408,14 @@ export const useAppStore = create<AppStore>((set) => ({
     calendarRevision: state.calendarRevision + 1
   })),
   addRecentAction: (action) => set((state) => ({ recentActions: [action, ...state.recentActions].slice(0, 5) })),
-  login: () => set({ isAuthenticated: true }),
+  login: (email, password) => {
+    const isValid = email.trim().toLowerCase() === 'employee@example.com' && password === 'mercedesbenz';
+    if (isValid) set({ isAuthenticated: true });
+    return isValid;
+  },
   logout: () => set({ isAuthenticated: false }),
   register: () => set({ isAuthenticated: true }),
   updateUser: (data) => set((state) => ({ user: { ...state.user, ...data } }))
 }));
+
+

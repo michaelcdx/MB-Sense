@@ -1203,12 +1203,6 @@ export default function Calendar() {
   const [panelMode, setPanelMode] = useState<EventMode | null>(null);
   const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
   const [form, setForm] = useState<ScheduleForm>(() => buildEmptyForm(initialDate));
-  const aiPreviewEvent = useMemo(() => {
-    if (!aiChargingPlan) return null;
-    const event = buildCalendarEventFromChargingPlan(aiChargingPlan, true);
-    if (!event || calendarEvents.some((item) => item.id === event.id)) return null;
-    return event;
-  }, [aiChargingPlan, calendarEvents]);
 
   const timelineDays = useMemo(() => getTimelineDays(weekStart), [weekStart]);
   const timelineEvents = useMemo(() => {
@@ -1219,13 +1213,6 @@ export default function Calendar() {
       return date >= timelineStart && date < timelineEnd;
     });
   }, [calendarEvents, timelineDays]);
-  const timelineEventsWithPreview = useMemo(() => {
-    if (!aiPreviewEvent) return timelineEvents;
-    const date = getEventDate(aiPreviewEvent);
-    const timelineStart = timelineDays[0] ?? startOfDay(weekStart);
-    const timelineEnd = addDays(timelineDays[timelineDays.length - 1] ?? demoEnd, 1);
-    return date >= timelineStart && date < timelineEnd ? [...timelineEvents, aiPreviewEvent] : timelineEvents;
-  }, [aiPreviewEvent, timelineEvents, timelineDays, weekStart]);
 
   const draftEvent = useMemo<(CalendarEvent & { color: EventColor }) | null>(() => {
     if (!panelMode) return null;
@@ -1252,14 +1239,14 @@ export default function Calendar() {
   }, [editingEvent, form, panelMode]);
 
   const visibleWeekEvents = useMemo(() => {
-    if (!draftEvent) return timelineEventsWithPreview;
+    if (!draftEvent) return timelineEvents;
     const draftDate = getEventDate(draftEvent);
     const timelineStart = timelineDays[0] ?? startOfDay(weekStart);
     const timelineEnd = addDays(timelineDays[timelineDays.length - 1] ?? demoEnd, 1);
-    const baseEvents = editingEvent ? timelineEventsWithPreview.filter((event) => event.id !== editingEvent.id) : timelineEventsWithPreview;
+    const baseEvents = editingEvent ? timelineEvents.filter((event) => event.id !== editingEvent.id) : timelineEvents;
     if (draftDate < timelineStart || draftDate >= timelineEnd) return baseEvents;
     return [...baseEvents, draftEvent];
-  }, [draftEvent, editingEvent, timelineEventsWithPreview, timelineDays, weekStart]);
+  }, [draftEvent, editingEvent, timelineEvents, timelineDays, weekStart]);
 
   const selectedEventId = panelMode === 'create' ? draftEventId : editingEvent?.id;
 
@@ -1285,9 +1272,9 @@ export default function Calendar() {
 
   useEffect(() => {
     if (!location.search.includes('aiPlan=1')) return;
-    const eventToOpen = aiPreviewEvent ?? (aiChargingPlan ? calendarEvents.find((event) => event.id === buildCalendarEventFromChargingPlan(aiChargingPlan)?.id) : undefined);
+    const eventToOpen = aiChargingPlan ? calendarEvents.find((event) => event.id === buildCalendarEventFromChargingPlan(aiChargingPlan)?.id) : undefined;
     if (eventToOpen) openPanelForEvent(eventToOpen);
-  }, [location.search, aiPreviewEvent, aiChargingPlan, calendarEvents]);
+  }, [location.search, aiChargingPlan, calendarEvents]);
 
   const handleGridPointerDown = (event: ReactPointerEvent<HTMLElement>, dayIndex: number, date: Date) => {
     if (event.target instanceof Element && event.target.closest('[data-event-block="true"]')) return;
@@ -1436,3 +1423,4 @@ export default function Calendar() {
     </motion.div>
   );
 }
+

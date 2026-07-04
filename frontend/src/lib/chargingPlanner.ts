@@ -1,4 +1,3 @@
-import { mockDCChargingStationsMalaysia } from '../constants/dcChargingStationsMalaysia';
 import type { CalendarEvent, VehicleState } from '../store/useAppStore';
 import type { ChargingPlanInput, ChargingPlanResult } from '../types/chargingPlanner';
 
@@ -8,76 +7,61 @@ type WeatherSnapshot = {
 };
 
 export const fallbackChargingPlan: ChargingPlanResult = {
-  id: "ai-charge-fallback-001",
+  id: "ai-charge-na",
   type: "ai_charging_recommendation",
-  riskLevel: "medium",
-  mainRisk: "limited_charging_opportunity",
-  mobilityConfidenceScore: 58,
-  confidenceScore: 70,
-  shouldCharge: true,
-  recommendationStatus: "recommended",
-  title: "Recommended EV Charging",
-  summary: "Charge tonight from 8:30 PM to 10:00 PM.",
-  reason:
-    "Your battery is acceptable now, but your upcoming schedule may leave limited time to charge later.",
-  recommendedChargingStart: "2026-07-03T20:30:00",
-  recommendedChargingEnd: "2026-07-03T22:00:00",
-  chargingLocationName: "Home Charger",
-  chargingLocationType: "home",
-  chargingType: "home_ac",
-  currentBatteryPercent: 52,
-  targetBatteryPercent: 85,
-  predictedBatteryAfterSchedule: 24,
-  predictedLowestBatteryPercent: 22,
-  estimatedEnergyNeededPercent: 33,
-  estimatedChargingDurationMinutes: 90,
+  riskLevel: "low",
+  mainRisk: "unknown",
+  mobilityConfidenceScore: 0,
+  confidenceScore: 0,
+  shouldCharge: false,
+  recommendationStatus: "not_needed",
+  title: "N/A",
+  summary: "N/A",
+  reason: "N/A",
+  recommendedChargingStart: null,
+  recommendedChargingEnd: null,
+  chargingLocationName: "N/A",
+  chargingLocationType: null,
+  chargingType: "none",
+  currentBatteryPercent: 0,
+  targetBatteryPercent: null,
+  predictedBatteryAfterSchedule: 0,
+  predictedLowestBatteryPercent: 0,
+  estimatedEnergyNeededPercent: 0,
+  estimatedChargingDurationMinutes: null,
+  stationRecommendations: [],
   riskBreakdown: {
-    batteryRisk: "medium",
-    chargingOpportunityRisk: "high",
-    scheduleDisruptionRisk: "medium",
-    weatherTrafficRisk: "medium",
+    batteryRisk: "low",
+    chargingOpportunityRisk: "low",
+    scheduleDisruptionRisk: "low",
+    weatherTrafficRisk: "low",
   },
   backupPlan: {
-    available: true,
-    title: "Backup DC Fast Charging",
-    locationName: "Setia City Mall DC Charger",
-    startTime: "2026-07-04T16:30:00",
-    endTime: "2026-07-04T17:00:00",
-    reason:
-      "Fast backup option near your evening destination if you skip home charging tonight.",
+    available: false,
+    title: "N/A",
+    locationName: "N/A",
+    startTime: null,
+    endTime: null,
+    reason: "N/A",
   },
   calendarAction: {
-    shouldCreateEvent: true,
-    title: "Recommended EV Charging",
-    date: "2026-07-03",
-    startTime: "20:30",
-    endTime: "22:00",
-    location: "Home Charger",
-    colorType: "charging",
+    shouldCreateEvent: false,
+    title: "N/A",
+    date: null,
+    startTime: null,
+    endTime: null,
+    location: "N/A",
+    colorType: "default",
   },
   sidePanelDetails: {
-    mainMessage: "Charging is recommended before tomorrow's schedule.",
-    batteryExplanation:
-      "Your current battery is enough for now, but the predicted lowest battery after upcoming trips is low.",
-    scheduleExplanation:
-      "Tomorrow contains multiple trips with limited free time to charge.",
-    chargingExplanation:
-      "Home charging tonight is the least disruptive option because the car is usually parked at home.",
-    backupExplanation:
-      "If you skip tonight, use DC fast charging near your evening destination as a backup.",
-    userActionText: "Add charging plan to calendar",
+    mainMessage: "N/A",
+    batteryExplanation: "N/A",
+    scheduleExplanation: "N/A",
+    chargingExplanation: "N/A",
+    backupExplanation: "N/A",
+    userActionText: "N/A",
   },
 };
-
-function startOfDay(date: Date) {
-  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
-}
-
-function addDays(date: Date, amount: number) {
-  const next = new Date(date);
-  next.setDate(next.getDate() + amount);
-  return next;
-}
 
 function toDateValue(date: Date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -114,37 +98,13 @@ function eventTypeFromTime(time: string): CalendarEvent['type'] {
   return 'Evening';
 }
 
-function estimateDistanceKm(location: string) {
-  const value = location.toLowerCase();
-  if (value.includes('klia')) return 82;
-  if (value.includes('cyberjaya')) return 48;
-  if (value.includes('putrajaya')) return 42;
-  if (value.includes('shah alam')) return 38;
-  if (value.includes('petaling jaya') || value.includes('dealer')) return 26;
-  if (value.includes('klcc') || value.includes('trx')) return 24;
-  if (value.includes('bangsar') || value.includes('mont kiara')) return 18;
-  if (value.includes('royal lake')) return 16;
-  if (value.includes('home') || value.includes('online') || value.includes('teams') || value.includes('hq')) return 0;
-  return 20;
-}
-
-function normalizeWeather(weather: WeatherSnapshot): ChargingPlanInput['weather'] {
-  const condition = weather.condition.toLowerCase();
-  if (condition.includes('storm')) return { condition: 'storm', energyImpactPercent: 9 };
-  if (condition.includes('rain')) return { condition: 'rain', energyImpactPercent: 6 };
-  if (weather.temp >= 32 || condition.includes('hot')) return { condition: 'hot', energyImpactPercent: 4 };
-  if (condition.includes('clear') || condition.includes('sun')) return { condition: 'clear', energyImpactPercent: 1 };
-  return { condition: 'unknown', energyImpactPercent: 2 };
-}
-
 function eventDate(event: CalendarEvent) {
   return event.date instanceof Date ? event.date : new Date(event.date);
 }
 
-export function buildChargingPlanInput(events: CalendarEvent[], vehicle: VehicleState, weather: WeatherSnapshot): ChargingPlanInput {
+export function buildChargingPlanInput(events: CalendarEvent[], vehicle: VehicleState, weather: WeatherSnapshot, horizonDays: number | null = 3): ChargingPlanInput {
   const now = new Date();
-  const horizonEnd = addDays(startOfDay(now), 3);
-  const weatherPlan = normalizeWeather(weather);
+  const horizonEnd = horizonDays === null ? null : new Date(now.getFullYear(), now.getMonth(), now.getDate() + horizonDays);
 
   return {
     currentDateTime: now.toISOString(),
@@ -152,58 +112,31 @@ export function buildChargingPlanInput(events: CalendarEvent[], vehicle: Vehicle
     vehicle: {
       modelName: 'Mercedes-Benz EQS 450+',
       batteryPercent: vehicle.batteryLevel,
-      usableBatteryKwh: 107.8,
       estimatedRangeKm: Math.round(620 * vehicle.batteryLevel / 100),
-      averageEfficiencyKwhPer100Km: 17.4,
-      homeChargingAvailable: true,
-      homeChargingPowerKw: 11,
       connectorType: 'CCS2',
     },
     calendarEvents: events
       .filter((event) => !event.isAiRecommendationPreview)
       .filter((event) => {
         const date = eventDate(event);
-        return date >= startOfDay(now) && date < horizonEnd;
+        return horizonEnd === null ? true : date >= new Date(now.getFullYear(), now.getMonth(), now.getDate()) && date < horizonEnd;
       })
-      .map((event) => {
-        const distanceKm = event.carNeeded ? estimateDistanceKm(event.location) : 0;
-        const trafficFactor = parseTimeToMinutes(event.departureTime ?? event.time) >= 17 * 60 ? 1.25 : 1.12;
-        const weatherFactor = 1 + ((weatherPlan?.energyImpactPercent ?? 0) / 100);
-        return {
-          id: event.id,
-          title: event.title,
-          date: toDateValue(eventDate(event)),
-          startTime: event.time,
-          endTime: event.endTime ?? event.time,
-          location: event.location,
-          estimatedDistanceKm: distanceKm,
-          estimatedEnergyUsePercent: Math.ceil(distanceKm / 5.8 * trafficFactor * weatherFactor),
-          type: event.category,
-        };
-      }),
-    driverHabits: {
-      usuallyParkedAtHomeFrom: '20:00',
-      usuallyParkedAtHomeUntil: '07:30',
-      averageDailyDistanceKm: 42,
-      preferredChargingLocation: 'home',
-      usualChargingThresholdPercent: 30,
+      .map((event) => ({
+        id: event.id,
+        title: event.title,
+        date: toDateValue(eventDate(event)),
+        startTime: event.time,
+        endTime: event.endTime ?? event.time,
+        location: event.location,
+        type: event.category,
+        carNeeded: event.carNeeded,
+        status: event.status,
+        notes: event.notes,
+      })),
+    weather: {
+      temp: weather.temp,
+      condition: weather.condition,
     },
-    weather: weatherPlan,
-    traffic: {
-      condition: 'heavy',
-      energyImpactPercent: 8,
-    },
-    chargingStations: mockDCChargingStationsMalaysia.slice(0, 12).map((station) => ({
-      id: station.id,
-      name: station.name,
-      latitude: station.latitude,
-      longitude: station.longitude,
-      provider: station.provider,
-      chargerType: station.chargerType,
-      connectors: station.connectors,
-      maxPowerKw: station.maxPowerKw,
-      isHighwayStop: station.isHighwayStop,
-    })),
   };
 }
 
@@ -234,8 +167,8 @@ export function buildCalendarEventFromChargingPlan(plan: ChargingPlanResult, isP
   if (dateParts.length !== 3 || dateParts.some((part) => !Number.isFinite(part))) return null;
   const date = new Date(dateParts[0], dateParts[1] - 1, dateParts[2]);
   const category: CalendarEvent['category'] = action.colorType === 'battery-risk' || plan.riskLevel === 'high' ? 'risk' : 'charging';
-  const location = action.location ?? plan.chargingLocationName ?? 'Charging location';
-  const minutes = plan.estimatedChargingDurationMinutes ?? Math.max(30, parseTimeToMinutes(action.endTime) - parseTimeToMinutes(action.startTime));
+  const location = action.location ?? plan.chargingLocationName ?? 'N/A';
+  const minutes = plan.estimatedChargingDurationMinutes ?? Math.max(0, parseTimeToMinutes(action.endTime) - parseTimeToMinutes(action.startTime));
 
   return {
     id: getChargingPlanCalendarEventId(plan),
@@ -254,12 +187,12 @@ export function buildCalendarEventFromChargingPlan(plan: ChargingPlanResult, isP
     isAiRecommendationPreview: isPreview,
     chargingMeta: {
       mode: plan.chargingType === 'public_dc_fast' ? 'DC' : 'AC',
-      targetBattery: plan.targetBatteryPercent ?? 80,
+      targetBattery: plan.targetBatteryPercent ?? 0,
       minutesNeeded: minutes,
       connector: 'CCS2',
       anchorLocation: plan.chargingLocationName ?? location,
       stationOptions: [],
-      aiSource: plan.id.includes('fallback') ? 'fallback' : 'gemini',
+      aiSource: plan.id === 'ai-charge-na' ? 'fallback' : 'gemini',
       aiConfidence: plan.confidenceScore / 100,
       aiReason: plan.reason,
     },
@@ -269,14 +202,14 @@ export function buildCalendarEventFromChargingPlan(plan: ChargingPlanResult, isP
 export function formatChargingWindow(plan: ChargingPlanResult) {
   const start = plan.recommendedChargingStart ? new Date(plan.recommendedChargingStart) : null;
   const end = plan.recommendedChargingEnd ? new Date(plan.recommendedChargingEnd) : null;
-  if (!start || !end || Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return 'No charging window';
+  if (!start || !end || Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return 'N/A';
   return `${start.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })} - ${end.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
 }
 
 export function formatChargingWindowWithDate(plan: ChargingPlanResult) {
   const start = plan.recommendedChargingStart ? new Date(plan.recommendedChargingStart) : null;
   const end = plan.recommendedChargingEnd ? new Date(plan.recommendedChargingEnd) : null;
-  if (!start || !end || Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return 'No charging window';
+  if (!start || !end || Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return 'N/A';
   const day = start.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
   return `${day}, ${formatChargingWindow(plan)}`;
 }

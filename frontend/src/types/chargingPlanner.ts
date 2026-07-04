@@ -1,3 +1,15 @@
+export type ChargingStationRecommendation = {
+  id?: string;
+  name: string;
+  provider?: string | null;
+  city?: string | null;
+  address?: string | null;
+  connector?: 'CCS2' | 'Tesla CCS2' | 'CHAdeMO' | string | null;
+  maxPowerKw?: number | null;
+  stalls?: number | null;
+  reason?: string | null;
+};
+
 export type ChargingPlanResult = {
   id: string;
   type: "ai_charging_recommendation";
@@ -35,6 +47,7 @@ export type ChargingPlanResult = {
   predictedLowestBatteryPercent: number;
   estimatedEnergyNeededPercent: number;
   estimatedChargingDurationMinutes: number | null;
+  stationRecommendations?: ChargingStationRecommendation[];
 
   riskBreakdown: {
     batteryRisk: "low" | "medium" | "high";
@@ -79,11 +92,7 @@ export type ChargingPlanInput = {
   vehicle: {
     modelName: string;
     batteryPercent: number;
-    usableBatteryKwh?: number;
     estimatedRangeKm: number;
-    averageEfficiencyKwhPer100Km?: number;
-    homeChargingAvailable: boolean;
-    homeChargingPowerKw?: number;
     connectorType?: "CCS2" | "CHAdeMO" | "Tesla CCS2";
   };
 
@@ -94,38 +103,11 @@ export type ChargingPlanInput = {
     startTime: string;
     endTime: string;
     location?: string;
-    estimatedDistanceKm?: number;
-    estimatedEnergyUsePercent?: number;
     type?: string;
+    carNeeded?: boolean;
+    status?: string;
+    notes?: string;
   }>;
 
-  driverHabits: {
-    usuallyParkedAtHomeFrom?: string;
-    usuallyParkedAtHomeUntil?: string;
-    averageDailyDistanceKm?: number;
-    preferredChargingLocation?: "home" | "public_dc" | "any";
-    usualChargingThresholdPercent?: number;
-  };
-
-  weather?: {
-    condition: "clear" | "rain" | "storm" | "hot" | "unknown";
-    energyImpactPercent?: number;
-  };
-
-  traffic?: {
-    condition: "light" | "moderate" | "heavy" | "unknown";
-    energyImpactPercent?: number;
-  };
-
-  chargingStations?: Array<{
-    id: string;
-    name: string;
-    latitude: number;
-    longitude: number;
-    provider?: string;
-    chargerType: "DC" | "AC";
-    connectors: string[];
-    maxPowerKw: number;
-    isHighwayStop?: boolean;
-  }>;
+  weather?: Record<string, unknown>;
 };

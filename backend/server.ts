@@ -1,4 +1,4 @@
-import express from 'express';
+﻿import express from 'express';
 import 'dotenv/config';
 import { GoogleGenAI, Modality, type LiveServerMessage } from '@google/genai';
 import { WebSocketServer } from 'ws';
@@ -65,6 +65,17 @@ type ChargingPredictionRequest = {
   };
 };
 
+type ChargingStationRecommendation = {
+  id?: string;
+  name: string;
+  provider?: string | null;
+  city?: string | null;
+  address?: string | null;
+  connector?: string | null;
+  maxPowerKw?: number | null;
+  stalls?: number | null;
+  reason?: string | null;
+};
 type ChargingPlanResult = {
   id: string;
   type: "ai_charging_recommendation";
@@ -88,6 +99,7 @@ type ChargingPlanResult = {
   predictedLowestBatteryPercent: number;
   estimatedEnergyNeededPercent: number;
   estimatedChargingDurationMinutes: number | null;
+  stationRecommendations?: ChargingStationRecommendation[];
   riskBreakdown: {
     batteryRisk: "low" | "medium" | "high";
     chargingOpportunityRisk: "low" | "medium" | "high";
@@ -127,11 +139,7 @@ type ChargingPlanInput = {
   vehicle: {
     modelName: string;
     batteryPercent: number;
-    usableBatteryKwh?: number;
     estimatedRangeKm: number;
-    averageEfficiencyKwhPer100Km?: number;
-    homeChargingAvailable: boolean;
-    homeChargingPowerKw?: number;
     connectorType?: "CCS2" | "CHAdeMO" | "Tesla CCS2";
   };
   calendarEvents: Array<{
@@ -141,75 +149,68 @@ type ChargingPlanInput = {
     startTime: string;
     endTime: string;
     location?: string;
-    estimatedDistanceKm?: number;
-    estimatedEnergyUsePercent?: number;
     type?: string;
+    carNeeded?: boolean;
+    status?: string;
+    notes?: string;
   }>;
-  driverHabits: Record<string, unknown>;
   weather?: Record<string, unknown>;
-  traffic?: Record<string, unknown>;
-  chargingStations?: Array<Record<string, unknown>>;
 };
 
 const fallbackChargingPlan: ChargingPlanResult = {
-  id: "ai-charge-fallback-001",
+  id: "ai-charge-na",
   type: "ai_charging_recommendation",
-  riskLevel: "medium",
-  mainRisk: "limited_charging_opportunity",
-  mobilityConfidenceScore: 58,
-  confidenceScore: 70,
-  shouldCharge: true,
-  recommendationStatus: "recommended",
-  title: "Recommended EV Charging",
-  summary: "Charge tonight from 8:30 PM to 10:00 PM.",
-  reason:
-    "Your battery is acceptable now, but your upcoming schedule may leave limited time to charge later.",
-  recommendedChargingStart: "2026-07-03T20:30:00",
-  recommendedChargingEnd: "2026-07-03T22:00:00",
-  chargingLocationName: "Home Charger",
-  chargingLocationType: "home",
-  chargingType: "home_ac",
-  currentBatteryPercent: 52,
-  targetBatteryPercent: 85,
-  predictedBatteryAfterSchedule: 24,
-  predictedLowestBatteryPercent: 22,
-  estimatedEnergyNeededPercent: 33,
-  estimatedChargingDurationMinutes: 90,
+  riskLevel: "low",
+  mainRisk: "unknown",
+  mobilityConfidenceScore: 0,
+  confidenceScore: 0,
+  shouldCharge: false,
+  recommendationStatus: "not_needed",
+  title: "N/A",
+  summary: "N/A",
+  reason: "N/A",
+  recommendedChargingStart: null,
+  recommendedChargingEnd: null,
+  chargingLocationName: "N/A",
+  chargingLocationType: null,
+  chargingType: "none",
+  currentBatteryPercent: 0,
+  targetBatteryPercent: null,
+  predictedBatteryAfterSchedule: 0,
+  predictedLowestBatteryPercent: 0,
+  estimatedEnergyNeededPercent: 0,
+  estimatedChargingDurationMinutes: null,
+  stationRecommendations: [],
   riskBreakdown: {
-    batteryRisk: "medium",
-    chargingOpportunityRisk: "high",
-    scheduleDisruptionRisk: "medium",
-    weatherTrafficRisk: "medium",
+    batteryRisk: "low",
+    chargingOpportunityRisk: "low",
+    scheduleDisruptionRisk: "low",
+    weatherTrafficRisk: "low",
   },
   backupPlan: {
-    available: true,
-    title: "Backup DC Fast Charging",
-    locationName: "Setia City Mall DC Charger",
-    startTime: "2026-07-04T16:30:00",
-    endTime: "2026-07-04T17:00:00",
-    reason:
-      "Fast backup option near your evening destination if you skip home charging tonight.",
+    available: false,
+    title: "N/A",
+    locationName: "N/A",
+    startTime: null,
+    endTime: null,
+    reason: "N/A",
   },
   calendarAction: {
-    shouldCreateEvent: true,
-    title: "Recommended EV Charging",
-    date: "2026-07-03",
-    startTime: "20:30",
-    endTime: "22:00",
-    location: "Home Charger",
-    colorType: "charging",
+    shouldCreateEvent: false,
+    title: "N/A",
+    date: null,
+    startTime: null,
+    endTime: null,
+    location: "N/A",
+    colorType: "default",
   },
   sidePanelDetails: {
-    mainMessage: "Charging is recommended before tomorrow's schedule.",
-    batteryExplanation:
-      "Your current battery is enough for now, but the predicted lowest battery after upcoming trips is low.",
-    scheduleExplanation:
-      "Tomorrow contains multiple trips with limited free time to charge.",
-    chargingExplanation:
-      "Home charging tonight is the least disruptive option because the car is usually parked at home.",
-    backupExplanation:
-      "If you skip tonight, use DC fast charging near your evening destination as a backup.",
-    userActionText: "Add charging plan to calendar",
+    mainMessage: "N/A",
+    batteryExplanation: "N/A",
+    scheduleExplanation: "N/A",
+    chargingExplanation: "N/A",
+    backupExplanation: "N/A",
+    userActionText: "N/A",
   },
 };
 
@@ -229,8 +230,30 @@ function stringOrNull(value: unknown) {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
+function numberOrNull(value: unknown) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function validateStationRecommendations(value: unknown): ChargingStationRecommendation[] {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 5).map((station, index) => {
+    const item = station && typeof station === 'object' ? station as Record<string, unknown> : {};
+    return {
+      id: stringOrNull(item.id) ?? `gemini-station-${index + 1}`,
+      name: stringOrNull(item.name) ?? 'N/A',
+      provider: stringOrNull(item.provider) ?? 'N/A',
+      city: stringOrNull(item.city) ?? 'N/A',
+      address: stringOrNull(item.address) ?? 'N/A',
+      connector: stringOrNull(item.connector) ?? 'N/A',
+      maxPowerKw: numberOrNull(item.maxPowerKw),
+      stalls: numberOrNull(item.stalls),
+      reason: stringOrNull(item.reason) ?? 'N/A',
+    };
+  });
+}
 function validateChargingPlanResult(value: any, input?: ChargingPlanInput): ChargingPlanResult {
-  if (!value || value.type !== "ai_charging_recommendation") throw new Error("Invalid charging plan result");
+  if (!value || typeof value !== "object") throw new Error("Invalid charging plan result");
 
   const riskLevels = ["low", "medium", "high"] as const;
   const mainRisks = ["none", "low_battery", "limited_charging_opportunity", "schedule_disruption", "long_distance_trip", "weather_traffic_impact", "unknown"] as const;
@@ -263,6 +286,7 @@ function validateChargingPlanResult(value: any, input?: ChargingPlanInput): Char
     predictedLowestBatteryPercent: clampScore(value.predictedLowestBatteryPercent, safe.predictedLowestBatteryPercent),
     estimatedEnergyNeededPercent: clampScore(value.estimatedEnergyNeededPercent, safe.estimatedEnergyNeededPercent),
     estimatedChargingDurationMinutes: value.estimatedChargingDurationMinutes === null ? null : Math.max(0, Math.round(Number(value.estimatedChargingDurationMinutes) || safe.estimatedChargingDurationMinutes || 0)),
+    stationRecommendations: validateStationRecommendations(value.stationRecommendations),
     riskBreakdown: {
       batteryRisk: isStringOption(value.riskBreakdown?.batteryRisk, riskLevels) ? value.riskBreakdown.batteryRisk : safe.riskBreakdown.batteryRisk,
       chargingOpportunityRisk: isStringOption(value.riskBreakdown?.chargingOpportunityRisk, riskLevels) ? value.riskBreakdown.chargingOpportunityRisk : safe.riskBreakdown.chargingOpportunityRisk,
@@ -312,35 +336,18 @@ ${JSON.stringify(input.vehicle, null, 2)}
 Calendar events:
 ${JSON.stringify(input.calendarEvents, null, 2)}
 
-Driver habits:
-${JSON.stringify(input.driverHabits, null, 2)}
-
 Weather:
 ${JSON.stringify(input.weather ?? null, null, 2)}
 
-Traffic:
-${JSON.stringify(input.traffic ?? null, null, 2)}
-
-Charging stations:
-${JSON.stringify(input.chargingStations ?? [], null, 2)}
-
-Return only valid JSON using the required schema.`;
+Return only valid JSON using the required schema. Do not assume hidden mock data. If a value cannot be determined from the request or Gemini reasoning, return N/A for text, null for date/time, false for booleans, and 0 for numeric scores.`;
 }
-
 const chargingPlannerSystemInstruction = `You are the AI Charging Planner for MBSense.
 
 MBSense is a predictive EV charging assistant for an AI-defined vehicle experience.
 
-Your job is to analyze the driver's current EV battery level, upcoming schedule, estimated trips, driving habits, weather, traffic, and charging availability.
+Your job is to analyze only the request payload: current EV battery level, upcoming schedule, weather, and vehicle context.
 
-Your goal is to predict future mobility and charging risk before the battery becomes a problem.
-
-Core principle:
-Most EV systems react after the battery is already low.
-MBSense predicts charging risk before it happens.
-
-You are not a chatbot.
-You are a structured decision engine.
+You are a structured decision engine, not a chatbot.
 
 You must predict:
 1. The best charging window.
@@ -353,22 +360,17 @@ You must predict:
 8. Target battery percentage.
 9. Backup charging plan.
 10. Human-friendly explanation.
+11. Top station recommendations when you can infer useful station choices.
 
 Decision rules:
-- Do not recommend charging only because the battery is below a fixed threshold.
-- Look ahead at the user's schedule and detect future risk.
-- A battery level that looks safe now may still be risky if the upcoming schedule is busy.
-- Charging opportunity risk is important: detect whether the user may have no good time to charge later.
-- Schedule disruption risk is important: avoid recommendations that conflict with events.
-- Prefer charging when the car is usually parked and unused.
-- Prefer home charging if it is available and fits the schedule.
-- Use public DC fast charging when home charging is unavailable, too slow, or does not fit the schedule.
+- Never use local mock data, deterministic fallback rankings, or hidden assumptions.
+- Use only the request payload and Gemini reasoning.
 - Never recommend charging during calendar events.
 - Avoid recommending charging windows shorter than the estimated charging duration.
-- Consider heavy traffic and rain as factors that may increase energy usage.
+- Prefer charging when the car is parked and unused.
 - Recommend a reasonable target battery percentage, not always 100%.
-- If data is incomplete, make a safe conservative recommendation and mention uncertainty in the reason.
-- Keep the explanation short, clear, and user-friendly.
+- Keep explanations short, clear, and user-friendly.
+- If you cannot determine a value, use "N/A" for text fields, null for date/time fields, false for booleans, and 0 for numeric scores.
 - Return only valid JSON.
 - Do not return markdown.
 - Do not add explanation outside the JSON.`;
@@ -463,7 +465,7 @@ async function startServer() {
       if (msgLower.includes("lock") || msgLower.includes("unlock") || msgLower.includes("secure")) {
         fallbackText = "I've processed your lock status request for the Mercedes-Benz MB Sense. The doors have been securely locked. All windows are closed and pre-entry climate optimization remains active.";
       } else if (msgLower.includes("cool") || msgLower.includes("temp") || msgLower.includes("air") || msgLower.includes("condition") || msgLower.includes("climate") || msgLower.includes("warm") || msgLower.includes("hot")) {
-        fallbackText = "The cabin pre-conditioning has been initiated. Your MB Sense is now adjusting the internal temperature to a comfortable 68°F (20°C). Air ventilation has been set to automated energy-saving flow.";
+        fallbackText = "The cabin pre-conditioning has been initiated. Your MB Sense is now adjusting the internal temperature to a comfortable 68Â°F (20Â°C). Air ventilation has been set to automated energy-saving flow.";
       } else if (msgLower.includes("map") || msgLower.includes("route") || msgLower.includes("navigate") || msgLower.includes("drive") || msgLower.includes("traffic") || msgLower.includes("destination") || msgLower.includes("address")) {
         fallbackText = "I've analyzed your upcoming schedule. The optimal route to your next appointment has been synced with the Mercedes-Benz cockpit navigation. Estimated travel time is 22 minutes with normal afternoon traffic.";
       } else if (msgLower.includes("battery") || msgLower.includes("charge") || msgLower.includes("fuel") || msgLower.includes("range")) {
@@ -585,8 +587,73 @@ Rules:
         model: "gemini-3.1-flash-lite",
         contents: `${buildChargingPlannerPrompt(payload)}
 
-Required JSON object fields:
-id, type, riskLevel, mainRisk, mobilityConfidenceScore, confidenceScore, shouldCharge, recommendationStatus, title, summary, reason, recommendedChargingStart, recommendedChargingEnd, chargingLocationName, chargingLocationType, chargingType, currentBatteryPercent, targetBatteryPercent, predictedBatteryAfterSchedule, predictedLowestBatteryPercent, estimatedEnergyNeededPercent, estimatedChargingDurationMinutes, riskBreakdown, backupPlan, calendarAction, sidePanelDetails.`,
+Required JSON object fields and exact allowed values:
+- type must be "ai_charging_recommendation".
+- riskLevel and each riskBreakdown value must be one of "low", "medium", "high".
+- mainRisk must be one of "none", "low_battery", "limited_charging_opportunity", "schedule_disruption", "long_distance_trip", "weather_traffic_impact", "unknown".
+- recommendationStatus must be one of "not_needed", "optional", "recommended", "urgent".
+- chargingLocationType must be "home", "public_dc", "public_ac", or null.
+- chargingType must be "home_ac", "public_dc_fast", "public_ac", or "none".
+- stationRecommendations must be an array of objects with id, name, provider, city, address, connector, maxPowerKw, stalls, and reason.
+- backupPlan, calendarAction, riskBreakdown, and sidePanelDetails must be objects, not strings.
+
+Return this exact JSON shape with no markdown:
+{
+  "id": "ai-charge-gemini-1",
+  "type": "ai_charging_recommendation",
+  "riskLevel": "medium",
+  "mainRisk": "low_battery",
+  "mobilityConfidenceScore": 0,
+  "confidenceScore": 0,
+  "shouldCharge": false,
+  "recommendationStatus": "optional",
+  "title": "N/A",
+  "summary": "N/A",
+  "reason": "N/A",
+  "recommendedChargingStart": null,
+  "recommendedChargingEnd": null,
+  "chargingLocationName": "N/A",
+  "chargingLocationType": null,
+  "chargingType": "none",
+  "currentBatteryPercent": 0,
+  "targetBatteryPercent": null,
+  "predictedBatteryAfterSchedule": 0,
+  "predictedLowestBatteryPercent": 0,
+  "estimatedEnergyNeededPercent": 0,
+  "estimatedChargingDurationMinutes": null,
+  "stationRecommendations": [],
+  "riskBreakdown": {
+    "batteryRisk": "low",
+    "chargingOpportunityRisk": "low",
+    "scheduleDisruptionRisk": "low",
+    "weatherTrafficRisk": "low"
+  },
+  "backupPlan": {
+    "available": false,
+    "title": "N/A",
+    "locationName": "N/A",
+    "startTime": null,
+    "endTime": null,
+    "reason": "N/A"
+  },
+  "calendarAction": {
+    "shouldCreateEvent": false,
+    "title": "N/A",
+    "date": null,
+    "startTime": null,
+    "endTime": null,
+    "location": "N/A",
+    "colorType": "default"
+  },
+  "sidePanelDetails": {
+    "mainMessage": "N/A",
+    "batteryExplanation": "N/A",
+    "scheduleExplanation": "N/A",
+    "chargingExplanation": "N/A",
+    "backupExplanation": "N/A",
+    "userActionText": "N/A"
+  }
+}`,
         config: {
           responseMimeType: "application/json",
           systemInstruction: chargingPlannerSystemInstruction
@@ -1457,7 +1524,7 @@ Provide an ultra-precise, expert 2-sentence psychological advisory from a Merced
       if (mode === 'sport') {
         advice = "The dominant red spectrum stimulates physiological arousal and focus levels when taking high-speed turns. Keep multi-zone luminance below 60% during night routes to prevent windshield reflection and preserve forward tracking acuity.";
       } else if (mode === 'eco') {
-        advice = "The soothing emerald tone mirrors organic nature, lowering cardiac deceleration during city transit. Couple with a cool 21°C cabin temperature and active regenerative gliding to harmonize your sustainable power flow.";
+        advice = "The soothing emerald tone mirrors organic nature, lowering cardiac deceleration during city transit. Couple with a cool 21Â°C cabin temperature and active regenerative gliding to harmonize your sustainable power flow.";
       } else if (mode === 'relax') {
         advice = "Ethereal purple tones promote alpha-wave neural expansion and muscular decompression down the spine. Pair this serene ambient flow with the active hot-stone seat massage and dim dash highlights for a sensory haven.";
       } else {
@@ -1817,3 +1884,8 @@ Synthesize an elite, sensory 2-sentence parking guidance advisor. Specifically m
 }
 
 startServer();
+
+
+
+
+
