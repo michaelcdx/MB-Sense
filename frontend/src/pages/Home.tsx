@@ -110,23 +110,35 @@ function normalizeNavigationDestination(value: string) {
   return value;
 }
 
-function buildGoogleMapsDirectionsUrl(station: ChargingStationRecommendation | null, fallbackLocation: string) {
+function buildMapDirectionsUrl(station: ChargingStationRecommendation | null, fallbackLocation: string) {
   const latitude = Number(station?.latitude);
   const longitude = Number(station?.longitude);
-  const destination = Number.isFinite(latitude) && Number.isFinite(longitude)
-    ? `${latitude},${longitude}`
-    : [
-        displayText(station?.address),
-        displayText(station?.name),
-        fallbackLocation,
-      ]
-        .filter((value) => value !== 'N/A')
-        .map(normalizeNavigationDestination)
-        .filter((value, index, list) => list.indexOf(value) === index)
-        .join(', ');
+  const destination = [
+    displayText(station?.address),
+    displayText(station?.name),
+    fallbackLocation,
+  ]
+    .filter((value) => value !== 'N/A')
+    .map(normalizeNavigationDestination)
+    .filter((value, index, list) => list.indexOf(value) === index)
+    .join(', ');
 
   if (!destination || destination === 'N/A') return null;
-  return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}&travelmode=driving`;
+
+  const params = new URLSearchParams({
+    route: 'charging',
+    from: defaultHomeAddress,
+    to: destination,
+    name: displayText(station?.name) !== 'N/A' ? displayText(station?.name) : displayText(fallbackLocation),
+    event: 'AI Charging Recommendation',
+  });
+
+  if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
+    params.set('lat', String(latitude));
+    params.set('lng', String(longitude));
+  }
+
+  return `/map?${params.toString()}`;
 }
 
 function toCalendarStationOption(station: ChargingStationRecommendation, index: number): ChargingStationCalendarOption {
