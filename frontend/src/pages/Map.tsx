@@ -86,7 +86,7 @@ const modeVisuals: Record<MapMode, { routeColor: string; glow: string; tone: Map
   cost: { routeColor: '#d28700', glow: 'rgba(210, 135, 0, 0.12)', tone: 'amber' },
 };
 
-type ActivePanel = null | 'search' | 'routeCompare' | 'favoriteStops' | 'evStops' | 'costBreakdown';
+type ActivePanel = null | 'routeCompare' | 'favoriteStops' | 'evStops' | 'costBreakdown';
 type DriveExperienceMode = 'driveNow' | 'futureDrivePreview';
 type FutureDriveAction = 'Optimize Selected Plan' | 'Compare Rescue Routes' | 'Set Charging Reminder';
 type FutureDrivePlanId = 'planA' | 'planB' | 'planC';
@@ -2764,12 +2764,6 @@ export default function MapView() {
   const displayEvStations = openChargeMapEvStations.length ? openChargeMapEvStations : fallbackMapEvStations;
   const primaryEvStation = displayEvStations[0] ?? fallbackMapEvStations[0];
   const evStationSourceLabel = openChargeMapEvStations.length ? 'Open Charge Map' : 'Fallback stations';
-  const filteredDestinations =
-    searchQuery.trim().length === 0
-      ? driveDestinations
-      : driveDestinations.filter((destination) =>
-          `${destination.name} ${destination.detail} ${destination.eventName ?? ''} ${destination.eventLocation ?? ''}`.toLowerCase().includes(searchQuery.trim().toLowerCase())
-        );
   const routeAddOnPoints = [selectedFavoriteStop?.position, selectedEvStop?.position].filter(Boolean) as Coordinates[];
   const routePathWithStops = routeAddOnPoints.length > 0
     ? [
@@ -3337,9 +3331,6 @@ export default function MapView() {
   const handleBackgroundClick = (event: MouseEvent<HTMLDivElement>) => {
     const target = event.target as HTMLElement;
     if (target.closest('[data-map-ui="true"]')) return;
-    if (activePanel === 'search') {
-      setActivePanel(null);
-    }
     if (isFutureDrivePreview) return;
     if (sheetState !== 'expanded') return;
     setSheetState('collapsed');
@@ -3434,34 +3425,6 @@ export default function MapView() {
     setMockView(nextView);
   };
 
-  const handleDestinationSelect = (destination: DriveDestination) => {
-    setDriveExperienceMode('driveNow');
-    setSelectedDestinationId(destination.id);
-    setSearchQuery(destination.name);
-    setActivePanel(null);
-    setSheetState('collapsed');
-    setMapMode('aiRoute');
-    setSelectedRouteVariant('recommended');
-    setSelectedFavoriteStop(null);
-    setSelectedEvStop(null);
-    setLastAction(`Route set: ${destination.name}`);
-    updateCameraState({
-      activeNavigation: false,
-      followCar: false,
-      userInteractingWithMap: false,
-      cameraMode: 'routeOverview',
-      currentZoom: routeOverviewZoom,
-    });
-    showTransientToast('Route loaded', destination.name, 'blue');
-
-    if (mapInstance) {
-      markProgrammaticCamera();
-      fitMapLibreToCoordinates(mapInstance, destination.routePath, 72);
-    }
-
-    setMockView(getMockCameraView('routeOverview'));
-  };
-
   const stopNavigation = () => {
     clearPinchRefocusTimer();
     clearDestinationPreviewTimer();
@@ -3480,8 +3443,8 @@ export default function MapView() {
 
   const startNavigation = () => {
     if (!hasSelectedDriveRoute) {
-      setActivePanel('search');
-      showTransientToast('Choose destination', 'Select a calendar driving activity first', 'blue');
+      setActivePanel(null);
+      showTransientToast('Choose destination', 'No route selected', 'blue');
       return;
     }
 
@@ -3694,16 +3657,13 @@ export default function MapView() {
 
       <div
         data-map-ui="true"
-        className="absolute left-1/2 top-[88px] z-30 w-[min(calc(100vw-1.5rem),410px)] -translate-x-1/2 transition-all duration-300 ease-out"
+        className="absolute left-3 top-[88px] z-30 w-[min(calc(100vw-1.5rem),410px)] transition-all duration-300 ease-out sm:left-5 md:left-8 lg:left-10"
       >
         <div className="w-full">
           <div className="flex items-center gap-1">
-          <form
+            <form
             onSubmit={(event) => {
               event.preventDefault();
-              if (filteredDestinations[0]) {
-                handleDestinationSelect(filteredDestinations[0]);
-              }
             }}
             className="relative min-w-0 flex-1"
           >
@@ -3714,14 +3674,6 @@ export default function MapView() {
               value={searchQuery}
               onChange={(event) => {
                 setSearchQuery(event.target.value);
-                if (!isFutureDrivePreview) {
-                  setActivePanel('search');
-                }
-              }}
-              onFocus={() => {
-                if (!isFutureDrivePreview) {
-                  setActivePanel('search');
-                }
               }}
               placeholder={isFutureDrivePreview ? 'Where to tomorrow?' : 'Where to?'}
               className="h-11 w-full rounded-full border border-outline-variant/45 bg-surface-container-lowest/88 pl-12 pr-11 text-[13px] font-medium text-on-surface shadow-ambient backdrop-blur-2xl outline-none transition placeholder:text-slate-500 focus:border-primary/35 focus:bg-surface-container-lowest"
@@ -3731,7 +3683,7 @@ export default function MapView() {
                 type="button"
                 onClick={() => {
                   setSearchQuery('');
-                  setActivePanel(isFutureDrivePreview ? null : 'search');
+                  setActivePanel(null);
                 }}
                 aria-label="Clear destination search"
                 className="absolute right-1.5 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full text-slate-300 transition hover:bg-primary/10"
@@ -3739,7 +3691,7 @@ export default function MapView() {
                 <X className="h-4 w-4" />
               </button>
             )}
-          </form>
+            </form>
 
             <button
               type="button"
@@ -3759,69 +3711,6 @@ export default function MapView() {
               </span>
             </button>
           </div>
-
-          {activePanel === 'search' && !isFutureDrivePreview && (
-            <div className="mt-2 overflow-hidden rounded-[22px] border border-outline-variant/45 bg-surface-container-lowest/92 p-1.5 shadow-ambient-lg backdrop-blur-2xl">
-              {filteredDestinations.map((destination) => (
-                <button
-                  key={destination.id}
-                  type="button"
-                  onClick={() => handleDestinationSelect(destination)}
-                  className="flex min-h-12 w-full items-center gap-2.5 rounded-[18px] px-2.5 py-2 text-left transition hover:bg-primary/10 active:scale-[0.99]"
-                >
-                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-primary/20 bg-primary/10 text-primary">
-                    <MapPin className="h-3.5 w-3.5" />
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-[13px] font-semibold text-on-surface">{destination.name}</span>
-                    <span className="mt-0.5 block truncate text-[11px] font-medium text-slate-500">
-                      {destination.eta} - {destination.distance} - {destination.traffic}
-                    </span>
-                  </span>
-                </button>
-              ))}
-            </div>
-          )}
-
-          {!isFutureDrivePreview && (
-            <div className="mt-2 rounded-[22px] border border-outline-variant/45 bg-surface-container-lowest/90 p-3 shadow-ambient-lg backdrop-blur-2xl">
-              {hasSelectedDriveRoute ? (
-                <div className="grid gap-2">
-                  <div className="flex items-center gap-2.5">
-                    <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-emerald-400/30 bg-emerald-500/10 text-emerald-400">
-                      <LocateFixed className="h-3.5 w-3.5" />
-                    </span>
-                    <div className="min-w-0">
-                      <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">From</p>
-                      <p className="truncate text-[13px] font-semibold text-on-surface">{selectedDestination.originName}</p>
-                    </div>
-                  </div>
-                  <div className="ml-3 h-4 w-px bg-gradient-to-b from-emerald-400/50 to-primary/50" />
-                  <div className="flex items-center gap-2.5">
-                    <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-primary/30 bg-primary/10 text-primary">
-                      <MapPin className="h-3.5 w-3.5" />
-                    </span>
-                    <div className="min-w-0">
-                      <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">To</p>
-                      <p className="truncate text-[13px] font-semibold text-on-surface">{selectedDestination.name}</p>
-                      <p className="mt-0.5 truncate text-[10px] font-semibold text-slate-500">{selectedDestination.eta} - {selectedDestination.distance}</p>
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <div className="flex items-center gap-2.5">
-                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-primary/25 bg-primary/10 text-primary">
-                    <MapPin className="h-4 w-4" />
-                  </span>
-                  <div className="min-w-0">
-                    <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">Route</p>
-                    <p className="truncate text-[13px] font-semibold text-on-surface">Choose a calendar destination</p>
-                    <p className="mt-0.5 truncate text-[10px] font-semibold text-slate-500">No route displayed yet</p>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
         </div>
       </div>
 
@@ -3926,7 +3815,7 @@ export default function MapView() {
             ? 'inset-x-3 bottom-[calc(5.75rem+env(safe-area-inset-bottom))] h-[min(72dvh,43rem)] md:inset-x-auto md:left-8 md:bottom-8 md:w-[360px] md:max-w-[calc(48vw-2rem)] lg:left-10 lg:w-[380px]'
             : cn(
                 'inset-x-3 sm:inset-x-auto sm:w-[430px] sm:max-w-[calc(100vw-4rem)]',
-                'sm:left-1/2 sm:-translate-x-1/2',
+                'sm:left-5 md:left-8 lg:left-10',
                 sheetState === 'expanded'
                   ? 'bottom-[calc(5.75rem+env(safe-area-inset-bottom))] sm:bottom-8'
                   : 'bottom-[calc(5.75rem+env(safe-area-inset-bottom))] sm:bottom-8'
