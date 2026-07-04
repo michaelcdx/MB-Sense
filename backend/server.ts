@@ -1,4 +1,4 @@
-﻿import express from 'express';
+import express from 'express';
 import 'dotenv/config';
 import { GoogleGenAI, Modality, type LiveServerMessage } from '@google/genai';
 import { WebSocketServer } from 'ws';
@@ -1014,6 +1014,84 @@ function getFallbackEvChargingStations(userLat: number, userLng: number): EvChar
   }, userLat, userLng, true));
 }
 
+type RouteCoordinate = {
+  lat: number;
+  lng: number;
+};
+
+type OsrmRouteResponse = {
+  code?: string;
+  message?: string;
+  routes?: Array<{
+    distance?: number;
+    duration?: number;
+    geometry?: {
+      type?: string;
+      coordinates?: Array<[number, number]>;
+    };
+  }>;
+  waypoints?: Array<{
+    name?: string;
+    location?: [number, number];
+  }>;
+};
+
+function parseFiniteQueryNumber(value: unknown) {
+  const raw = Array.isArray(value) ? value[0] : value;
+  const numberValue = Number(raw);
+  return Number.isFinite(numberValue) ? numberValue : null;
+}
+
+function isValidLatitude(value: number | null) {
+  return value !== null && value >= -90 && value <= 90;
+}
+
+function isValidLongitude(value: number | null) {
+  return value !== null && value >= -180 && value <= 180;
+}
+
+function normalizeRouteCoordinates(coordinates: Array<[number, number]> | undefined): RouteCoordinate[] {
+  if (!Array.isArray(coordinates)) return [];
+
+  return coordinates
+    .map(([lng, lat]) => ({ lat: Number(lat), lng: Number(lng) }))
+    .filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lng));
+}
+
+async function fetchDrivingRoute(origin: RouteCoordinate, destination: RouteCoordinate) {
+  const baseUrl = (process.env.OSRM_BASE_URL || 'https://router.project-osrm.org').replace(/\/$/, '');
+  const coordinates = `${origin.lng},${origin.lat};${destination.lng},${destination.lat}`;
+  const url = new URL(`${baseUrl}/route/v1/driving/${coordinates}`);
+  url.searchParams.set('overview', 'full');
+  url.searchParams.set('geometries', 'geojson');
+  url.searchParams.set('steps', 'false');
+  url.searchParams.set('alternatives', 'false');
+
+  const response = await fetch(url, {
+    headers: {
+      Accept: 'application/json',
+      'User-Agent': 'MBSense/1.0 (driving route lookup)',
+    },
+  });
+
+  if (!response.ok) throw new Error(`OSRM route request failed with ${response.status}`);
+
+  const payload = await response.json() as OsrmRouteResponse;
+  if (payload.code !== 'Ok') throw new Error(payload.message || payload.code || 'OSRM route request failed');
+
+  const route = payload.routes?.[0];
+  const routeCoordinates = normalizeRouteCoordinates(route?.geometry?.coordinates);
+  if (!route || routeCoordinates.length < 2) throw new Error('OSRM route response did not include usable geometry');
+
+  return {
+    source: 'osrm',
+    profile: 'driving',
+    distanceMeters: Math.round(route.distance ?? 0),
+    durationSeconds: Math.round(route.duration ?? 0),
+    coordinates: routeCoordinates,
+    waypoints: payload.waypoints ?? [],
+  };
+}
 async function startServer() {
   const app = express();
   const server = http.createServer(app);
@@ -1033,6 +1111,34 @@ async function startServer() {
     });
   });
 
+  app.get('/api/routing/driving', async (req, res) => {
+    const originLat = parseFiniteQueryNumber(req.query.originLat);
+    const originLng = parseFiniteQueryNumber(req.query.originLng);
+    const destinationLat = parseFiniteQueryNumber(req.query.destinationLat);
+    const destinationLng = parseFiniteQueryNumber(req.query.destinationLng);
+
+    if (!isValidLatitude(originLat) || !isValidLongitude(originLng) || !isValidLatitude(destinationLat) || !isValidLongitude(destinationLng)) {
+      res.status(400).json({
+        source: 'osrm',
+        error: 'originLat, originLng, destinationLat, and destinationLng are required valid coordinates',
+      });
+      return;
+    }
+
+    const origin = { lat: originLat, lng: originLng } as RouteCoordinate;
+    const destination = { lat: destinationLat, lng: destinationLng } as RouteCoordinate;
+
+    try {
+      const route = await fetchDrivingRoute(origin, destination);
+      res.json(route);
+    } catch (error) {
+      console.error('Driving route lookup failed:', error instanceof Error ? error.message : error);
+      res.status(502).json({
+        source: 'osrm',
+        error: 'Unable to load driving route',
+      });
+    }
+  });
   app.get('/api/charging/openchargemap', async (req, res) => {
     const latitude = Number(req.query.latitude);
     const longitude = Number(req.query.longitude);
@@ -1100,7 +1206,7 @@ async function startServer() {
       if (msgLower.includes("lock") || msgLower.includes("unlock") || msgLower.includes("secure")) {
         fallbackText = "I've processed your lock status request for the Mercedes-Benz MB Sense. The doors have been securely locked. All windows are closed and pre-entry climate optimization remains active.";
       } else if (msgLower.includes("cool") || msgLower.includes("temp") || msgLower.includes("air") || msgLower.includes("condition") || msgLower.includes("climate") || msgLower.includes("warm") || msgLower.includes("hot")) {
-        fallbackText = "The cabin pre-conditioning has been initiated. Your MB Sense is now adjusting the internal temperature to a comfortable 68Â°F (20Â°C). Air ventilation has been set to automated energy-saving flow.";
+        fallbackText = "The cabin pre-conditioning has been initiated. Your MB Sense is now adjusting the internal temperature to a comfortable 68°F (20°C). Air ventilation has been set to automated energy-saving flow.";
       } else if (msgLower.includes("map") || msgLower.includes("route") || msgLower.includes("navigate") || msgLower.includes("drive") || msgLower.includes("traffic") || msgLower.includes("destination") || msgLower.includes("address")) {
         fallbackText = "I've analyzed your upcoming schedule. The optimal route to your next appointment has been synced with the Mercedes-Benz cockpit navigation. Estimated travel time is 22 minutes with normal afternoon traffic.";
       } else if (msgLower.includes("battery") || msgLower.includes("charge") || msgLower.includes("fuel") || msgLower.includes("range")) {
@@ -2090,7 +2196,7 @@ Provide an ultra-precise, expert 2-sentence psychological advisory from a Merced
       if (mode === 'sport') {
         advice = "The dominant red spectrum stimulates physiological arousal and focus levels when taking high-speed turns. Keep multi-zone luminance below 60% during night routes to prevent windshield reflection and preserve forward tracking acuity.";
       } else if (mode === 'eco') {
-        advice = "The soothing emerald tone mirrors organic nature, lowering cardiac deceleration during city transit. Couple with a cool 21Â°C cabin temperature and active regenerative gliding to harmonize your sustainable power flow.";
+        advice = "The soothing emerald tone mirrors organic nature, lowering cardiac deceleration during city transit. Couple with a cool 21°C cabin temperature and active regenerative gliding to harmonize your sustainable power flow.";
       } else if (mode === 'relax') {
         advice = "Ethereal purple tones promote alpha-wave neural expansion and muscular decompression down the spine. Pair this serene ambient flow with the active hot-stone seat massage and dim dash highlights for a sensory haven.";
       } else {
