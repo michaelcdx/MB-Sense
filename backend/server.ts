@@ -1027,6 +1027,12 @@ async function startServer() {
     res.json({ status: 'ok' });
   });
 
+  app.get('/api/public-config', (req, res) => {
+    res.json({
+      mapTilerApiKey: process.env.VITE_MAPTILER_API_KEY || process.env.MAPTILER_API_KEY || '',
+    });
+  });
+
   app.get('/api/charging/openchargemap', async (req, res) => {
     const latitude = Number(req.query.latitude);
     const longitude = Number(req.query.longitude);
