@@ -109,23 +109,35 @@ function normalizeNavigationDestination(value: string) {
   return value;
 }
 
-function buildGoogleMapsDirectionsUrl(station: ChargingStationRecommendation | null, fallbackLocation: string) {
+function buildMapDirectionsUrl(station: ChargingStationRecommendation | null, fallbackLocation: string) {
   const latitude = Number(station?.latitude);
   const longitude = Number(station?.longitude);
-  const destination = Number.isFinite(latitude) && Number.isFinite(longitude)
-    ? `${latitude},${longitude}`
-    : [
-        displayText(station?.address),
-        displayText(station?.name),
-        fallbackLocation,
-      ]
-        .filter((value) => value !== 'N/A')
-        .map(normalizeNavigationDestination)
-        .filter((value, index, list) => list.indexOf(value) === index)
-        .join(', ');
+  const destination = [
+    displayText(station?.address),
+    displayText(station?.name),
+    fallbackLocation,
+  ]
+    .filter((value) => value !== 'N/A')
+    .map(normalizeNavigationDestination)
+    .filter((value, index, list) => list.indexOf(value) === index)
+    .join(', ');
 
   if (!destination || destination === 'N/A') return null;
-  return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}&travelmode=driving`;
+
+  const params = new URLSearchParams({
+    route: 'charging',
+    from: defaultHomeAddress,
+    to: destination,
+    name: displayText(station?.name) !== 'N/A' ? displayText(station?.name) : displayText(fallbackLocation),
+    event: 'AI Charging Recommendation',
+  });
+
+  if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
+    params.set('lat', String(latitude));
+    params.set('lng', String(longitude));
+  }
+
+  return `/map?${params.toString()}`;
 }
 
 function toCalendarStationOption(station: ChargingStationRecommendation, index: number): ChargingStationCalendarOption {
@@ -236,7 +248,7 @@ export default function Home() {
   const nextChargingDate = formatDateLabel(chargingStart, plan.calendarAction.date);
   const nextChargingTime = formatTimeLabel(chargingStart, chargingEnd, plan.calendarAction.startTime, plan.calendarAction.endTime);
   const navigationStation = selectedStation ?? stationRecommendations[0] ?? null;
-  const chargingStationNavigationUrl = buildGoogleMapsDirectionsUrl(navigationStation, bestChargingStation);
+  const chargingStationNavigationUrl = buildMapDirectionsUrl(navigationStation, bestChargingStation);
   const batteryScheduleForecasts = useMemo(() => {
     const today = startOfLocalDay(new Date());
     const buckets = [
@@ -407,7 +419,7 @@ export default function Home() {
                   Next Charging
                 </p>
                 <div className="flex items-center gap-2">
-                  <button type="button" onClick={() => { if (chargingStationNavigationUrl) window.location.href = chargingStationNavigationUrl; }} disabled={!chargingStationNavigationUrl} className="inline-flex items-center gap-1.5 rounded-lg border border-primary/25 bg-primary px-2.5 py-1 text-[9px] font-black uppercase tracking-widest text-on-primary transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:border-outline-variant/45 disabled:bg-surface-container-low disabled:text-slate-500">
+                  <button type="button" onClick={() => { if (chargingStationNavigationUrl) navigate(chargingStationNavigationUrl); }} disabled={!chargingStationNavigationUrl} className="inline-flex items-center gap-1.5 rounded-lg border border-primary/25 bg-primary px-2.5 py-1 text-[9px] font-black uppercase tracking-widest text-on-primary transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:border-outline-variant/45 disabled:bg-surface-container-low disabled:text-slate-500">
                     <Navigation className="h-3.5 w-3.5" />
                     Navigate
                   </button>

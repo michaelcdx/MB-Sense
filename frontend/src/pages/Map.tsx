@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { MouseEvent, PointerEvent, ReactNode, WheelEvent } from 'react';
-import { APIProvider, AdvancedMarker, Map as GoogleMap, useMap } from '@vis.gl/react-google-maps';
+import { useSearchParams } from 'react-router-dom';
+import maplibregl from "maplibre-gl";
+import "maplibre-gl/dist/maplibre-gl.css";
 import {
   AlertTriangle,
   Banknote,
@@ -21,25 +23,18 @@ import {
 import type { LucideIcon } from 'lucide-react';
 import { clampMockView, createMockFocusView, getMockCameraView, mockScaleToCameraZoom } from '../components/map/mapCamera';
 import {
-  alternativeRoutePath,
   costMarkers,
   defaultMockView,
-  destinationPosition,
   destinationPreviewDelayMs,
   destinationPreviewZoom,
   evStations,
-  mapCenter,
-  mockAiRoute,
   mockCost,
   mockEvStations,
-  mockRoutePath,
-  mockRouteSummary,
   navigationZoom,
   pinchRefocusDelayMs,
   routeOverviewZoom,
-  vehiclePosition,
 } from '../constants/mapDemoData';
-import { resolveLocationCoordinates } from '../constants/realWorldRouteData';
+import { estimateDrivingRoute, resolveLocationCoordinates } from '../constants/realWorldRouteData';
 import {
   buildChargingPlan,
   formatPlanTimeRange,
@@ -52,45 +47,24 @@ import { useAppStore, type CalendarEvent } from '../store/useAppStore';
 import type { OpenChargeMapStationCandidate } from '../types/chargingPlanner';
 import type { CameraMode, Coordinates, MapCameraState, MapMode, MapTone, MockMapView, SheetState } from '../types/mapModes';
 
-const runtimeGoogleMapsKey =
-  'GOOGLE_MAPS_PLATFORM_KEY' in globalThis
-    ? String((globalThis as { GOOGLE_MAPS_PLATFORM_KEY?: string }).GOOGLE_MAPS_PLATFORM_KEY ?? '')
-    : '';
-const processGoogleMapsKey = typeof process !== 'undefined' ? process.env.GOOGLE_MAPS_PLATFORM_KEY || '' : '';
 type ViteImportMeta = ImportMeta & {
   env: {
-    VITE_GOOGLE_MAPS_PLATFORM_KEY?: string;
-    VITE_GOOGLE_MAPS_KEY?: string;
+    VITE_MAPTILER_API_KEY?: string;
   };
 };
 const viteEnv = (import.meta as ViteImportMeta).env;
 
-const API_KEY =
-  processGoogleMapsKey ||
-  viteEnv.VITE_GOOGLE_MAPS_PLATFORM_KEY ||
-  viteEnv.VITE_GOOGLE_MAPS_KEY ||
-  runtimeGoogleMapsKey ||
-  '';
+const mapTilerApiKey = (viteEnv.VITE_MAPTILER_API_KEY ?? '').trim();
+const defaultMapLibreCenter: [number, number] = [101.6869, 3.1390];
+const defaultMapLibreZoom = 11.5;
+const kualaLumpurCenter: Coordinates = { lat: 3.139, lng: 101.6869 };
+const defaultDriveOriginName = 'Xiamen University Malaysia';
+const defaultDriveOriginAddress = 'Xiamen University Malaysia, Sunsuria City, Sepang';
+const defaultDriveOriginPosition = resolveLocationCoordinates(defaultDriveOriginAddress) ?? { lat: 2.835, lng: 101.706 };
 
-const hasValidKey = Boolean(API_KEY) && API_KEY !== 'YOUR_API_KEY';
-
-const reclaimGoogleMapStyles: google.maps.MapTypeStyle[] = [
-  { elementType: 'geometry', stylers: [{ color: '#f5f7f9' }] },
-  { elementType: 'labels.text.fill', stylers: [{ color: '#595c5e' }] },
-  { elementType: 'labels.text.stroke', stylers: [{ color: '#ffffff' }] },
-  { featureType: 'administrative.locality', elementType: 'labels.text.fill', stylers: [{ color: '#2c2f31' }] },
-  { featureType: 'poi', elementType: 'labels.text.fill', stylers: [{ color: '#747779' }] },
-  { featureType: 'poi.park', elementType: 'geometry', stylers: [{ color: '#dff3e9' }] },
-  { featureType: 'poi.park', elementType: 'labels.text.fill', stylers: [{ color: '#287a57' }] },
-  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#ffffff' }] },
-  { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#d9dde0' }] },
-  { featureType: 'road', elementType: 'labels.text.fill', stylers: [{ color: '#747779' }] },
-  { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#e8ecff' }] },
-  { featureType: 'road.highway', elementType: 'geometry.stroke', stylers: [{ color: '#b8befd' }, { weight: 0.3 }] },
-  { featureType: 'transit', elementType: 'geometry', stylers: [{ color: '#e5e9eb' }] },
-  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#cfeeff' }] },
-  { featureType: 'water', elementType: 'labels.text.fill', stylers: [{ color: '#00628c' }] },
-];
+function buildMapTilerStyleUrl(apiKey: string) {
+  return `https://api.maptiler.com/maps/streets-v2/style.json?key=${apiKey}`;
+}
 
 const toolChips: Array<{
   key: MapMode;
@@ -135,7 +109,7 @@ type MapEvStation = {
   availabilityPercent: number;
 };
 
-type MockDestination = {
+type DriveDestination = {
   id: string;
   name: string;
   detail: string;
@@ -144,106 +118,17 @@ type MockDestination = {
   distance: string;
   traffic: string;
   saved: string;
+  originName: string;
+  originDetail: string;
+  originPosition: Coordinates;
   position: Coordinates;
   routePath: Coordinates[];
   alternativePath: Coordinates[];
   routeInsight: string;
+  eventName?: string;
+  eventDateLabel?: string;
+  eventLocation?: string;
 };
-
-const mockDestinations: MockDestination[] = [
-  {
-    id: 'mb-research',
-    name: mockRouteSummary.destination,
-    detail: mockRouteSummary.subtitle,
-    eta: mockRouteSummary.eta,
-    departAt: mockRouteSummary.departAt,
-    distance: mockRouteSummary.distance,
-    traffic: mockRouteSummary.traffic,
-    saved: mockRouteSummary.saved,
-    position: destinationPosition,
-    routePath: mockRoutePath,
-    alternativePath: alternativeRoutePath,
-    routeInsight: mockAiRoute.insight,
-  },
-  {
-    id: 'klcc-demo',
-    name: 'KLCC Executive Entrance',
-    detail: 'City centre arrival test route - 18.6 mi',
-    eta: '19 min',
-    departAt: '9:10 AM',
-    distance: '18.6 mi',
-    traffic: 'Moderate',
-    saved: '5 min',
-    position: { lat: 37.512, lng: -122.142 },
-    routePath: [
-      vehiclePosition,
-      { lat: 37.738, lng: -122.372 },
-      { lat: 37.655, lng: -122.318 },
-      { lat: 37.574, lng: -122.224 },
-      { lat: 37.512, lng: -122.142 },
-    ],
-    alternativePath: [
-      vehiclePosition,
-      { lat: 37.72, lng: -122.43 },
-      { lat: 37.638, lng: -122.36 },
-      { lat: 37.548, lng: -122.266 },
-      { lat: 37.512, lng: -122.142 },
-    ],
-    routeInsight: 'Executive route prioritizes predictable arrival time and avoids two merge-heavy segments.',
-  },
-  {
-    id: 'bangsar-demo',
-    name: 'Bangsar Village II',
-    detail: 'Dining and retail valet arrival - 14.2 mi',
-    eta: '22 min',
-    departAt: '7:35 PM',
-    distance: '14.2 mi',
-    traffic: 'Heavy',
-    saved: '8 min',
-    position: { lat: 37.458, lng: -122.234 },
-    routePath: [
-      vehiclePosition,
-      { lat: 37.708, lng: -122.407 },
-      { lat: 37.627, lng: -122.374 },
-      { lat: 37.536, lng: -122.29 },
-      { lat: 37.458, lng: -122.234 },
-    ],
-    alternativePath: [
-      vehiclePosition,
-      { lat: 37.742, lng: -122.338 },
-      { lat: 37.65, lng: -122.298 },
-      { lat: 37.54, lng: -122.245 },
-      { lat: 37.458, lng: -122.234 },
-    ],
-    routeInsight: 'Intelligent routing favors roads with steadier flow for a smoother chauffeured-style arrival.',
-  },
-  {
-    id: 'pavilion-demo',
-    name: 'Pavilion Kuala Lumpur',
-    detail: 'Premium mall drop-off simulation - 23.1 mi',
-    eta: '27 min',
-    departAt: '3:20 PM',
-    distance: '23.1 mi',
-    traffic: 'Light',
-    saved: '4 min',
-    position: { lat: 37.686, lng: -122.128 },
-    routePath: [
-      vehiclePosition,
-      { lat: 37.764, lng: -122.366 },
-      { lat: 37.724, lng: -122.285 },
-      { lat: 37.703, lng: -122.204 },
-      { lat: 37.686, lng: -122.128 },
-    ],
-    alternativePath: [
-      vehiclePosition,
-      { lat: 37.735, lng: -122.421 },
-      { lat: 37.71, lng: -122.33 },
-      { lat: 37.698, lng: -122.23 },
-      { lat: 37.686, lng: -122.128 },
-    ],
-    routeInsight: 'Suggested route preserves battery efficiency while keeping arrival near the main entrance.',
-  },
-];
 
 const fallbackMapEvStations: MapEvStation[] = evStations.map((station, index) => ({
   id: station.id ?? `fallback-ev-${index + 1}`,
@@ -252,7 +137,7 @@ const fallbackMapEvStations: MapEvStation[] = evStations.map((station, index) =>
   availability: station.availability,
   speed: station.speed,
   detour: station.detour,
-  position: station.position ?? mapCenter,
+  position: station.position ?? kualaLumpurCenter,
   recommended: station.recommended,
   source: 'local-fallback',
   availabilityPercent: station.id === 'mb-partner' ? 25 : station.id === 'chargepoint-sunnyvale' ? 100 : 50,
@@ -588,6 +473,188 @@ function formatFutureDriveCompactDate(date: Date) {
   return [weekday, day, month].filter(Boolean).join(' ');
 }
 
+function getReadableLocationName(location: string) {
+  return location.split(',')[0]?.trim() || location.trim() || 'Selected location';
+}
+
+function getDriveTrafficLabel(event: CalendarEvent) {
+  const minutes = parseCalendarTimeToMinutes(event.departureTime ?? event.time);
+  if ((minutes >= 420 && minutes <= 570) || (minutes >= 1020 && minutes <= 1200)) return 'Heavy';
+  if ((minutes >= 660 && minutes <= 840) || event.status?.toLowerCase().includes('important')) return 'Moderate';
+  return 'Light';
+}
+
+function getRouteDurationMinutes(distanceKm: number, traffic: string) {
+  const estimated = distanceKm <= 0 ? 0 : Math.max(5, Math.round(distanceKm / (distanceKm > 35 ? 55 : distanceKm > 12 ? 42 : 30) * 60));
+  const multiplier = traffic === 'Heavy' ? 1.35 : traffic === 'Moderate' ? 1.16 : 1;
+  return estimated <= 0 ? 0 : Math.max(5, Math.round(estimated * multiplier));
+}
+
+function formatDriveDate(date: Date) {
+  return date.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+}
+
+function buildRoutePath(origin: Coordinates, destination: Coordinates, bend = 1): Coordinates[] {
+  const latDelta = destination.lat - origin.lat;
+  const lngDelta = destination.lng - origin.lng;
+  const offsetLat = -lngDelta * 0.08 * bend;
+  const offsetLng = latDelta * 0.08 * bend;
+
+  return [
+    origin,
+    {
+      lat: origin.lat + latDelta * 0.34 + offsetLat,
+      lng: origin.lng + lngDelta * 0.34 + offsetLng,
+    },
+    {
+      lat: origin.lat + latDelta * 0.68 + offsetLat * 0.55,
+      lng: origin.lng + lngDelta * 0.68 + offsetLng * 0.55,
+    },
+    destination,
+  ];
+}
+
+function buildDriveDestination({
+  id,
+  name,
+  eventName,
+  eventDate,
+  eventTime,
+  eventLocation,
+  originName,
+  originLocation,
+  destinationPosition,
+  traffic,
+}: {
+  id: string;
+  name: string;
+  eventName?: string;
+  eventDate?: Date;
+  eventTime?: string;
+  eventLocation: string;
+  originName: string;
+  originLocation: string;
+  destinationPosition: Coordinates;
+  traffic: string;
+}): DriveDestination {
+  const originPosition = resolveLocationCoordinates(originLocation) ?? defaultDriveOriginPosition;
+  const routeEstimate = estimateDrivingRoute(originLocation, eventLocation);
+  const distanceKm = routeEstimate?.distanceKm ?? 0;
+  const durationMinutes = getRouteDurationMinutes(distanceKm, traffic);
+  const distance = distanceKm > 0 ? `${distanceKm.toFixed(1)} km` : 'Location resolved';
+  const eta = durationMinutes > 0 ? `${durationMinutes} min` : 'Ready';
+  const departAt = eventTime ?? 'Now';
+  const eventDateLabel = eventDate ? formatDriveDate(eventDate) : undefined;
+
+  return {
+    id,
+    name,
+    detail: [eventName, eventDateLabel, distance].filter(Boolean).join(' - '),
+    eta,
+    departAt,
+    distance,
+    traffic,
+    saved: 'Calendar',
+    originName,
+    originDetail: originLocation,
+    originPosition,
+    position: destinationPosition,
+    routePath: buildRoutePath(originPosition, destinationPosition),
+    alternativePath: buildRoutePath(originPosition, destinationPosition, -1),
+    routeInsight: eventName
+      ? `Route generated from calendar activity "${eventName}" using the existing location resolver and route estimate.`
+      : 'Route opened from Home using the selected charging destination.',
+    eventName,
+    eventDateLabel,
+    eventLocation,
+  };
+}
+
+function buildCalendarDriveDestinations(events: CalendarEvent[], today: Date) {
+  const drivingEvents = [...events]
+    .filter((event) => isDrivingRequiredActivity(event))
+    .filter((event) => startOfCalendarDay(getEventDate(event)).getTime() >= today.getTime())
+    .sort((a, b) => {
+      const dateDelta = getEventDate(a).getTime() - getEventDate(b).getTime();
+      return dateDelta || parseCalendarTimeToMinutes(a.departureTime ?? a.time) - parseCalendarTimeToMinutes(b.departureTime ?? b.time);
+    });
+
+  const previousLocationByDay = new Map<string, string>();
+
+  return drivingEvents.reduce<DriveDestination[]>((destinations, event, index) => {
+    const eventDate = getEventDate(event);
+    const dayKey = startOfCalendarDay(eventDate).toISOString();
+    const originLocation = previousLocationByDay.get(dayKey) ?? defaultDriveOriginAddress;
+    const position = resolveLocationCoordinates(event.location);
+    previousLocationByDay.set(dayKey, event.location);
+    if (!position) return destinations;
+
+    destinations.push(buildDriveDestination({
+      id: `calendar-${event.id}-${index}`,
+      name: getReadableLocationName(event.location),
+      eventName: event.title,
+      eventDate,
+      eventTime: event.departureTime ?? event.time,
+      eventLocation: event.location,
+      originName: getReadableLocationName(originLocation),
+      originLocation,
+      destinationPosition: position,
+      traffic: getDriveTrafficLabel(event),
+    }));
+
+    return destinations;
+  }, []);
+}
+
+function buildRouteDestinationFromParams(searchParams: URLSearchParams): DriveDestination | null {
+  const routeMode = searchParams.get('route');
+  const destinationLocation = searchParams.get('to')?.trim();
+  if (routeMode !== 'charging' && !destinationLocation) return null;
+
+  const rawLat = Number(searchParams.get('lat'));
+  const rawLng = Number(searchParams.get('lng'));
+  const destinationPosition = Number.isFinite(rawLat) && Number.isFinite(rawLng)
+    ? { lat: rawLat, lng: rawLng }
+    : resolveLocationCoordinates(destinationLocation ?? '');
+
+  if (!destinationLocation || !destinationPosition) return null;
+
+  const originLocation = searchParams.get('from')?.trim() || defaultDriveOriginAddress;
+  const routeName = searchParams.get('name')?.trim() || getReadableLocationName(destinationLocation);
+
+  return buildDriveDestination({
+    id: `route-request-${routeName}-${destinationLocation}`,
+    name: routeName,
+    eventName: searchParams.get('event')?.trim() || 'Home navigation request',
+    eventLocation: destinationLocation,
+    eventTime: 'Now',
+    originName: getReadableLocationName(originLocation),
+    originLocation,
+    destinationPosition,
+    traffic: 'Moderate',
+  });
+}
+
+function getEmptyDriveDestination(): DriveDestination {
+  return {
+    id: 'calendar-empty-route',
+    name: 'No driving destination',
+    detail: 'No upcoming car-needed calendar activity',
+    eta: 'N/A',
+    departAt: 'N/A',
+    distance: 'N/A',
+    traffic: 'N/A',
+    saved: 'Calendar',
+    originName: defaultDriveOriginName,
+    originDetail: defaultDriveOriginAddress,
+    originPosition: defaultDriveOriginPosition,
+    position: defaultDriveOriginPosition,
+    routePath: [defaultDriveOriginPosition],
+    alternativePath: [defaultDriveOriginPosition],
+    routeInsight: 'Add a calendar activity with carNeeded enabled to generate a route.',
+  };
+}
+
 function formatDurationMinutes(minutes?: number | null) {
   if (!Number.isFinite(minutes ?? NaN)) return 'No estimate';
   const rounded = Math.max(0, Math.round(minutes ?? 0));
@@ -906,26 +973,26 @@ const bottomSheets: Record<
 > = {
   aiRoute: {
     eyebrow: 'Intelligent Route',
-    title: mockRouteSummary.destination,
-    subtitle: mockRouteSummary.subtitle,
-    collapsedTitle: mockRouteSummary.destination,
-    collapsedMeta: `${mockRouteSummary.eta} - Depart ${mockRouteSummary.departAt}`,
-    collapsedStatus: `Traffic: ${mockRouteSummary.traffic}`,
+    title: 'Calendar route',
+    subtitle: 'Route generated from calendar data',
+    collapsedTitle: 'Calendar route',
+    collapsedMeta: 'Select a destination',
+    collapsedStatus: 'Traffic: Calendar estimate',
     collapsedAction: 'Start Navigation',
     statusLabel: 'Traffic',
-    statusValue: mockRouteSummary.traffic,
+    statusValue: 'Calendar',
     metrics: [
-      { label: 'Depart', value: mockRouteSummary.departAt, tone: 'blue' },
-      { label: 'ETA', value: mockRouteSummary.eta },
-      { label: 'Traffic', value: mockRouteSummary.traffic, tone: 'emerald' },
-      { label: 'Saved', value: mockRouteSummary.saved, tone: 'cyan' },
+      { label: 'Depart', value: 'Calendar', tone: 'blue' },
+      { label: 'ETA', value: 'Calendar' },
+      { label: 'Traffic', value: 'Calendar', tone: 'emerald' },
+      { label: 'Source', value: 'Calendar', tone: 'cyan' },
     ],
     optionsTitle: 'Route Options',
     options: [
-      { label: mockAiRoute.recommended.name, value: mockAiRoute.recommended.eta, detail: mockAiRoute.recommended.detail },
-      { label: mockAiRoute.alternative.name, value: mockAiRoute.alternative.eta, detail: mockAiRoute.alternative.detail },
+      { label: 'Recommended', value: 'Calendar route', detail: 'Built from the selected driving activity' },
+      { label: 'Alternative', value: 'Compare', detail: 'Uses the same calendar destination with a calmer path shape' },
     ],
-    insight: mockAiRoute.insight,
+    insight: 'Select a car-needed calendar activity to generate a Drive Now route.',
     primaryAction: 'Start Navigation',
     secondaryAction: 'Compare Routes',
   },
@@ -987,7 +1054,7 @@ const bottomSheets: Record<
     subtitle: 'Energy, toll, and favorite-stop estimate',
     collapsedTitle: 'Estimated trip cost',
     collapsedMeta: mockCost.totalCost,
-    collapsedStatus: `${mockRouteSummary.distance} - ${mockRouteSummary.eta}`,
+    collapsedStatus: 'Calendar route',
     collapsedAction: 'View Cost Breakdown',
     statusLabel: 'Per Mile',
     statusValue: mockCost.costPerMile,
@@ -1016,7 +1083,7 @@ const mapBounds: CoordinateBounds = {
   maxLng: -122.04,
 };
 
-function coordsToPercentWithinBounds({ lat, lng }: google.maps.LatLngLiteral, bounds: CoordinateBounds) {
+function coordsToPercentWithinBounds({ lat, lng }: Coordinates, bounds: CoordinateBounds) {
   const latRange = Math.max(bounds.maxLat - bounds.minLat, 0.001);
   const lngRange = Math.max(bounds.maxLng - bounds.minLng, 0.001);
   const x = ((lng - bounds.minLng) / lngRange) * 100;
@@ -1028,7 +1095,7 @@ function coordsToPercentWithinBounds({ lat, lng }: google.maps.LatLngLiteral, bo
   };
 }
 
-function coordsToPercent(point: google.maps.LatLngLiteral) {
+function coordsToPercent(point: Coordinates) {
   return coordsToPercentWithinBounds(point, mapBounds);
 }
 
@@ -1041,173 +1108,86 @@ function coordsToUnitPoint(coords: Coordinates) {
   };
 }
 
-function GoogleRouteOverlay({
-  mode,
-  path,
-  alternativePath,
-  sheetState,
-}: {
-  mode: MapMode;
-  path: Coordinates[];
-  alternativePath: Coordinates[];
-  sheetState: SheetState;
-}) {
-  const map = useMap();
-  const polylinesRef = useRef<google.maps.Polyline[]>([]);
-
-  useEffect(() => {
-    if (!map || typeof google === 'undefined') return;
-
-    polylinesRef.current.forEach((line) => line.setMap(null));
-    const visual = modeVisuals[mode];
-    const nextPolylines: google.maps.Polyline[] = [];
-
-    if (mode === 'aiRoute') {
-      const alternativeRoute = new google.maps.Polyline({
-        clickable: false,
-        geodesic: true,
-        path: alternativePath,
-        strokeColor: '#abadaf',
-        strokeOpacity: sheetState === 'expanded' ? 0.32 : 0.18,
-        strokeWeight: 4,
-        zIndex: 1,
-      });
-
-      alternativeRoute.setMap(map);
-      nextPolylines.push(alternativeRoute);
-    }
-
-    const routeHalo = new google.maps.Polyline({
-      clickable: false,
-      geodesic: true,
-      path,
-      strokeColor: '#ffffff',
-      strokeOpacity: 0.82,
-      strokeWeight: 9,
-      zIndex: 2,
-    });
-
-    const activeRoute = new google.maps.Polyline({
-      clickable: false,
-      geodesic: true,
-      path,
-      strokeColor: visual.routeColor,
-      strokeOpacity: 1,
-      strokeWeight: 4.5,
-      zIndex: 3,
-    });
-
-    routeHalo.setMap(map);
-    activeRoute.setMap(map);
-    nextPolylines.push(routeHalo, activeRoute);
-    polylinesRef.current = nextPolylines;
-
-    return () => {
-      polylinesRef.current.forEach((line) => line.setMap(null));
-      polylinesRef.current = [];
-    };
-  }, [alternativePath, map, mode, path, sheetState]);
-
-  return null;
+function toMapLibreLngLat(point: Coordinates): [number, number] {
+  return [point.lng, point.lat];
 }
 
-function GoogleFutureDriveOverlay({
-  preview,
-  emphasizeEcoRoute,
-}: {
-  preview: FutureDrivePreviewData | null;
-  emphasizeEcoRoute: boolean;
-}) {
-  const map = useMap();
-  const polylinesRef = useRef<google.maps.Polyline[]>([]);
+function fitMapLibreToCoordinates(map: maplibregl.Map, points: Coordinates[], padding = 72) {
+  const validPoints = points.filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lng));
+  if (!validPoints.length) return;
 
-  useEffect(() => {
-    if (!map || typeof google === 'undefined') return;
-
-    polylinesRef.current.forEach((line) => line.setMap(null));
-    const nextPolylines: google.maps.Polyline[] = [];
-    if (!preview) {
-      polylinesRef.current = nextPolylines;
-      return;
-    }
-
-    preview.segments.forEach((segment, index) => {
-      const fromStop = preview.stops[segment.fromIndex];
-      const toStop = preview.stops[segment.toIndex];
-      const visual = futureDriveRiskVisuals[segment.tone];
-      const path = [fromStop.position, toStop.position];
-
-      const routeHalo = new google.maps.Polyline({
-        clickable: false,
-        geodesic: true,
-        path,
-        strokeColor: '#ffffff',
-        strokeOpacity: 0.82,
-        strokeWeight: 10,
-        zIndex: 2 + index,
-      });
-
-      const routeSegment = new google.maps.Polyline({
-        clickable: false,
-        geodesic: true,
-        path,
-        strokeColor: visual.color,
-        strokeOpacity: 0.98,
-        strokeWeight: 4.8,
-        zIndex: 8 + index,
-      });
-
-      routeHalo.setMap(map);
-      routeSegment.setMap(map);
-      nextPolylines.push(routeHalo, routeSegment);
-    });
-
-    if (emphasizeEcoRoute) {
-      const ecoHalo = new google.maps.Polyline({
-        clickable: false,
-        geodesic: true,
-        path: preview.ecoRoutePath,
-        strokeColor: '#ffffff',
-        strokeOpacity: 0.76,
-        strokeWeight: 9,
-        zIndex: 16,
-      });
-
-      const ecoRoute = new google.maps.Polyline({
-        clickable: false,
-        geodesic: true,
-        path: preview.ecoRoutePath,
-        strokeColor: toneAccentColors.emerald,
-        strokeOpacity: 0.9,
-        strokeWeight: 4.2,
-        zIndex: 17,
-      });
-
-      ecoHalo.setMap(map);
-      ecoRoute.setMap(map);
-      nextPolylines.push(ecoHalo, ecoRoute);
-    }
-
-    polylinesRef.current = nextPolylines;
-
-    return () => {
-      polylinesRef.current.forEach((line) => line.setMap(null));
-      polylinesRef.current = [];
-    };
-  }, [emphasizeEcoRoute, map, preview]);
-
-  return null;
+  const bounds = new maplibregl.LngLatBounds(toMapLibreLngLat(validPoints[0]), toMapLibreLngLat(validPoints[0]));
+  validPoints.slice(1).forEach((point) => bounds.extend(toMapLibreLngLat(point)));
+  map.fitBounds(bounds, {
+    padding,
+    duration: 320,
+    maxZoom: routeOverviewZoom,
+  });
 }
 
-function GoogleMapBridge({ onReady }: { onReady: (map: google.maps.Map | null) => void }) {
-  const map = useMap();
+function MapLibreBaseMap({ onReady }: { onReady: (map: maplibregl.Map | null) => void }) {
+  const mapContainerRef = useRef<HTMLDivElement | null>(null);
+  const mapRef = useRef<maplibregl.Map | null>(null);
+  const [runtimeMapTilerApiKey, setRuntimeMapTilerApiKey] = useState(mapTilerApiKey);
+  const [configResolved, setConfigResolved] = useState(Boolean(mapTilerApiKey));
 
   useEffect(() => {
+    if (mapTilerApiKey) return;
+
+    let cancelled = false;
+
+    fetch('/api/public-config')
+      .then((response) => (response.ok ? response.json() : null))
+      .then((config: { mapTilerApiKey?: string } | null) => {
+        if (cancelled) return;
+        const nextKey = typeof config?.mapTilerApiKey === 'string' ? config.mapTilerApiKey.trim() : '';
+        setRuntimeMapTilerApiKey(nextKey);
+      })
+      .catch(() => {
+        if (!cancelled) setRuntimeMapTilerApiKey('');
+      })
+      .finally(() => {
+        if (!cancelled) setConfigResolved(true);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!runtimeMapTilerApiKey || !mapContainerRef.current || mapRef.current) return;
+
+    const map = new maplibregl.Map({
+      container: mapContainerRef.current,
+      style: buildMapTilerStyleUrl(runtimeMapTilerApiKey),
+      center: defaultMapLibreCenter,
+      zoom: defaultMapLibreZoom,
+      attributionControl: false,
+    });
+
+    mapRef.current = map;
     onReady(map);
-    return () => onReady(null);
-  }, [map, onReady]);
 
-  return null;
+    return () => {
+      onReady(null);
+      map.remove();
+      mapRef.current = null;
+    };
+  }, [onReady, runtimeMapTilerApiKey]);
+
+  return (
+    <div className="absolute inset-0 h-full w-full overflow-hidden bg-surface">
+      <div ref={mapContainerRef} className="h-full min-h-dvh w-full" />
+      {configResolved && !runtimeMapTilerApiKey && (
+        <div className="absolute inset-0 flex items-center justify-center bg-surface/92 px-6 text-center">
+          <div className="max-w-xs rounded-[20px] border border-outline-variant/45 bg-surface-container-lowest/92 px-4 py-3 text-sm font-semibold text-slate-100 shadow-ambient backdrop-blur-xl">
+            Map configuration unavailable.
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function VehicleMarker({ activeNavigation = false }: { activeNavigation?: boolean }) {
@@ -2127,8 +2107,12 @@ function MockMapCanvas({
   view,
   cameraMode,
   activeNavigation,
+  showDriveRoute,
   routePath,
   alternativePath,
+  routeDetail,
+  alternativeRouteDetail,
+  origin,
   destination,
   evStationOptions,
   addedEvStop,
@@ -2147,8 +2131,12 @@ function MockMapCanvas({
   view: MockMapView;
   cameraMode: CameraMode;
   activeNavigation: boolean;
+  showDriveRoute: boolean;
   routePath: Coordinates[];
   alternativePath: Coordinates[];
+  routeDetail: string;
+  alternativeRouteDetail: string;
+  origin: Coordinates;
   destination: Coordinates;
   evStationOptions: MapEvStation[];
   addedEvStop?: MapEvStation | null;
@@ -2171,24 +2159,42 @@ function MockMapCanvas({
     startZoom: number;
   } | null>(null);
 
+  const driveBounds = useMemo(
+    () => buildCoordinateBounds([
+      origin,
+      destination,
+      ...routePath,
+      ...alternativePath,
+      ...(addedEvStop ? [addedEvStop.position] : []),
+      ...(selectedFavoriteStop ? [selectedFavoriteStop.position] : []),
+    ]),
+    [addedEvStop, alternativePath, destination, origin, routePath, selectedFavoriteStop]
+  );
+  const driveCoordsToPercent = (point: Coordinates) => coordsToPercentWithinBounds(point, driveBounds);
   const routePoints = routePath
     .map((point) => {
-      const { x, y } = coordsToPercent(point);
+      const { x, y } = driveCoordsToPercent(point);
       return `${parseFloat(x) * 10},${parseFloat(y) * 10}`;
     })
     .join(' ');
   const alternativeRoutePoints = alternativePath
     .map((point) => {
-      const { x, y } = coordsToPercent(point);
+      const { x, y } = driveCoordsToPercent(point);
       return `${parseFloat(x) * 10},${parseFloat(y) * 10}`;
     })
     .join(' ');
-  const vehicle = coordsToPercent(vehiclePosition);
-  const destinationPoint = coordsToPercent(destination);
+  const vehicle = driveCoordsToPercent(origin);
+  const destinationPoint = driveCoordsToPercent(destination);
+  const routeChoicePoint = routePath[Math.max(0, Math.floor(routePath.length / 2))] ?? destination;
+  const alternativeChoicePoint = alternativePath[Math.max(0, Math.floor(alternativePath.length / 2))] ?? destination;
+  const routeCostMarkers = costMarkers.map((marker, index) => ({
+    marker,
+    position: routePath[Math.min(index + 1, Math.max(routePath.length - 1, 0))] ?? destination,
+  }));
   const visual = modeVisuals[mode];
   const isFutureDrivePreview = driveMode === 'futureDrivePreview';
   const futureCoordsToPercent = (point: Coordinates) =>
-    futureDrivePreview ? coordsToPercentWithinBounds(point, futureDrivePreview.mapBounds) : coordsToPercent(point);
+    futureDrivePreview ? coordsToPercentWithinBounds(point, futureDrivePreview.mapBounds) : driveCoordsToPercent(point);
   const futureEcoRoutePoints = (futureDrivePreview?.ecoRoutePath ?? [])
     .map((point) => {
       const { x, y } = futureCoordsToPercent(point);
@@ -2276,7 +2282,7 @@ function MockMapCanvas({
 
   return (
     <div
-      className="absolute inset-0 cursor-grab overflow-hidden bg-surface active:cursor-grabbing"
+      className="pointer-events-none absolute inset-0 overflow-hidden bg-transparent"
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={endDrag}
@@ -2294,50 +2300,7 @@ function MockMapCanvas({
           transformOrigin: '0 0',
         }}
       >
-        <div className="absolute inset-0 opacity-[0.42] bg-[linear-gradient(to_right,#d9dde0_1px,transparent_1px),linear-gradient(to_bottom,#d9dde0_1px,transparent_1px)] bg-[size:48px_48px]" />
-        <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(245,247,249,0.24),rgba(238,241,243,0.70))]" />
-
         <svg className="absolute inset-0 h-full w-full" viewBox="0 0 1000 1000" preserveAspectRatio="none">
-          <path
-            d="M-80 172 C122 215 258 268 430 230 C620 188 710 102 1080 116"
-            fill="none"
-            stroke="#d9dde0"
-            strokeWidth="13"
-            strokeLinecap="round"
-            opacity="0.7"
-          />
-          <path
-            d="M-40 500 C170 456 270 385 432 410 C618 438 738 512 1040 448"
-            fill="none"
-            stroke="#e5e9eb"
-            strokeWidth="9"
-            strokeLinecap="round"
-            opacity="0.78"
-          />
-          <path
-            d="M128 1060 C226 822 335 610 462 463 C628 270 804 254 1088 192"
-            fill="none"
-            stroke="#abadaf"
-            strokeWidth="5"
-            strokeDasharray="14 18"
-            opacity="0.52"
-          />
-          <path
-            d="M-70 700 C140 686 256 724 430 664 C606 604 682 712 1080 704"
-            fill="none"
-            stroke="#d9dde0"
-            strokeWidth="4"
-            strokeLinecap="round"
-            opacity="0.62"
-          />
-          <path
-            d="M642 -80 C600 168 528 280 554 466 C582 660 688 760 710 1080"
-            fill="none"
-            stroke="#dfe3e6"
-            strokeWidth="6"
-            strokeLinecap="round"
-            opacity="0.72"
-          />
           {isFutureDrivePreview ? (
             futureDrivePreview ? (
               <>
@@ -2397,7 +2360,7 @@ function MockMapCanvas({
                 )}
               </>
             ) : null
-          ) : (
+          ) : showDriveRoute ? (
             <>
               {mode === 'aiRoute' && (
                 <polyline
@@ -2430,23 +2393,23 @@ function MockMapCanvas({
                 style={{ filter: `drop-shadow(0 0 8px ${visual.glow})` }}
               />
             </>
-          )}
+          ) : null}
         </svg>
 
-        {!isFutureDrivePreview && mode === 'aiRoute' && (
+        {!isFutureDrivePreview && showDriveRoute && mode === 'aiRoute' && (
           <>
             <div
               className="absolute -translate-x-1/2 -translate-y-1/2"
-              style={{ left: coordsToPercent({ lat: 37.62, lng: -122.35 }).x, top: coordsToPercent({ lat: 37.62, lng: -122.35 }).y }}
+              style={{ left: driveCoordsToPercent(routeChoicePoint).x, top: driveCoordsToPercent(routeChoicePoint).y }}
             >
-              <RouteChoiceMarker label="Best Route" detail="24 min" tone="blue" />
+              <RouteChoiceMarker label="Calendar Route" detail={routeDetail} tone="blue" />
             </div>
             {sheetState === 'expanded' && (
               <div
                 className="absolute -translate-x-1/2 -translate-y-1/2 opacity-75"
-                style={{ left: coordsToPercent({ lat: 37.59, lng: -122.22 }).x, top: coordsToPercent({ lat: 37.59, lng: -122.22 }).y }}
+                style={{ left: driveCoordsToPercent(alternativeChoicePoint).x, top: driveCoordsToPercent(alternativeChoicePoint).y }}
               >
-                <RouteChoiceMarker label="Alternative" detail="31 min" tone="slate" />
+                <RouteChoiceMarker label="Alternative" detail={alternativeRouteDetail} tone="slate" />
               </div>
             )}
           </>
@@ -2454,7 +2417,7 @@ function MockMapCanvas({
 
         {!isFutureDrivePreview && mode === 'parking' &&
           favoriteStops.map((stop) => {
-            const pos = coordsToPercent(stop.position);
+            const pos = driveCoordsToPercent(stop.position);
             return (
               <div
                 key={stop.id}
@@ -2468,7 +2431,7 @@ function MockMapCanvas({
 
         {!isFutureDrivePreview && mode === 'evStations' &&
           evStationOptions.map((station) => {
-            const pos = coordsToPercent(station.position);
+            const pos = driveCoordsToPercent(station.position);
             const isAdded = addedEvStop?.id === station.id;
             return (
               <div
@@ -2484,7 +2447,7 @@ function MockMapCanvas({
         {!isFutureDrivePreview && addedEvStop && mode !== 'evStations' && (
           <div
             className="absolute -translate-x-1/2 -translate-y-1/2 scale-110"
-            style={{ left: coordsToPercent(addedEvStop.position).x, top: coordsToPercent(addedEvStop.position).y }}
+            style={{ left: driveCoordsToPercent(addedEvStop.position).x, top: driveCoordsToPercent(addedEvStop.position).y }}
           >
             <EVStationMarker station={addedEvStop} />
           </div>
@@ -2493,15 +2456,15 @@ function MockMapCanvas({
         {!isFutureDrivePreview && selectedFavoriteStop && mode !== 'parking' && (
           <div
             className="absolute -translate-x-1/2 -translate-y-1/2 scale-110"
-            style={{ left: coordsToPercent(selectedFavoriteStop.position).x, top: coordsToPercent(selectedFavoriteStop.position).y }}
+            style={{ left: driveCoordsToPercent(selectedFavoriteStop.position).x, top: driveCoordsToPercent(selectedFavoriteStop.position).y }}
           >
             <FavoriteStopMarker stop={selectedFavoriteStop} />
           </div>
         )}
 
         {!isFutureDrivePreview && mode === 'cost' &&
-          costMarkers.map((marker) => {
-            const pos = coordsToPercent(marker.position);
+          routeCostMarkers.map(({ marker, position }) => {
+            const pos = driveCoordsToPercent(position);
             return (
               <div
                 key={marker.id}
@@ -2516,7 +2479,7 @@ function MockMapCanvas({
         {!isFutureDrivePreview && mode === 'cost' && (
           <div
             className="absolute -translate-x-1/2 -translate-y-1/2"
-            style={{ left: coordsToPercent({ lat: 37.55, lng: -122.255 }).x, top: coordsToPercent({ lat: 37.55, lng: -122.255 }).y }}
+            style={{ left: driveCoordsToPercent(routeChoicePoint).x, top: driveCoordsToPercent(routeChoicePoint).y }}
           >
             <RouteChoiceMarker label="$12.80 total" detail="$0.47/mi" tone="amber" />
           </div>
@@ -2525,7 +2488,7 @@ function MockMapCanvas({
         {!isFutureDrivePreview && mode === 'cost' && sheetState === 'expanded' && (
           <div
             className="absolute -translate-x-1/2 -translate-y-1/2 opacity-80"
-            style={{ left: coordsToPercent({ lat: 37.69, lng: -122.312 }).x, top: coordsToPercent({ lat: 37.69, lng: -122.312 }).y }}
+            style={{ left: driveCoordsToPercent(alternativeChoicePoint).x, top: driveCoordsToPercent(alternativeChoicePoint).y }}
           >
             <RouteChoiceMarker label="Eco route" detail="Save $1.10" tone="slate" />
           </div>
@@ -2606,7 +2569,7 @@ function MockMapCanvas({
               )}
             </>
           ) : null
-        ) : (
+        ) : showDriveRoute ? (
           <>
             <div
               className="absolute -translate-x-1/2 -translate-y-1/2"
@@ -2621,7 +2584,7 @@ function MockMapCanvas({
               <DestinationMarker />
             </div>
           </>
-        )}
+        ) : null}
       </div>
     </div>
   );
@@ -2629,14 +2592,15 @@ function MockMapCanvas({
 
 export default function MapView() {
   const { addRecentAction, events, vehicle, weather, chargingTargetPercent, chargingMinimumBatteryPercent } = useAppStore();
+  const [searchParams] = useSearchParams();
   const [mapMode, setMapMode] = useState<MapMode>('aiRoute');
   const [driveExperienceMode, setDriveExperienceMode] = useState<DriveExperienceMode>('driveNow');
   const [selectedFuturePlanId, setSelectedFuturePlanId] = useState<FutureDrivePlanId>('planA');
   const [sheetState, setSheetState] = useState<SheetState>('collapsed');
-  const [mapInstance, setMapInstance] = useState<google.maps.Map | null>(null);
+  const [mapInstance, setMapInstance] = useState<maplibregl.Map | null>(null);
   const [mockView, setMockView] = useState<MockMapView>(defaultMockView);
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedDestination, setSelectedDestination] = useState<MockDestination>(mockDestinations[0]);
+  const [selectedDestinationId, setSelectedDestinationId] = useState<string | null>(null);
   const [activePanel, setActivePanel] = useState<ActivePanel>(null);
   const [openChargeMapEvStations, setOpenChargeMapEvStations] = useState<MapEvStation[]>([]);
   const [selectedEvStop, setSelectedEvStop] = useState<MapEvStation | null>(null);
@@ -2663,6 +2627,27 @@ export default function MapView() {
   const cameraStateRef = useRef<MapCameraState>(cameraState);
   const isFutureDrivePreview = driveExperienceMode === 'futureDrivePreview';
   const [calendarToday] = useState(() => startOfCalendarDay(new Date()));
+  const routeRequestDestination = useMemo(() => buildRouteDestinationFromParams(searchParams), [searchParams]);
+  const calendarDriveDestinations = useMemo(
+    () => buildCalendarDriveDestinations(events, calendarToday),
+    [calendarToday, events]
+  );
+  const driveDestinations = useMemo(() => {
+    if (!routeRequestDestination) return calendarDriveDestinations;
+    return [
+      routeRequestDestination,
+      ...calendarDriveDestinations.filter((destination) => destination.id !== routeRequestDestination.id),
+    ];
+  }, [calendarDriveDestinations, routeRequestDestination]);
+  const selectedDestination = useMemo(
+    () => (
+      selectedDestinationId
+        ? driveDestinations.find((destination) => destination.id === selectedDestinationId) ?? getEmptyDriveDestination()
+        : routeRequestDestination ?? getEmptyDriveDestination()
+    ),
+    [driveDestinations, routeRequestDestination, selectedDestinationId]
+  );
+  const hasSelectedDriveRoute = selectedDestination.id !== 'calendar-empty-route';
   const calendarDataAvailable = Array.isArray(events);
   const previewDrivingDay = useMemo<FutureDrivePreviewSelection>(
     () => (
@@ -2679,6 +2664,22 @@ export default function MapView() {
   const futureDriveStationAnchorKey = futureDriveStationAnchor
     ? `${futureDriveStationAnchor.lat.toFixed(4)},${futureDriveStationAnchor.lng.toFixed(4)}`
     : '';
+
+  useEffect(() => {
+    if (routeRequestDestination) {
+      setSelectedDestinationId(routeRequestDestination.id);
+      setSearchQuery(routeRequestDestination.name);
+      setDriveExperienceMode('driveNow');
+      setMapMode('aiRoute');
+      return;
+    }
+  }, [routeRequestDestination]);
+
+  useEffect(() => {
+    if (!selectedDestinationId) return;
+    if (driveDestinations.some((destination) => destination.id === selectedDestinationId)) return;
+    setSelectedDestinationId(null);
+  }, [driveDestinations, selectedDestinationId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2709,8 +2710,8 @@ export default function MapView() {
     let cancelled = false;
 
     fetchOpenChargeMapStations({
-      latitude: mapCenter.lat,
-      longitude: mapCenter.lng,
+      latitude: kualaLumpurCenter.lat,
+      longitude: kualaLumpurCenter.lng,
       distanceKm: 50,
       maxResults: 8,
     }).then((stations) => {
@@ -2765,9 +2766,9 @@ export default function MapView() {
   const evStationSourceLabel = openChargeMapEvStations.length ? 'Open Charge Map' : 'Fallback stations';
   const filteredDestinations =
     searchQuery.trim().length === 0
-      ? mockDestinations
-      : mockDestinations.filter((destination) =>
-          `${destination.name} ${destination.detail}`.toLowerCase().includes(searchQuery.trim().toLowerCase())
+      ? driveDestinations
+      : driveDestinations.filter((destination) =>
+          `${destination.name} ${destination.detail} ${destination.eventName ?? ''} ${destination.eventLocation ?? ''}`.toLowerCase().includes(searchQuery.trim().toLowerCase())
         );
   const routeAddOnPoints = [selectedFavoriteStop?.position, selectedEvStop?.position].filter(Boolean) as Coordinates[];
   const routePathWithStops = routeAddOnPoints.length > 0
@@ -2779,6 +2780,97 @@ export default function MapView() {
       ]
     : selectedDestination.routePath;
   const activeRouteVariant = routeVariants.find((variant) => variant.key === selectedRouteVariant) ?? routeVariants[0];
+
+  useEffect(() => {
+    if (!mapInstance || isFutureDrivePreview || !hasSelectedDriveRoute) return;
+
+    const activeRouteSourceId = 'mbsense-active-route';
+    const alternativeRouteSourceId = 'mbsense-alternative-route';
+    const layerIds = [
+      'mbsense-alternative-route-line',
+      'mbsense-active-route-halo',
+      'mbsense-active-route-line',
+    ];
+
+    const removeRouteLayers = () => {
+      layerIds.forEach((layerId) => {
+        if (mapInstance.getLayer(layerId)) mapInstance.removeLayer(layerId);
+      });
+      [activeRouteSourceId, alternativeRouteSourceId].forEach((sourceId) => {
+        if (mapInstance.getSource(sourceId)) mapInstance.removeSource(sourceId);
+      });
+    };
+
+    const toRouteFeature = (path: Coordinates[]) => ({
+      type: 'FeatureCollection' as const,
+      features: [
+        {
+          type: 'Feature' as const,
+          properties: {},
+          geometry: {
+            type: 'LineString' as const,
+            coordinates: path.map((point) => toMapLibreLngLat(point)),
+          },
+        },
+      ],
+    });
+
+    const drawRouteLayers = () => {
+      if (routePathWithStops.length < 2) return;
+      removeRouteLayers();
+
+      mapInstance.addSource(activeRouteSourceId, {
+        type: 'geojson',
+        data: toRouteFeature(routePathWithStops),
+      });
+      mapInstance.addSource(alternativeRouteSourceId, {
+        type: 'geojson',
+        data: toRouteFeature(selectedDestination.alternativePath),
+      });
+      mapInstance.addLayer({
+        id: 'mbsense-alternative-route-line',
+        type: 'line',
+        source: alternativeRouteSourceId,
+        paint: {
+          'line-color': '#94a3b8',
+          'line-width': 3,
+          'line-opacity': sheetState === 'expanded' ? 0.42 : 0.2,
+          'line-dasharray': [2, 2],
+        },
+      });
+      mapInstance.addLayer({
+        id: 'mbsense-active-route-halo',
+        type: 'line',
+        source: activeRouteSourceId,
+        paint: {
+          'line-color': '#ffffff',
+          'line-width': 9,
+          'line-opacity': 0.86,
+        },
+      });
+      mapInstance.addLayer({
+        id: 'mbsense-active-route-line',
+        type: 'line',
+        source: activeRouteSourceId,
+        paint: {
+          'line-color': visual.routeColor,
+          'line-width': 4,
+          'line-opacity': 0.98,
+        },
+      });
+    };
+
+    if (mapInstance.isStyleLoaded()) {
+      drawRouteLayers();
+    } else {
+      mapInstance.once('load', drawRouteLayers);
+    }
+
+    return () => {
+      mapInstance.off('load', drawRouteLayers);
+      removeRouteLayers();
+    };
+  }, [hasSelectedDriveRoute, isFutureDrivePreview, mapInstance, routePathWithStops, selectedDestination.alternativePath, sheetState, visual.routeColor]);
   const evStationsSheet = useMemo(() => ({
     ...bottomSheets.evStations,
     title: primaryEvStation.name,
@@ -2884,7 +2976,7 @@ export default function MapView() {
               ]
             : [];
 
-  const handleMapReady = useCallback((map: google.maps.Map | null) => {
+  const handleMapReady = useCallback((map: maplibregl.Map | null) => {
     setMapInstance(map);
   }, []);
 
@@ -2961,10 +3053,8 @@ export default function MapView() {
       currentZoom: routeOverviewZoom,
     });
 
-    if (mapInstance && typeof google !== 'undefined') {
-      const bounds = new google.maps.LatLngBounds();
-      getModeFocusPoints(nextMode).forEach((point) => bounds.extend(point));
-      mapInstance.fitBounds(bounds, 72);
+    if (mapInstance) {
+      fitMapLibreToCoordinates(mapInstance, getModeFocusPoints(nextMode), 72);
       window.setTimeout(() => {
         const fittedZoom = mapInstance.getZoom() ?? routeOverviewZoom;
         const nextZoom = Math.min(fittedZoom, routeOverviewZoom);
@@ -2997,13 +3087,11 @@ export default function MapView() {
       currentZoom: routeOverviewZoom,
     });
 
-    if (mapInstance && typeof google !== 'undefined' && futureDrivePreview) {
-      const bounds = new google.maps.LatLngBounds();
-      futureDrivePreview.stops.forEach((stop) => bounds.extend(stop.position));
-      if (futureDrivePreview.suggestedCharger) {
-        bounds.extend(futureDrivePreview.suggestedCharger.position);
-      }
-      mapInstance.fitBounds(bounds, 76);
+    if (mapInstance && futureDrivePreview) {
+      const previewPoints = futureDrivePreview.suggestedCharger
+        ? [...futureDrivePreview.stops.map((stop) => stop.position), futureDrivePreview.suggestedCharger.position]
+        : futureDrivePreview.stops.map((stop) => stop.position);
+      fitMapLibreToCoordinates(mapInstance, previewPoints, 76);
       window.setTimeout(() => {
         const fittedZoom = mapInstance.getZoom() ?? routeOverviewZoom;
         const nextZoom = Math.min(fittedZoom, routeOverviewZoom);
@@ -3032,11 +3120,11 @@ export default function MapView() {
 
   const getVehicleFollowMockView = useCallback(() => {
     return createMockFocusView({
-      point: coordsToUnitPoint(vehiclePosition),
+      point: coordsToUnitPoint(selectedDestination.originPosition),
       target: { x: 0.5, y: 0.62 },
       zoom: getMockCameraView('navigationFollow').zoom,
     });
-  }, []);
+  }, [selectedDestination.originPosition]);
 
   const centerNavigationCamera = useCallback(() => {
     markProgrammaticCamera();
@@ -3053,14 +3141,14 @@ export default function MapView() {
 
     if (mapInstance) {
       mapInstance.setZoom(navigationZoom);
-      mapInstance.panTo(vehiclePosition);
+      mapInstance.panTo(toMapLibreLngLat(selectedDestination.originPosition));
       window.setTimeout(() => {
-        mapInstance.panTo(vehiclePosition);
+        mapInstance.panTo(toMapLibreLngLat(selectedDestination.originPosition));
         if (navigationOffsetTimerRef.current) {
           window.clearTimeout(navigationOffsetTimerRef.current);
         }
         navigationOffsetTimerRef.current = window.setTimeout(() => {
-          mapInstance.panBy(0, Math.round(window.innerHeight * 0.12));
+          mapInstance.panBy([0, Math.round(window.innerHeight * 0.12)]);
           navigationOffsetTimerRef.current = null;
         }, 220);
       }, 180);
@@ -3073,6 +3161,7 @@ export default function MapView() {
     getVehicleFollowMockView,
     mapInstance,
     markProgrammaticCamera,
+    selectedDestination.originPosition,
     updateCameraState,
   ]);
 
@@ -3133,7 +3222,7 @@ export default function MapView() {
     });
 
     if (mapInstance) {
-      mapInstance.panTo(selectedDestination.position);
+      mapInstance.panTo(toMapLibreLngLat(selectedDestination.position));
       window.setTimeout(() => {
         mapInstance.setZoom(destinationPreviewZoom);
       }, 180);
@@ -3168,24 +3257,33 @@ export default function MapView() {
 
   useEffect(() => {
     if (initialCameraFlowRef.current) return;
-    if (hasValidKey && !mapInstance) return;
+    if (!mapInstance) return;
 
     initialCameraFlowRef.current = true;
+    if (!hasSelectedDriveRoute) {
+      mapInstance.setZoom(defaultMapLibreZoom);
+      mapInstance.panTo(toMapLibreLngLat(kualaLumpurCenter));
+      setMockView(defaultMockView);
+      return;
+    }
+
     focusDestinationPreview();
-  }, [focusDestinationPreview, mapInstance]);
+  }, [focusDestinationPreview, hasSelectedDriveRoute, mapInstance]);
 
   useEffect(() => {
     if (!mapInstance) return;
 
-    const dragStartListener = mapInstance.addListener('dragstart', handleManualMapExplore);
-    const zoomChangedListener = mapInstance.addListener('zoom_changed', () => {
+    const handleMapZoom = () => {
       const nextZoom = mapInstance.getZoom();
       handleZoomInteraction(typeof nextZoom === 'number' ? nextZoom : undefined);
-    });
+    };
+
+    mapInstance.on('dragstart', handleManualMapExplore);
+    mapInstance.on('zoom', handleMapZoom);
 
     return () => {
-      dragStartListener.remove();
-      zoomChangedListener.remove();
+      mapInstance.off('dragstart', handleManualMapExplore);
+      mapInstance.off('zoom', handleMapZoom);
     };
   }, [handleManualMapExplore, handleZoomInteraction, mapInstance]);
 
@@ -3259,7 +3357,19 @@ export default function MapView() {
       return;
     }
 
-    fitRouteOverview();
+    markProgrammaticCamera();
+    updateCameraState({
+      activeNavigation: false,
+      cameraMode: 'routeOverview',
+      followCar: false,
+      userInteractingWithMap: false,
+      currentZoom: defaultMapLibreZoom,
+    });
+    if (mapInstance) {
+      mapInstance.setZoom(defaultMapLibreZoom);
+      mapInstance.panTo(toMapLibreLngLat(kualaLumpurCenter));
+    }
+    setMockView(defaultMockView);
   };
 
   const applyNavigationZoomControl = (nextScale: number, nextCameraZoom: number) => {
@@ -3275,14 +3385,14 @@ export default function MapView() {
 
     if (mapInstance) {
       mapInstance.setZoom(nextCameraZoom);
-      mapInstance.panTo(vehiclePosition);
+      mapInstance.panTo(toMapLibreLngLat(selectedDestination.originPosition));
       window.setTimeout(() => {
-        mapInstance.panBy(0, Math.round(window.innerHeight * 0.12));
+        mapInstance.panBy([0, Math.round(window.innerHeight * 0.12)]);
       }, 180);
     }
 
     setMockView(createMockFocusView({
-      point: coordsToUnitPoint(vehiclePosition),
+      point: coordsToUnitPoint(selectedDestination.originPosition),
       target: { x: 0.5, y: 0.62 },
       zoom: nextScale,
     }));
@@ -3324,9 +3434,9 @@ export default function MapView() {
     setMockView(nextView);
   };
 
-  const handleDestinationSelect = (destination: MockDestination) => {
+  const handleDestinationSelect = (destination: DriveDestination) => {
     setDriveExperienceMode('driveNow');
-    setSelectedDestination(destination);
+    setSelectedDestinationId(destination.id);
     setSearchQuery(destination.name);
     setActivePanel(null);
     setSheetState('collapsed');
@@ -3344,11 +3454,9 @@ export default function MapView() {
     });
     showTransientToast('Route loaded', destination.name, 'blue');
 
-    if (mapInstance && typeof google !== 'undefined') {
+    if (mapInstance) {
       markProgrammaticCamera();
-      const bounds = new google.maps.LatLngBounds();
-      destination.routePath.forEach((point) => bounds.extend(point));
-      mapInstance.fitBounds(bounds, 72);
+      fitMapLibreToCoordinates(mapInstance, destination.routePath, 72);
     }
 
     setMockView(getMockCameraView('routeOverview'));
@@ -3371,6 +3479,12 @@ export default function MapView() {
   };
 
   const startNavigation = () => {
+    if (!hasSelectedDriveRoute) {
+      setActivePanel('search');
+      showTransientToast('Choose destination', 'Select a calendar driving activity first', 'blue');
+      return;
+    }
+
     setSheetState('collapsed');
     setMapMode('aiRoute');
     setActivePanel(null);
@@ -3476,11 +3590,11 @@ export default function MapView() {
     }
 
     setLastAction(label);
-    showTransientToast(label, `${sheet.eyebrow} mock action selected`, visual.tone);
+    showTransientToast(label, `${sheet.eyebrow} action selected`, visual.tone);
     addRecentAction({
       icon: label.includes('Navigate') || label.includes('Navigation') ? 'navigation' : 'explore',
       title: label,
-      description: `${sheet.eyebrow} mock action selected for ${sheet.title}`,
+      description: `${sheet.eyebrow} action selected for ${sheet.title}`,
       time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     });
   };
@@ -3525,7 +3639,7 @@ export default function MapView() {
       ? undefined
     : activeNavigation || isManualExplore
         ? 'Re-center'
-          : undefined;
+          : 'KL';
   const mapStateLabel = activeNavigation
     ? followCar
       ? 'Following'
@@ -3551,160 +3665,32 @@ export default function MapView() {
       data-user-interacting-with-map={userInteractingWithMap ? 'true' : 'false'}
       onClick={handleBackgroundClick}
     >
-      {hasValidKey ? (
-        <APIProvider apiKey={API_KEY} version="weekly">
-          <GoogleMap
-            defaultCenter={mapCenter}
-            defaultZoom={10}
-            mapId="DEMO_MAP_ID"
-            style={{ width: '100%', height: '100dvh' }}
-            colorScheme="DARK"
-            styles={reclaimGoogleMapStyles}
-            disableDefaultUI
-            gestureHandling="greedy"
-            clickableIcons={false}
-            internalUsageAttributionIds={['gmp_mcp_codeassist_v1_aistudio']}
-          >
-            <GoogleMapBridge onReady={handleMapReady} />
-            {isFutureDrivePreview ? (
-              <GoogleFutureDriveOverlay preview={futureDrivePreview} emphasizeEcoRoute={futureDriveEmphasizeEcoRoute} />
-            ) : (
-              <GoogleRouteOverlay
-                mode={mapMode}
-                path={routePathWithStops}
-                alternativePath={selectedDestination.alternativePath}
-                sheetState={sheetState}
-              />
-            )}
-            {isFutureDrivePreview ? (
-              futureDrivePreview ? (
-                <>
-                  {futureDrivePreview.stops.map((stop) => (
-                    <AdvancedMarker key={`future-google-stop-${stop.id}`} position={stop.position}>
-                      <FutureDriveStopMarker
-                        stop={stop}
-                        reserveLimit={futureDrivePreview.reserveLimit}
-                        emphasized={selectedFuturePlanIdForView === 'planA' && stop.id === 'prediction-origin'}
-                      />
-                    </AdvancedMarker>
-                  ))}
-                  {futureDrivePreview.suggestedCharger && (
-                    <AdvancedMarker position={futureDrivePreview.suggestedCharger.position}>
-                      <FutureDriveChargerMarker charger={futureDrivePreview.suggestedCharger} emphasized={selectedFuturePlanIdForView === 'planB'} />
-                    </AdvancedMarker>
-                  )}
-                  {selectedFuturePlanIdForView === 'planA' && (
-                    <AdvancedMarker position={futureDrivePreview.stops[0].position}>
-                      <FutureDrivePlanEmphasisMarker
-                        icon={BatteryCharging}
-                        label={`${selectedFuturePlan.mode} charging`}
-                        detail={selectedFuturePlan.canComplete ? `Ends at ${selectedFuturePlan.resultBattery}%` : selectedFuturePlan.timeEstimate}
-                        tone="blue"
-                      />
-                    </AdvancedMarker>
-                  )}
-                  {futureDriveEmphasizeEcoRoute && (
-                    <AdvancedMarker position={futureDrivePreview.stops[Math.max(0, Math.floor(futureDrivePreview.stops.length / 2))].position}>
-                      <FutureDrivePlanEmphasisMarker
-                        icon={Sparkles}
-                        label={selectedFuturePlan.label}
-                        detail={selectedFuturePlan.timeEstimate}
-                        tone="emerald"
-                      />
-                    </AdvancedMarker>
-                  )}
-                  {futureDrivePreview.criticalStop && (
-                    <AdvancedMarker position={futureDrivePreview.criticalStop.position}>
-                      <FutureDriveCriticalMarker stop={futureDrivePreview.criticalStop} reserveLimit={futureDrivePreview.reserveLimit} />
-                    </AdvancedMarker>
-                  )}
-                </>
-              ) : null
-            ) : (
-              <>
-                <AdvancedMarker position={vehiclePosition}>
-                  <VehicleMarker activeNavigation={activeNavigation} />
-                </AdvancedMarker>
-                <AdvancedMarker position={selectedDestination.position}>
-                  <DestinationMarker />
-                </AdvancedMarker>
-              </>
-            )}
-            {!isFutureDrivePreview && mapMode === 'aiRoute' && (
-              <>
-                <AdvancedMarker position={{ lat: 37.62, lng: -122.35 }}>
-                  <RouteChoiceMarker label="Best Route" detail="24 min" tone="blue" />
-                </AdvancedMarker>
-                {sheetState === 'expanded' && (
-                  <AdvancedMarker position={{ lat: 37.59, lng: -122.22 }}>
-                    <RouteChoiceMarker label="Alternative" detail="31 min" tone="slate" />
-                  </AdvancedMarker>
-                )}
-              </>
-            )}
-            {!isFutureDrivePreview && mapMode === 'parking' &&
-              favoriteStops.map((stop) => (
-                <AdvancedMarker key={stop.id} position={stop.position}>
-                  <FavoriteStopMarker stop={stop} />
-                </AdvancedMarker>
-              ))}
-            {!isFutureDrivePreview && mapMode === 'evStations' &&
-              displayEvStations.map((station) => (
-                <AdvancedMarker key={station.id} position={station.position}>
-                  <EVStationMarker station={station} />
-                </AdvancedMarker>
-              ))}
-            {!isFutureDrivePreview && selectedEvStop && mapMode !== 'evStations' && (
-              <AdvancedMarker position={selectedEvStop.position}>
-                <EVStationMarker station={selectedEvStop} />
-              </AdvancedMarker>
-            )}
-            {!isFutureDrivePreview && selectedFavoriteStop && mapMode !== 'parking' && (
-              <AdvancedMarker position={selectedFavoriteStop.position}>
-                <FavoriteStopMarker stop={selectedFavoriteStop} />
-              </AdvancedMarker>
-            )}
-            {!isFutureDrivePreview && mapMode === 'cost' &&
-              costMarkers.map((marker) => (
-                <AdvancedMarker key={marker.id} position={marker.position}>
-                  <CostMapMarker marker={marker} />
-                </AdvancedMarker>
-              ))}
-            {!isFutureDrivePreview && mapMode === 'cost' && (
-              <AdvancedMarker position={{ lat: 37.55, lng: -122.255 }}>
-                <RouteChoiceMarker label="$12.80 total" detail="$0.47/mi" tone="amber" />
-              </AdvancedMarker>
-            )}
-            {!isFutureDrivePreview && mapMode === 'cost' && sheetState === 'expanded' && (
-              <AdvancedMarker position={{ lat: 37.69, lng: -122.312 }}>
-                <RouteChoiceMarker label="Eco route" detail="Save $1.10" tone="slate" />
-              </AdvancedMarker>
-            )}
-          </GoogleMap>
-        </APIProvider>
-      ) : (
-        <MockMapCanvas
-          mode={mapMode}
-          driveMode={driveExperienceMode}
-          futureDrivePreview={futureDrivePreview}
-          selectedFuturePlan={selectedFuturePlan}
-          selectedFuturePlanId={selectedFuturePlanIdForView}
-          emphasizeFutureEcoRoute={futureDriveEmphasizeEcoRoute}
-          sheetState={sheetState}
-          view={mockView}
-          cameraMode={cameraMode}
-          activeNavigation={activeNavigation}
-          routePath={routePathWithStops}
-          alternativePath={selectedDestination.alternativePath}
-          destination={selectedDestination.position}
-          evStationOptions={displayEvStations}
-          addedEvStop={selectedEvStop}
-          selectedFavoriteStop={selectedFavoriteStop}
-          onViewChange={setMockView}
-          onManualPan={handleManualMapExplore}
-          onZoomInteraction={handleZoomInteraction}
-        />
-      )}
+      <MapLibreBaseMap onReady={handleMapReady} />
+      <MockMapCanvas
+        mode={mapMode}
+        driveMode={driveExperienceMode}
+        futureDrivePreview={futureDrivePreview}
+        selectedFuturePlan={selectedFuturePlan}
+        selectedFuturePlanId={selectedFuturePlanIdForView}
+        emphasizeFutureEcoRoute={futureDriveEmphasizeEcoRoute}
+        sheetState={sheetState}
+        view={mockView}
+        cameraMode={cameraMode}
+        activeNavigation={activeNavigation}
+        showDriveRoute={hasSelectedDriveRoute}
+        routePath={routePathWithStops}
+        alternativePath={selectedDestination.alternativePath}
+        routeDetail={selectedDestination.eta}
+        alternativeRouteDetail={activeRouteVariant.etaDelta}
+        origin={selectedDestination.originPosition}
+        destination={selectedDestination.position}
+        evStationOptions={displayEvStations}
+        addedEvStop={selectedEvStop}
+        selectedFavoriteStop={selectedFavoriteStop}
+        onViewChange={setMockView}
+        onManualPan={handleManualMapExplore}
+        onZoomInteraction={handleZoomInteraction}
+      />
 
       <div
         data-map-ui="true"
@@ -3715,7 +3701,9 @@ export default function MapView() {
           <form
             onSubmit={(event) => {
               event.preventDefault();
-              handleDestinationSelect(filteredDestinations[0] ?? mockDestinations[0]);
+              if (filteredDestinations[0]) {
+                handleDestinationSelect(filteredDestinations[0]);
+              }
             }}
             className="relative min-w-0 flex-1"
           >
@@ -3792,6 +3780,46 @@ export default function MapView() {
                   </span>
                 </button>
               ))}
+            </div>
+          )}
+
+          {!isFutureDrivePreview && (
+            <div className="mt-2 rounded-[22px] border border-outline-variant/45 bg-surface-container-lowest/90 p-3 shadow-ambient-lg backdrop-blur-2xl">
+              {hasSelectedDriveRoute ? (
+                <div className="grid gap-2">
+                  <div className="flex items-center gap-2.5">
+                    <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-emerald-400/30 bg-emerald-500/10 text-emerald-400">
+                      <LocateFixed className="h-3.5 w-3.5" />
+                    </span>
+                    <div className="min-w-0">
+                      <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">From</p>
+                      <p className="truncate text-[13px] font-semibold text-on-surface">{selectedDestination.originName}</p>
+                    </div>
+                  </div>
+                  <div className="ml-3 h-4 w-px bg-gradient-to-b from-emerald-400/50 to-primary/50" />
+                  <div className="flex items-center gap-2.5">
+                    <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-primary/30 bg-primary/10 text-primary">
+                      <MapPin className="h-3.5 w-3.5" />
+                    </span>
+                    <div className="min-w-0">
+                      <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">To</p>
+                      <p className="truncate text-[13px] font-semibold text-on-surface">{selectedDestination.name}</p>
+                      <p className="mt-0.5 truncate text-[10px] font-semibold text-slate-500">{selectedDestination.eta} - {selectedDestination.distance}</p>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2.5">
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-primary/25 bg-primary/10 text-primary">
+                    <MapPin className="h-4 w-4" />
+                  </span>
+                  <div className="min-w-0">
+                    <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">Route</p>
+                    <p className="truncate text-[13px] font-semibold text-on-surface">Choose a calendar destination</p>
+                    <p className="mt-0.5 truncate text-[10px] font-semibold text-slate-500">No route displayed yet</p>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
