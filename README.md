@@ -7,16 +7,19 @@ The app can run with Docker Compose as two services:
 - `backend`: Node/Express API on port `8000`
 - `frontend`: nginx-served React build on port `8080`, proxying `/api` and `/live` to the backend service
 
-Create `backend/.env` from the example if it does not already exist:
+Create `.env` from the example if it does not already exist:
 
 ```bash
-cp backend/.env.example backend/.env
+cp .env.example .env
 ```
 
-Set your Gemini key in `backend/.env`:
+Set your API keys in `.env`:
 
 ```env
 GEMINI_API_KEY=your_gemini_api_key_here
+OPEN_CHARGE_MAP_API_KEY=your_open_charge_map_api_key_here
+GOOGLE_MAPS_PLATFORM_KEY=your_google_maps_platform_key_here
+VITE_GOOGLE_MAPS_PLATFORM_KEY=your_google_maps_platform_key_here
 APP_URL=http://localhost:8080
 ```
 

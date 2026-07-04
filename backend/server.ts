@@ -101,6 +101,25 @@ type OpenChargeMapStationCandidate = {
   attribution: string;
 };
 
+type EvChargingStationResult = {
+  id: string;
+  name: string;
+  provider: string;
+  lat: number;
+  lng: number;
+  chargingSpeed: number;
+  pricing: number | null;
+  totalPorts: number;
+  connectorType: string;
+  address: string;
+  distanceKm: number;
+  occupiedPorts: number;
+  portsFree: number;
+  status: string;
+  source: "openchargemap" | "local-fallback";
+  attribution?: string;
+};
+
 type ChargingPlanResult = {
   id: string;
   type: "ai_charging_recommendation";
@@ -856,6 +875,143 @@ function getLocalChargingDecision(payload: ChargingPredictionRequest) {
       : `Use AC charging during the longest free window because it can complete the requested top-up without a public DC stop.`,
     choices: localChoices
   };
+}
+
+const localFallbackEvChargingStations = [
+  {
+    id: "ev-1",
+    name: "SOMA High-Power Charge Hub",
+    provider: "Tesla Supercharger",
+    lat: 37.769,
+    lng: -122.411,
+    chargingSpeed: 250,
+    pricing: 0.42,
+    totalPorts: 20,
+    connectorType: "NACS / CCS",
+    address: "855 Folsom St, San Francisco, CA"
+  },
+  {
+    id: "ev-2",
+    name: "Mission Dolores EcoCharge",
+    provider: "ChargePoint",
+    lat: 37.758,
+    lng: -122.427,
+    chargingSpeed: 150,
+    pricing: 0.38,
+    totalPorts: 8,
+    connectorType: "CCS / J1772",
+    address: "380 Dolores St, San Francisco, CA"
+  },
+  {
+    id: "ev-3",
+    name: "Twin Peaks HighVolt Stations",
+    provider: "Electrify America",
+    lat: 37.749,
+    lng: -122.443,
+    chargingSpeed: 350,
+    pricing: 0.48,
+    totalPorts: 6,
+    connectorType: "CCS / NACS",
+    address: "740 Twin Peaks Blvd, San Francisco, CA"
+  },
+  {
+    id: "ev-4",
+    name: "Presidio Greenway Charger",
+    provider: "EVgo",
+    lat: 37.795,
+    lng: -122.463,
+    chargingSpeed: 50,
+    pricing: 0.30,
+    totalPorts: 6,
+    connectorType: "CCS / CHAdeMO",
+    address: "Presidio Blvd, San Francisco, CA"
+  },
+  {
+    id: "ev-5",
+    name: "Fisherman's Wharf Marine Charger",
+    provider: "ChargePoint",
+    lat: 37.808,
+    lng: -122.412,
+    chargingSpeed: 150,
+    pricing: 0.40,
+    totalPorts: 12,
+    connectorType: "CCS",
+    address: "Beach St & Hyde St, San Francisco, CA"
+  }
+];
+
+function getDirectDistanceKm(fromLat: number, fromLng: number, toLat: number, toLng: number) {
+  const dLat = (toLat - fromLat) * Math.PI / 180;
+  const dLng = (toLng - fromLng) * Math.PI / 180;
+  const fromRadians = fromLat * Math.PI / 180;
+  const toRadians = toLat * Math.PI / 180;
+  const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(fromRadians) * Math.cos(toRadians) *
+    Math.sin(dLng / 2) * Math.sin(dLng / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return Math.round((6371 * c) * 10) / 10;
+}
+
+function normalizeEvStationStatus(rawStatus: string | null | undefined, portsFree: number) {
+  const status = rawStatus?.trim();
+  if (status) return status;
+  if (portsFree === 0) return "full";
+  if (portsFree <= 2) return "busy";
+  return "available";
+}
+
+function buildEvStationWithAvailability(
+  station: Omit<EvChargingStationResult, "distanceKm" | "occupiedPorts" | "portsFree" | "status"> & { status?: string | null },
+  userLat: number,
+  userLng: number,
+  randomizeAvailability: boolean
+): EvChargingStationResult {
+  const totalPorts = Math.max(1, Math.round(station.totalPorts || 1));
+  const occupiedPorts = randomizeAvailability
+    ? Math.max(0, Math.min(totalPorts, station.id === "ev-4"
+      ? (Math.random() > 0.35 ? totalPorts : totalPorts - 1)
+      : Math.floor(Math.random() * totalPorts)))
+    : 0;
+  const portsFree = Math.max(0, totalPorts - occupiedPorts);
+
+  return {
+    ...station,
+    totalPorts,
+    chargingSpeed: Math.max(0, Math.round(station.chargingSpeed || 0)),
+    distanceKm: getDirectDistanceKm(userLat, userLng, station.lat, station.lng),
+    occupiedPorts,
+    portsFree,
+    status: normalizeEvStationStatus(station.status, portsFree),
+  };
+}
+
+function mapOpenChargeMapStationToEvStation(
+  station: OpenChargeMapStationCandidate,
+  userLat: number,
+  userLng: number
+): EvChargingStationResult {
+  return buildEvStationWithAvailability({
+    id: station.id,
+    name: station.name,
+    provider: station.provider || "Open Charge Map",
+    lat: station.latitude,
+    lng: station.longitude,
+    chargingSpeed: station.maxPowerKw,
+    pricing: null,
+    totalPorts: station.stalls,
+    connectorType: station.connector,
+    address: station.address,
+    source: "openchargemap",
+    attribution: station.attribution,
+    status: station.status,
+  }, userLat, userLng, false);
+}
+
+function getFallbackEvChargingStations(userLat: number, userLng: number): EvChargingStationResult[] {
+  return localFallbackEvChargingStations.map((station) => buildEvStationWithAvailability({
+    ...station,
+    source: "local-fallback" as const,
+  }, userLat, userLng, true));
 }
 
 async function startServer() {
@@ -1794,7 +1950,7 @@ Formulate a highly professional 2-sentence sensory dynamic evaluation as a Merce
 
   // EV charging stations nearby location with real-time status and AI recommendation
   app.post('/api/ev-charging-stations', async (req, res) => {
-    const { lat, lng, vehicleSOC, filterProvider, minChargingSpeed } = req.body;
+    const { lat, lng, vehicleSOC, filterProvider, minChargingSpeed, distanceKm, maxResults } = req.body;
     
     // Default location centered near San Francisco map center
     const userLat = Number(lat) || 37.75;
@@ -1802,106 +1958,22 @@ Formulate a highly professional 2-sentence sensory dynamic evaluation as a Merce
     const soc = Number(vehicleSOC) || 35; // default 35% battery state of charge
     const providerFilter = filterProvider || 'all'; // 'all'
     const minSpeed = Number(minChargingSpeed) || 0; // standard minimum speed filter
+    const lookupDistanceKm = Math.max(1, Math.min(100, Number(distanceKm) || 35));
+    const lookupMaxResults = Math.max(1, Math.min(20, Number(maxResults) || 8));
+    let stationSource: EvChargingStationResult["source"] = "openchargemap";
+    let stations: EvChargingStationResult[] = [];
 
-    // Mock initial data set with realistic San Francisco locations
-    const baseStations = [
-      {
-        id: "ev-1",
-        name: "SOMA High-Power Charge Hub",
-        provider: "Tesla Supercharger",
-        lat: 37.769,
-        lng: -122.411,
-        chargingSpeed: 250,
-        pricing: 0.42,
-        totalPorts: 20,
-        connectorType: "NACS / CCS",
-        address: "855 Folsom St, San Francisco, CA"
-      },
-      {
-        id: "ev-2",
-        name: "Mission Dolores EcoCharge",
-        provider: "ChargePoint",
-        lat: 37.758,
-        lng: -122.427,
-        chargingSpeed: 150,
-        pricing: 0.38,
-        totalPorts: 8,
-        connectorType: "CCS / J1772",
-        address: "380 Dolores St, San Francisco, CA"
-      },
-      {
-        id: "ev-3",
-        name: "Twin Peaks HighVolt Stations",
-        provider: "Electrify America",
-        lat: 37.749,
-        lng: -122.443,
-        chargingSpeed: 350,
-        pricing: 0.48,
-        totalPorts: 6,
-        connectorType: "CCS / NACS",
-        address: "740 Twin Peaks Blvd, San Francisco, CA"
-      },
-      {
-        id: "ev-4",
-        name: "Presidio Greenway Charger",
-        provider: "EVgo",
-        lat: 37.795,
-        lng: -122.463,
-        chargingSpeed: 50,
-        pricing: 0.30,
-        totalPorts: 6,
-        connectorType: "CCS / CHAdeMO",
-        address: "Presidio Blvd, San Francisco, CA"
-      },
-      {
-        id: "ev-5",
-        name: "Fisherman's Wharf Marine Charger",
-        provider: "ChargePoint",
-        lat: 37.808,
-        lng: -122.412,
-        chargingSpeed: 150,
-        pricing: 0.40,
-        totalPorts: 12,
-        connectorType: "CCS",
-        address: "Beach St & Hyde St, San Francisco, CA"
-      }
-    ];
+    try {
+      const liveStations = await fetchOpenChargeMapStations(userLat, userLng, lookupDistanceKm, lookupMaxResults);
+      stations = liveStations.map((station) => mapOpenChargeMapStationToEvStation(station, userLat, userLng));
+    } catch {
+      stations = [];
+    }
 
-    // Compute dynamic, real-time-like variations for occupied / free ports
-    const stations = baseStations.map((station) => {
-      // Calculate direct distance approximation using Haversine-like formula
-      const dLat = (station.lat - userLat) * Math.PI / 180;
-      const dLng = (station.lng - userLng) * Math.PI / 180;
-      const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
-                Math.cos(userLat*Math.PI/180) * Math.cos(station.lat*Math.PI/180) *
-                Math.sin(dLng/2) * Math.sin(dLng/2);
-      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-      const distanceKm = Math.round((6371 * c) * 10) / 10;
-
-      // Mock random availability between 0 and totalPorts
-      let occupiedPorts = 0;
-      if (station.id === 'ev-4') {
-        occupiedPorts = Math.random() > 0.35 ? station.totalPorts : station.totalPorts - 1;
-      } else {
-        occupiedPorts = Math.floor(Math.random() * (station.totalPorts - 1));
-      }
-      const portsFree = Math.max(0, station.totalPorts - occupiedPorts);
-      
-      let status = "available";
-      if (portsFree === 0) {
-        status = "full";
-      } else if (portsFree <= 2) {
-        status = "busy";
-      }
-
-      return {
-        ...station,
-        distanceKm,
-        occupiedPorts,
-        portsFree,
-        status
-      };
-    });
+    if (!stations.length) {
+      stationSource = "local-fallback";
+      stations = getFallbackEvChargingStations(userLat, userLng);
+    }
 
     // Apply filtering based on client preference
     const filteredStations = stations.filter(station => {
@@ -1923,7 +1995,10 @@ Formulate a highly professional 2-sentence sensory dynamic evaluation as a Merce
 - Mercedes EQ current state of charge (SoC): ${soc}%
 - Search Center coordinate request: ${userLat}, ${userLng}
 - Available Stations:
-${filteredStations.map(s => `- ${s.name} (${s.provider}): ${s.portsFree}/${s.totalPorts} ports available, ${s.chargingSpeed} kW speed, $${s.pricing}/kWh, ${s.distanceKm} km away. connector: ${s.connectorType}.`).join('\n')}
+${filteredStations.map(s => {
+  const priceLabel = typeof s.pricing === 'number' ? `$${s.pricing.toFixed(2)}/kWh` : 'price unavailable';
+  return `- ${s.name} (${s.provider}): ${s.portsFree}/${s.totalPorts} ports available, ${s.chargingSpeed} kW speed, ${priceLabel}, ${s.distanceKm} km away. connector: ${s.connectorType}.`;
+}).join('\n')}
 
 Provide an elite, professional 2-sentence concierge pick on which station is the absolute best choice for this Mercedes EQ driver right now. Account for charging power, current SoC, prices/kilowatts, and vacancy status. No introductions or conversational filler.`;
 
@@ -1938,6 +2013,8 @@ Provide an elite, professional 2-sentence concierge pick on which station is the
       res.json({
         stations: filteredStations,
         aiRecommendation: (response.text || "").trim(),
+        source: stationSource,
+        attribution: stationSource === "openchargemap" ? openChargeMapAttribution : undefined,
         soc,
         timestamp: new Date().toISOString()
       });
@@ -1946,13 +2023,18 @@ Provide an elite, professional 2-sentence concierge pick on which station is the
       let recommendedStation = filteredStations.find(s => s.portsFree > 0 && s.chargingSpeed >= 150) || filteredStations[0];
       let advice = "";
       if (recommendedStation) {
-        advice = `The highly efficient ${recommendedStation.name} (${recommendedStation.chargingSpeed} kW) is your optimal choice. With ${recommendedStation.portsFree} free ports available at $${recommendedStation.pricing.toFixed(2)}/kWh, it minimizes charging down-time for your EQ vehicle.`;
+        const priceLabel = typeof recommendedStation.pricing === 'number'
+          ? ` at $${recommendedStation.pricing.toFixed(2)}/kWh`
+          : '';
+        advice = `The highly efficient ${recommendedStation.name} (${recommendedStation.chargingSpeed} kW) is your optimal choice. With ${recommendedStation.portsFree} free ports available${priceLabel}, it minimizes charging down-time for your EQ vehicle.`;
       } else {
         advice = "Dolores EcoCharge (150 kW) is recommended as the prime balance of pricing and occupancy to charge your battery efficiently.";
       }
       res.json({
         stations: filteredStations,
         aiRecommendation: advice,
+        source: stationSource,
+        attribution: stationSource === "openchargemap" ? openChargeMapAttribution : undefined,
         soc,
         timestamp: new Date().toISOString()
       });
