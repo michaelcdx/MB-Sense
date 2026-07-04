@@ -250,7 +250,11 @@ export default function Home() {
   const nextChargingDate = formatDateLabel(chargingStart, plan.calendarAction.date);
   const nextChargingTime = formatTimeLabel(chargingStart, chargingEnd, plan.calendarAction.startTime, plan.calendarAction.endTime);
   const navigationStation = selectedStation ?? stationRecommendations[0] ?? null;
+<<<<<<< HEAD
   const chargingStationNavigationUrl = buildMapDirectionsUrl(navigationStation, bestChargingStation);
+=======
+  const chargingStationNavigationUrl = buildGoogleMapsDirectionsUrl(navigationStation, bestChargingStation);
+>>>>>>> 075c0647b328f7ca9c97eb542932ec66ed1b9a70
   const weatherTemperatureLabel = `${Math.round(Number(weather.temp) || 0)}\u00B0C`;
   const batteryScheduleForecasts = useMemo(() => {
     const today = startOfLocalDay(new Date());
@@ -415,7 +419,11 @@ export default function Home() {
                   Next Charging
                 </p>
                 <div className="flex items-center gap-2">
+<<<<<<< HEAD
                   <button type="button" onClick={() => { if (chargingStationNavigationUrl) navigate(chargingStationNavigationUrl); }} disabled={!chargingStationNavigationUrl} className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-primary/35 bg-primary px-4 py-2.5 text-xs font-black uppercase tracking-widest text-on-primary shadow-ambient transition hover:bg-primary/90 hover:shadow-ambient-lg active:scale-[0.98] disabled:cursor-not-allowed disabled:border-outline-variant/45 disabled:bg-surface-container-low disabled:text-slate-500">
+=======
+                  <button type="button" onClick={() => { if (chargingStationNavigationUrl) window.location.href = chargingStationNavigationUrl; }} disabled={!chargingStationNavigationUrl} className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-primary/35 bg-primary px-4 py-2.5 text-xs font-black uppercase tracking-widest text-on-primary shadow-ambient transition hover:bg-primary/90 hover:shadow-ambient-lg active:scale-[0.98] disabled:cursor-not-allowed disabled:border-outline-variant/45 disabled:bg-surface-container-low disabled:text-slate-500">
+>>>>>>> 075c0647b328f7ca9c97eb542932ec66ed1b9a70
                     <Navigation className="h-4 w-4" />
                     Navigate
                   </button>
