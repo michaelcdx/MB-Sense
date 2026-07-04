@@ -2,6 +2,7 @@ import type { CalendarEvent, ChargingCalendarMeta, VehicleState } from '../store
 import { mercedesEqs450PlusMockData, mercedesEqsDerivedValues, mercedesEqsAiTrainingRules } from '../constants/mercedesEqs450PlusTrainedData';
 import { mockDCChargingStationsMalaysia, type DCChargingStation } from '../constants/dcChargingStationsMalaysia';
 import { estimateDrivingRoute, resolveLocationCoordinates, type Coordinates, type RouteDistanceSource } from '../constants/realWorldRouteData';
+import type { OpenChargeMapStationCandidate } from '../types/chargingPlanner';
 
 type WeatherSnapshot = {
   temp: number;
@@ -74,6 +75,7 @@ export type TripForecast = {
   traffic: TrafficLevel;
   weatherImpactPercent: number;
   batteryUsePercent: number;
+  isReturnHome?: boolean;
 };
 
 export type AvailabilityWindow = {
@@ -120,6 +122,12 @@ export type ChargingPlan = {
     currentBattery: number;
     forecastUsePercent: number;
     reserveTarget: number;
+    userTargetBattery: number;
+    chargeRecommended: boolean;
+    chargeReason: 'minimum_threshold' | 'idle_day_opportunity' | 'none';
+    idleDayTopUpThreshold: number;
+    idleDayOpportunityDate: string | null;
+    idleDayScheduleIsEmpty: boolean;
     plannedStartBattery: number;
     withoutChargeProjectedBattery: number;
     projectedBattery: number;
@@ -180,7 +188,7 @@ const chargeRatePercentPerHour = 60 / acMinutesPerPercent;
 const batteryCapacityKWh = mercedesEqs450PlusMockData.vehicle.batteryCapacityKWh;
 export const managedChargingEventId = 'ai-managed-charging-recommendation';
 const dcStationBufferMinutes = 15;
-const homeChargingLocation = 'Home Garage, Damansara Heights';
+export const homeChargingLocation = 'Xiamen University Malaysia, Sunsuria City, Sepang';
 const acChargeCurve = mercedesEqs450PlusMockData.batteryPercentageData
   .map((point) => ({
     socPercent: point.socPercent,
@@ -275,7 +283,7 @@ function cumulativeAcChargeMinutesAtSoc(socPercent: number) {
   return last.minutes;
 }
 
-function getAcChargeMinutesNeeded(currentPercent: number, targetPercent: number) {
+export function getAcChargeMinutesNeeded(currentPercent: number, targetPercent: number) {
   const current = clampPercent(currentPercent);
   const target = clampPercent(targetPercent);
   if (target <= current) return 0;
@@ -416,6 +424,10 @@ function getTrafficLevel(event: CalendarEvent) {
   return 'light';
 }
 
+function getLocalDateKey(date: Date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
 function trafficMultiplier(level: TrafficLevel) {
   if (level === 'heavy') return 1.18;
   if (level === 'moderate') return 1.1;
@@ -442,12 +454,12 @@ function buildTripForecasts(events: CalendarEvent[], weather: WeatherSnapshot, p
     .filter(({ date, event }) => date >= planningStart && date < horizonEnd && isPhysicalLocation(event.location))
     .sort((a, b) => a.date.getTime() - b.date.getTime());
 
-  return trips
+  const tripForecasts = trips
     .map(({ event, date }, index) => {
       const previousTrip = trips[index - 1];
       const originLocation = previousTrip && startOfDay(previousTrip.date).getTime() === startOfDay(date).getTime()
         ? previousTrip.event.location
-        : 'Home Garage, Damansara Heights';
+        : homeChargingLocation;
       const route = estimateTripRoute(originLocation, event.location);
       const distanceKm = route.distanceKm;
       const traffic = getTrafficLevel(event);
@@ -471,6 +483,60 @@ function buildTripForecasts(events: CalendarEvent[], weather: WeatherSnapshot, p
       } satisfies TripForecast;
     })
     .filter((trip) => trip.distanceKm > 0);
+
+  const returnHomeForecasts = Array.from(
+    trips.reduce<Map<string, { event: CalendarEvent; date: Date }[]>>((days, trip) => {
+      const key = getLocalDateKey(trip.date);
+      const dayTrips = days.get(key) ?? [];
+      dayTrips.push(trip);
+      days.set(key, dayTrips);
+      return days;
+    }, new Map()).entries()
+  ).map<TripForecast | null>(([dayKey, dayTrips]) => {
+    const lastTrip = dayTrips[dayTrips.length - 1];
+    if (!lastTrip) return null;
+
+    const returnRoute = estimateTripRoute(lastTrip.event.location, homeChargingLocation);
+    if (returnRoute.distanceKm <= 0) return null;
+
+    const eventStart = eventDateTime(lastTrip.event, lastTrip.event.departureTime ?? lastTrip.event.time);
+    let returnDate = eventDateTime(lastTrip.event, lastTrip.event.endTime ?? lastTrip.event.time);
+    if (returnDate <= eventStart) returnDate = addMinutes(eventStart, 60);
+
+    const returnTime = minutesToDisplayTime(returnDate.getHours() * 60 + returnDate.getMinutes());
+    const returnEvent: CalendarEvent = {
+      ...lastTrip.event,
+      id: `${lastTrip.event.id}-return-home`,
+      title: 'Return home',
+      location: homeChargingLocation,
+      time: returnTime,
+      departureTime: returnTime,
+      status: 'Return home',
+      endTime: undefined,
+    };
+    const traffic = getTrafficLevel(returnEvent);
+    const weatherImpactPercent = weatherImpact(weather);
+    const batteryUsePercent = Math.ceil((returnRoute.distanceKm / rangePerPercentKm) * trafficMultiplier(traffic) * (1 + weatherImpactPercent / 100));
+
+    return {
+      eventId: `return-home-${dayKey}`,
+      title: 'Return home',
+      originLocation: lastTrip.event.location,
+      location: homeChargingLocation,
+      date: returnDate,
+      departureTime: returnTime,
+      eventTime: returnTime,
+      distanceKm: returnRoute.distanceKm,
+      routeDurationMinutes: returnRoute.durationMinutesNoTraffic,
+      routeDistanceSource: returnRoute.source,
+      traffic,
+      weatherImpactPercent,
+      batteryUsePercent,
+      isReturnHome: true,
+    } satisfies TripForecast;
+  }).filter((trip): trip is TripForecast => Boolean(trip));
+
+  return [...tripForecasts, ...returnHomeForecasts].sort((a, b) => a.date.getTime() - b.date.getTime());
 }
 
 function isManagedChargingEvent(event: CalendarEvent) {
@@ -565,6 +631,26 @@ function buildAvailabilityWindows(events: CalendarEvent[], planningStart: Date) 
   return windows.sort((a, b) => b.score - a.score || a.start.getTime() - b.start.getTime());
 }
 
+function buildIdleDayTopUpOpportunity(events: CalendarEvent[], planningStart: Date, currentBattery: number, targetBattery: number, minimumBatteryTarget: number) {
+  const nextDay = addDays(startOfDay(planningStart), 1);
+  const nextDayEvents = events.filter((event) => sameDay(eventDateTime(event), nextDay));
+  const idleDayTopUpThreshold = Math.min(
+    targetBattery - 1,
+    Math.max(minimumBatteryTarget + 10, targetBattery - 20, 50)
+  );
+  const shouldRecommend = nextDayEvents.length === 0
+    && currentBattery < targetBattery
+    && currentBattery <= idleDayTopUpThreshold;
+
+  return {
+    date: nextDay,
+    scheduleIsEmpty: nextDayEvents.length === 0,
+    eventCount: nextDayEvents.length,
+    idleDayTopUpThreshold,
+    shouldRecommend
+  };
+}
+
 function addMinutes(date: Date, minutes: number) {
   const next = new Date(date);
   next.setMinutes(next.getMinutes() + minutes);
@@ -581,6 +667,37 @@ function getCompatibleConnector(station: DCChargingStation): 'CCS2' | 'Tesla CCS
   return undefined;
 }
 
+function normalizeOpenChargeMapConnector(connector: string): DCChargingStation['connectors'][number] | null {
+  const normalized = connector.toLowerCase();
+  if (normalized.includes('tesla')) return 'Tesla CCS2';
+  if (normalized.includes('ccs')) return 'CCS2';
+  if (normalized.includes('chademo')) return 'CHAdeMO';
+  return null;
+}
+
+function mapOpenChargeMapStationToDCStation(station: OpenChargeMapStationCandidate): DCChargingStation | null {
+  const connector = normalizeOpenChargeMapConnector(station.connector);
+  if (!connector || connector === 'CHAdeMO') return null;
+  if (!Number.isFinite(station.latitude) || !Number.isFinite(station.longitude)) return null;
+
+  return {
+    id: station.id,
+    name: station.name,
+    provider: station.provider || 'Open Charge Map',
+    state: station.state ?? station.city ?? 'N/A',
+    city: station.city || 'N/A',
+    address: station.address || station.name,
+    latitude: station.latitude,
+    longitude: station.longitude,
+    chargerType: 'DC',
+    connectors: [connector],
+    maxPowerKw: Math.max(0, Math.round(station.maxPowerKw || 0)),
+    stalls: Math.max(0, Math.round(station.stalls || 0)),
+    isHighwayStop: false,
+    notes: `${station.status ? `${station.status}. ` : ''}${station.attribution}`,
+  };
+}
+
 function getWindowRouteContext(events: CalendarEvent[], planningStart: Date, windowStart: Date) {
   const travelBlocks = buildPhysicalTravelBlocks(events, planningStart);
   const previous = [...travelBlocks].reverse().find((block) => block.end <= windowStart);
@@ -594,7 +711,7 @@ function getWindowRouteContext(events: CalendarEvent[], planningStart: Date, win
   };
 }
 
-function rankDCStationsForWindow(events: CalendarEvent[], planningStart: Date, window: AvailabilityWindow): DCStationRecommendation[] {
+function rankDCStationsForWindow(events: CalendarEvent[], planningStart: Date, window: AvailabilityWindow, openChargeMapStations: OpenChargeMapStationCandidate[] = []): DCStationRecommendation[] {
   const context = getWindowRouteContext(events, planningStart, window.start);
   const anchorCoordinates = resolveLocationCoordinates(context.anchorLocation) ?? resolveLocationCoordinates(homeChargingLocation);
   if (!anchorCoordinates) return [];
@@ -602,7 +719,11 @@ function rankDCStationsForWindow(events: CalendarEvent[], planningStart: Date, w
   const nextCoordinates = context.nextLocation ? resolveLocationCoordinates(context.nextLocation) : undefined;
   const anchorToNextKm = nextCoordinates ? estimateStationRoadDistanceKm(anchorCoordinates, nextCoordinates) : 0;
 
-  return mockDCChargingStationsMalaysia
+  const candidateStations = openChargeMapStations.length
+    ? openChargeMapStations.map(mapOpenChargeMapStationToDCStation).filter((station): station is DCChargingStation => Boolean(station))
+    : mockDCChargingStationsMalaysia;
+
+  return candidateStations
     .map<DCStationRecommendation | null>((station) => {
       const connector = getCompatibleConnector(station);
       if (!connector) return null;
@@ -659,12 +780,38 @@ function selectDcWindow(windows: AvailabilityWindow[], blockMinutes: number) {
   return (evening.length ? evening : feasible).sort((a, b) => a.start.getTime() - b.start.getTime())[0];
 }
 
-function buildChargingOptionPlans(events: CalendarEvent[], planningStart: Date, windows: AvailabilityWindow[], acMinutesNeeded: number, dcFastMinutesNeeded: number | null, targetBattery: number, dcFastTargetBattery: number, preference: ChargingModePreference, aiDecision?: GeminiChargingDecision) {
+function buildChargingOptionPlans(events: CalendarEvent[], planningStart: Date, windows: AvailabilityWindow[], acMinutesNeeded: number, dcFastMinutesNeeded: number | null, targetBattery: number, dcFastTargetBattery: number, preference: ChargingModePreference, shouldCharge: boolean, aiDecision?: GeminiChargingDecision, openChargeMapStations: OpenChargeMapStationCandidate[] = []) {
+  if (!shouldCharge) {
+    const ac: ChargingOptionPlan = {
+      mode: 'AC',
+      minutesNeeded: 0,
+      blockMinutes: 0,
+      targetBattery,
+      canComplete: true,
+      location: homeChargingLocation,
+      summary: 'No charging is needed because the forecast stays above the minimum battery threshold.',
+      stationOptions: []
+    };
+
+    const dc: ChargingOptionPlan = {
+      mode: 'DC',
+      minutesNeeded: null,
+      blockMinutes: 0,
+      targetBattery: dcFastTargetBattery,
+      canComplete: false,
+      location: 'No public DC charging needed',
+      summary: 'No DC stop is recommended while the battery forecast remains above the minimum threshold.',
+      stationOptions: []
+    };
+
+    return { preference, selected: ac, ac, dc, aiDecision: undefined };
+  }
+
   const acBlockMinutes = Math.max(acMinutesNeeded, 30);
   const dcBlockMinutes = Math.max((dcFastMinutesNeeded ?? 0) + dcStationBufferMinutes, 30);
   const acWindow = selectAcWindow(windows, acBlockMinutes);
   const dcWindow = dcFastMinutesNeeded === null ? undefined : selectDcWindow(windows, dcBlockMinutes);
-  const dcStations = dcWindow ? rankDCStationsForWindow(events, planningStart, dcWindow) : [];
+  const dcStations = dcWindow ? rankDCStationsForWindow(events, planningStart, dcWindow, openChargeMapStations) : [];
   const usableAiDecision = aiDecision && (preference === 'auto' || aiDecision.mode === preference) ? aiDecision : undefined;
   const aiStation = usableAiDecision?.mode === 'DC' && usableAiDecision.selectedStationId
     ? dcStations.find((station) => station.station.id === usableAiDecision.selectedStationId)
@@ -744,11 +891,21 @@ function buildExplanation(plan: Omit<ChargingPlan, 'explanation' | 'agents'>) {
   if (aiExplanation && selected.start && selected.end) return aiExplanation;
 
   if (!selected.start || !selected.end || plan.energy.topUpPercent === 0) {
-    return `Battery is projected to finish at ${plan.energy.projectedBattery}% after the next ${plan.scheduleDemand.travelEvents} drive events, using the EQS 450+ training range of ${plan.energy.rangePerPercentKm} km per 1%.`;
+    if (plan.energy.chargeRecommended) {
+      if (plan.energy.chargeReason === 'idle_day_opportunity') {
+        return `Tomorrow has no scheduled activities and the battery is ${plan.energy.currentBattery}%, so MB Sense recommends using the open day to charge toward the user target of ${plan.energy.userTargetBattery}%.`;
+      }
+      return `Battery is projected to fall to ${plan.energy.withoutChargeProjectedBattery}% without charging, below the ${plan.energy.reserveTarget}% minimum threshold. Use the next practical parked window to recover toward the user target of ${plan.energy.userTargetBattery}%.`;
+    }
+    return `No charge is recommended yet. Without charging, battery is projected to finish at ${plan.energy.withoutChargeProjectedBattery}% after the next ${plan.scheduleDemand.travelEvents} drive events, above the ${plan.energy.reserveTarget}% minimum threshold.`;
   }
 
   if (selected.mode === 'DC' && selected.selectedStation) {
     return `Use DC fast charging because AC needs ${plan.chargingStrategy.ac.minutesNeeded} minutes. MB Sense picked ${selected.selectedStation.station.name} because it supports ${selected.selectedStation.connector} and is ${selected.selectedStation.distanceFromAnchorKm} km from ${selected.selectedStation.anchorLocation}.`;
+  }
+
+  if (plan.energy.chargeReason === 'idle_day_opportunity') {
+    return `Use AC charging during the open day because tomorrow has no scheduled activities and the battery is below the ${plan.energy.idleDayTopUpThreshold}% idle-day top-up threshold. AC charging to ${selected.targetBattery}% takes about ${selected.minutesNeeded ?? 0} minutes.`;
   }
 
   return `Use AC charging during a long ${selected.window?.chargerAccess ?? 'free'} window because ${leadTrip?.title ?? 'the upcoming schedule'} creates the highest demand. AC charging to ${selected.targetBattery}% takes about ${selected.minutesNeeded ?? 0} minutes.`;
@@ -758,18 +915,17 @@ function buildAgents(plan: Omit<ChargingPlan, 'explanation' | 'agents'>): AgentI
   const best = plan.decision.bestWindow;
   const highDemand = plan.scheduleDemand.highDemandEvent;
   const scheduleStatus: AgentInsight['status'] = plan.scheduleDemand.travelEvents >= 4 ? 'watch' : 'ready';
-  const energyStatus: AgentInsight['status'] = plan.energy.projectedBattery < plan.energy.reserveTarget
+  const energyStatus: AgentInsight['status'] = plan.energy.chargeRecommended
     ? 'action'
     : plan.energy.forecastUsePercent >= 35
       ? 'watch'
       : 'ready';
-  const targetBelowRecommended = plan.charging.targetBattery < plan.energy.recommendedTarget;
-  const chargingStatus: AgentInsight['status'] = targetBelowRecommended || plan.energy.projectedBattery < plan.energy.reserveTarget
+  const chargingStatus: AgentInsight['status'] = plan.energy.chargeRecommended
     ? 'action'
     : plan.charging.minutesNeeded > 90 || plan.energy.forecastUsePercent >= 35
       ? 'watch'
       : 'ready';
-  const decisionStatus: AgentInsight['status'] = plan.decision.canComplete && !targetBelowRecommended ? 'ready' : 'action';
+  const decisionStatus: AgentInsight['status'] = !plan.energy.chargeRecommended || plan.decision.canComplete ? 'ready' : 'action';
   const dcFastSummary = plan.charging.dcFast.validToTarget
     ? `DC fast estimate is ${plan.charging.dcFast.minutesNeeded ?? 0} min to ${plan.charging.dcFast.targetBattery}%.`
     : `DC fast is capped at ${plan.charging.dcFast.cappedAtBattery}% because the training data stops at 80%.`;
@@ -784,8 +940,10 @@ function buildAgents(plan: Omit<ChargingPlan, 'explanation' | 'agents'>): AgentI
     {
       name: 'Energy Agent',
       status: energyStatus,
-      metric: `${plan.energy.forecastUsePercent}% use`,
-      summary: `${highDemand ? `${highDemand.title} is the highest demand trip. ` : ''}Predicts battery use with ${plan.energy.rangePerPercentKm} km per 1% from the EQS 450+ training data.`
+      metric: `${plan.energy.withoutChargeProjectedBattery}% left`,
+      summary: plan.energy.chargeReason === 'idle_day_opportunity'
+        ? `Tomorrow is open and battery is below the ${plan.energy.idleDayTopUpThreshold}% idle-day top-up threshold, so a low-disruption charge is recommended.`
+        : `${highDemand ? `${highDemand.title} is the highest demand trip. ` : ''}Recommends charging only if the no-charge forecast drops below the ${plan.energy.reserveTarget}% minimum threshold.`
     },
     {
       name: 'Availability Agent',
@@ -796,8 +954,12 @@ function buildAgents(plan: Omit<ChargingPlan, 'explanation' | 'agents'>): AgentI
     {
       name: 'Charging Agent',
       status: chargingStatus,
-      metric: `${plan.charging.targetBattery}% target`,
-      summary: `Rechecked against ${plan.energy.forecastUsePercent}% forecast use. AC takes ${plan.charging.ac.minutesNeeded} min. ${dcFastSummary}`
+      metric: plan.energy.chargeRecommended ? `${plan.charging.targetBattery}% target` : 'Hold charge',
+      summary: plan.energy.chargeRecommended
+        ? plan.energy.chargeReason === 'idle_day_opportunity'
+          ? `Empty next-day schedule creates a good charging window, so charging targets the user-defined ${plan.energy.userTargetBattery}%. AC takes ${plan.charging.ac.minutesNeeded} min. ${dcFastSummary}`
+          : `Forecast falls below ${plan.energy.reserveTarget}%, so charging targets the user-defined ${plan.energy.userTargetBattery}%. AC takes ${plan.charging.ac.minutesNeeded} min. ${dcFastSummary}`
+        : `Forecast stays above ${plan.energy.reserveTarget}%, so no charging session is recommended.`
     },
     {
       name: 'Decision Agent',
@@ -816,7 +978,7 @@ function buildAgents(plan: Omit<ChargingPlan, 'explanation' | 'agents'>): AgentI
   ];
 }
 
-export function buildChargingPlan(events: CalendarEvent[], vehicle: VehicleState, weather: WeatherSnapshot, targetChargePercent = dailyTarget, planningAnchor?: Date, chargingPreference: ChargingModePreference = 'auto', aiDecision?: GeminiChargingDecision): ChargingPlan {
+export function buildChargingPlan(events: CalendarEvent[], vehicle: VehicleState, weather: WeatherSnapshot, targetChargePercent = dailyTarget, planningAnchor?: Date, chargingPreference: ChargingModePreference = 'auto', aiDecision?: GeminiChargingDecision, openChargeMapStations: OpenChargeMapStationCandidate[] = [], minimumBatteryPercent = reserveTarget): ChargingPlan {
   const planningStart = getPlanningStart(events, planningAnchor);
   const planningEvents = events.filter((event) => !isManagedChargingEvent(event));
   const upcomingEvents = planningEvents.filter((event) => eventDateTime(event) >= planningStart && eventDateTime(event) < addDays(planningStart, horizonDays));
@@ -824,17 +986,26 @@ export function buildChargingPlan(events: CalendarEvent[], vehicle: VehicleState
   const trips = buildTripForecasts(planningEvents, weather, planningStart);
   const forecastUsePercent = trips.reduce((sum, trip) => sum + trip.batteryUsePercent, 0);
   const targetBattery = clampPercent(targetChargePercent, minTargetCharge, maxTargetCharge);
-  const plannedStartBattery = Math.max(vehicle.batteryLevel, targetBattery);
-  const projectedBattery = Math.max(plannedStartBattery - forecastUsePercent, 0);
+  const minimumBatteryTarget = clampPercent(minimumBatteryPercent, 5, Math.max(5, targetBattery - 5));
   const withoutChargeProjectedBattery = Math.max(vehicle.batteryLevel - forecastUsePercent, 0);
-  const recommendedTarget = Math.min(dailyTarget, Math.max(60, forecastUsePercent + reserveTarget + 5));
-  const topUpPercent = Math.max(targetBattery - vehicle.batteryLevel, 0);
-  const acMinutesNeeded = getAcChargeMinutesNeeded(vehicle.batteryLevel, targetBattery);
+  const idleDayOpportunity = buildIdleDayTopUpOpportunity(planningEvents, planningStart, vehicle.batteryLevel, targetBattery, minimumBatteryTarget);
+  const batteryThresholdChargeRecommended = withoutChargeProjectedBattery < minimumBatteryTarget;
+  const chargeRecommended = batteryThresholdChargeRecommended || idleDayOpportunity.shouldRecommend;
+  const chargeReason: ChargingPlan['energy']['chargeReason'] = batteryThresholdChargeRecommended
+    ? 'minimum_threshold'
+    : idleDayOpportunity.shouldRecommend
+      ? 'idle_day_opportunity'
+      : 'none';
+  const plannedStartBattery = chargeRecommended ? Math.max(vehicle.batteryLevel, targetBattery) : vehicle.batteryLevel;
+  const projectedBattery = Math.max(plannedStartBattery - forecastUsePercent, 0);
+  const recommendedTarget = chargeRecommended ? targetBattery : vehicle.batteryLevel;
+  const topUpPercent = chargeRecommended ? Math.max(targetBattery - vehicle.batteryLevel, 0) : 0;
+  const acMinutesNeeded = chargeRecommended ? getAcChargeMinutesNeeded(vehicle.batteryLevel, targetBattery) : 0;
   const dcFastTargetBattery = Math.min(targetBattery, dcFastMaxSoc);
-  const dcFastMinutesNeeded = vehicle.batteryLevel >= dcFastMaxSoc ? null : getDcFastChargeMinutesNeeded(vehicle.batteryLevel, dcFastTargetBattery);
+  const dcFastMinutesNeeded = chargeRecommended && vehicle.batteryLevel < dcFastMaxSoc ? getDcFastChargeMinutesNeeded(vehicle.batteryLevel, dcFastTargetBattery) : null;
   const dcFastValidToTarget = targetBattery <= dcFastMaxSoc;
   const windows = buildAvailabilityWindows(planningEvents, planningStart);
-  const chargingStrategy = buildChargingOptionPlans(planningEvents, planningStart, windows, acMinutesNeeded, dcFastMinutesNeeded, targetBattery, dcFastTargetBattery, chargingPreference, aiDecision);
+  const chargingStrategy = buildChargingOptionPlans(planningEvents, planningStart, windows, acMinutesNeeded, dcFastMinutesNeeded, targetBattery, dcFastTargetBattery, chargingPreference, chargeRecommended, aiDecision, openChargeMapStations);
   const selected = chargingStrategy.selected;
   const bestWindow = selected.window;
   const canComplete = selected.canComplete;
@@ -853,7 +1024,13 @@ export function buildChargingPlan(events: CalendarEvent[], vehicle: VehicleState
     energy: {
       currentBattery: vehicle.batteryLevel,
       forecastUsePercent,
-      reserveTarget,
+      reserveTarget: minimumBatteryTarget,
+      userTargetBattery: targetBattery,
+      chargeRecommended,
+      chargeReason,
+      idleDayTopUpThreshold: idleDayOpportunity.idleDayTopUpThreshold,
+      idleDayOpportunityDate: getLocalDateKey(idleDayOpportunity.date),
+      idleDayScheduleIsEmpty: idleDayOpportunity.scheduleIsEmpty,
       plannedStartBattery,
       withoutChargeProjectedBattery,
       projectedBattery,
@@ -907,6 +1084,7 @@ function getEventTypeFromDate(date: Date): CalendarEvent['type'] {
 
 export function buildManagedChargingCalendarEvent(plan: ChargingPlan): CalendarEvent | null {
   const selected = plan.chargingStrategy.selected;
+  if (!plan.energy.chargeRecommended || plan.energy.topUpPercent <= 0) return null;
   if (!selected.start || !selected.end || !selected.canComplete) return null;
 
   const stationOptions = selected.stationOptions.map(dcStationToCalendarOption);
@@ -976,7 +1154,11 @@ function serializeChargingOption(option: ChargingOptionPlan) {
       city: recommendation.station.city,
       isHighwayStop: recommendation.station.isHighwayStop,
       anchorLocation: recommendation.anchorLocation,
-      nextLocation: recommendation.nextLocation
+      nextLocation: recommendation.nextLocation,
+      latitude: recommendation.station.latitude,
+      longitude: recommendation.station.longitude,
+      source: recommendation.station.id.startsWith('ocm-') ? 'openchargemap' : 'local-fallback',
+      attribution: recommendation.station.id.startsWith('ocm-') ? 'Open Charge Map contributors' : undefined
     }))
   };
 }
@@ -1022,18 +1204,29 @@ export function buildGeminiChargingPredictionPayload(plan: ChargingPlan, prefere
       connector: 'CCS2',
       batteryCapacityKWh: plan.energy.batteryCapacityKWh,
       batteryCareRules: [
-        'Prefer AC charging when there is a long overnight/home window and the car can finish before the next trip.',
+        'Recommend charging as rarely as possible while keeping the no-charge forecast above the user-defined minimum battery threshold.',
+        'The user target charge is the destination state of charge only when a charging session is actually needed.',
+        'Do not recommend charging just because the current battery is below the user target charge.',
+        'If the next local day has no schedule and battery is below the idle-day top-up threshold, use that open day as a low-disruption charging opportunity.',
+        'Prefer AC charging when charging is needed and there is a long overnight/home window that can finish before the next trip.',
         'Prefer DC fast charging only when schedule pressure makes AC impractical or when a CCS2 station is convenient near the latest location or route.',
-        'Daily target should normally stay near 80% unless the next 7 days need more range.',
-        'Keep projected battery above the reserve target after planned travel.'
+        'Keep the no-charge projected battery above the minimum threshold; otherwise charge toward the user target.'
       ]
     },
     choices: buildLocalChargingChoices(plan),
     energy: {
       currentBattery: plan.energy.currentBattery,
       forecastUsePercent: plan.energy.forecastUsePercent,
+      withoutChargeProjectedBattery: plan.energy.withoutChargeProjectedBattery,
       projectedBattery: plan.energy.projectedBattery,
       reserveTarget: plan.energy.reserveTarget,
+      minimumBatteryThreshold: plan.energy.reserveTarget,
+      userTargetCharge: plan.energy.userTargetBattery,
+      chargeRecommended: plan.energy.chargeRecommended,
+      chargeReason: plan.energy.chargeReason,
+      idleDayTopUpThreshold: plan.energy.idleDayTopUpThreshold,
+      idleDayOpportunityDate: plan.energy.idleDayOpportunityDate,
+      idleDayScheduleIsEmpty: plan.energy.idleDayScheduleIsEmpty,
       recommendedTarget: plan.energy.recommendedTarget,
       topUpPercent: plan.energy.topUpPercent,
       batteryCapacityKWh: plan.energy.batteryCapacityKWh
@@ -1053,6 +1246,7 @@ export function buildGeminiChargingPredictionPayload(plan: ChargingPlan, prefere
         title: trip.title,
         originLocation: trip.originLocation,
         location: trip.location,
+        isReturnHome: trip.isReturnHome,
         departureTime: trip.departureTime,
         eventTime: trip.eventTime,
         distanceKm: trip.distanceKm,

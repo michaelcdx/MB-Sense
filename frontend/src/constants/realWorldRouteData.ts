@@ -25,16 +25,21 @@ export type EstimatedDrivingRoute = {
 
 export const knownCalendarLocations = {
   homeGarage: {
-    label: "Home Garage, Damansara Heights",
+    label: "Xiamen University Malaysia",
     aliases: [
+      "Xiamen University Malaysia",
+      "Xiamen University Malaysia, Sunsuria City, Sepang",
+      "Xiamen University Malaysia, Jalan Sunsuria, Bandar Sunsuria, 43900 Sepang, Selangor, Malaysia",
+      "Home",
+      "Home Garage",
       "Home Garage, Damansara Heights",
+      "Home Wallbox, Xiamen University Malaysia",
       "Home Wallbox, Damansara Heights",
-      "Damansara Heights",
-      "Home"
+      "Damansara Heights"
     ],
-    lat: 3.1507,
-    lng: 101.6617,
-    resolvedAddress: "Damansara Heights, Kuala Lumpur, Malaysia"
+    lat: 2.835,
+    lng: 101.706,
+    resolvedAddress: "Xiamen University Malaysia, Jalan Sunsuria, Bandar Sunsuria, 43900 Sepang, Selangor, Malaysia"
   },
   mercedesMalaysiaHq: {
     label: "Mercedes-Benz Malaysia HQ, Puchong",

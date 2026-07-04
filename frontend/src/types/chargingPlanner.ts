@@ -7,7 +7,27 @@ export type ChargingStationRecommendation = {
   connector?: 'CCS2' | 'Tesla CCS2' | 'CHAdeMO' | string | null;
   maxPowerKw?: number | null;
   stalls?: number | null;
+  latitude?: number | null;
+  longitude?: number | null;
   reason?: string | null;
+};
+
+export type OpenChargeMapStationCandidate = {
+  id: string;
+  name: string;
+  provider: string;
+  city: string;
+  state?: string | null;
+  address: string;
+  latitude: number;
+  longitude: number;
+  connector: string;
+  maxPowerKw: number;
+  stalls: number;
+  status?: string | null;
+  distanceKm?: number | null;
+  source: "openchargemap";
+  attribution: string;
 };
 
 export type ChargingPlanResult = {
@@ -96,6 +116,23 @@ export type ChargingPlanInput = {
     connectorType?: "CCS2" | "CHAdeMO" | "Tesla CCS2";
   };
 
+  targetChargePercent?: number;
+  minimumBatteryPercent?: number;
+
+  chargingOpportunity?: {
+    nextDayDate: string;
+    nextDayEventCount: number;
+    nextDayDrivingEventCount: number;
+    nextDayHasNoSchedule: boolean;
+    idleTopUpThresholdPercent: number;
+    shouldRecommendIdleTopUp: boolean;
+    preferredChargingStart: string | null;
+    preferredChargingEnd: string | null;
+    estimatedChargingDurationMinutes: number | null;
+    chargingLocationName: string;
+    reason: string | null;
+  };
+
   calendarEvents: Array<{
     id: string;
     title: string;
@@ -108,6 +145,10 @@ export type ChargingPlanInput = {
     status?: string;
     notes?: string;
   }>;
+
+  calendarRevision?: number;
+
+  chargingStations?: OpenChargeMapStationCandidate[];
 
   weather?: Record<string, unknown>;
 };

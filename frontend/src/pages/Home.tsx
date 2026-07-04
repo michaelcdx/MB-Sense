@@ -1,12 +1,15 @@
 ﻿import { motion } from 'motion/react';
 import { useAppStore, type ChargingStationCalendarOption } from '../store/useAppStore';
-import { BatteryCharging, Battery, CalendarClock, Check, MapPin, PlugZap, ShieldCheck, Timer, Zap } from 'lucide-react';
-import { useState, useEffect } from 'react';
+import { BatteryCharging, Battery, CalendarClock, MapPin, Navigation, PlugZap, ShieldCheck, Timer, Zap } from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { cn } from '../lib/utils';
-import { buildCalendarEventFromChargingPlan, buildChargingPlanInput, fallbackChargingPlan, requestChargingPlan } from '../lib/chargingPlanner';
+import { buildChargingPlan } from '../lib/chargingAgents';
+import { buildCalendarEventFromChargingPlan, buildChargingPlanInput, buildChargingPlanInputSignature, fallbackChargingPlan, normalizeChargingPlanAgainstSchedule, requestChargingPlan } from '../lib/chargingPlanner';
 import type { ChargingStationRecommendation } from '../types/chargingPlanner';
 import { useCalendarViewStore } from '../store/useCalendarViewStore';
+
+const defaultHomeAddress = 'Xiamen University Malaysia, Jalan Sunsuria, Bandar Sunsuria, 43900 Sepang, Selangor, Malaysia';
 
 function formatChargingType(type: string) {
   if (type === 'home_ac') return 'Home AC';
@@ -54,6 +57,24 @@ function displayText(value: unknown) {
   return isMeaningful(value) ? String(value).trim() : 'N/A';
 }
 
+function startOfLocalDay(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function addLocalDays(date: Date, days: number) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+function isSameLocalDate(dateA: Date, dateB: Date) {
+  return dateA.getFullYear() === dateB.getFullYear() && dateA.getMonth() === dateB.getMonth() && dateA.getDate() === dateB.getDate();
+}
+
+function getCalendarEventDate(value: Date | string) {
+  return value instanceof Date ? value : new Date(value);
+}
+
 function formatNumber(value: unknown, suffix: string) {
   const numeric = Number(value);
   return Number.isFinite(numeric) && numeric > 0 ? `${numeric}${suffix}` : 'N/A';
@@ -70,6 +91,41 @@ function buildStationSummary(station: ChargingStationRecommendation | null, fall
   ].filter((item, index, list) => item !== 'N/A' && list.indexOf(item) === index);
   const reason = displayText(station.reason);
   return [...details, reason !== 'N/A' ? reason : null].filter(Boolean).join('. ') || 'N/A';
+}
+
+function normalizeNavigationDestination(value: string) {
+  const normalized = value.toLowerCase();
+  if (
+    normalized === 'home' ||
+    normalized.includes('home ac') ||
+    normalized.includes('home charging') ||
+    normalized.includes('home garage') ||
+    normalized.includes('home wallbox') ||
+    normalized.includes('damansara heights')
+  ) {
+    return defaultHomeAddress;
+  }
+
+  return value;
+}
+
+function buildGoogleMapsDirectionsUrl(station: ChargingStationRecommendation | null, fallbackLocation: string) {
+  const latitude = Number(station?.latitude);
+  const longitude = Number(station?.longitude);
+  const destination = Number.isFinite(latitude) && Number.isFinite(longitude)
+    ? `${latitude},${longitude}`
+    : [
+        displayText(station?.address),
+        displayText(station?.name),
+        fallbackLocation,
+      ]
+        .filter((value) => value !== 'N/A')
+        .map(normalizeNavigationDestination)
+        .filter((value, index, list) => list.indexOf(value) === index)
+        .join(', ');
+
+  if (!destination || destination === 'N/A') return null;
+  return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}&travelmode=driving`;
 }
 
 function toCalendarStationOption(station: ChargingStationRecommendation, index: number): ChargingStationCalendarOption {
@@ -89,13 +145,30 @@ function toCalendarStationOption(station: ChargingStationRecommendation, index: 
   };
 }
 export default function Home() {
-  const { user, location, weather, vehicle, events, aiChargingPlan, aiChargingPlanStatus, setAiChargingPlan, setAiChargingPlanStatus, addEvent, updateEvent } = useAppStore();
+  const {
+    user,
+    location,
+    weather,
+    vehicle,
+    chargingTargetPercent,
+    chargingMinimumBatteryPercent,
+    events,
+    aiChargingPlan,
+    aiChargingPlanStatus,
+    aiChargingPlanInputSignature,
+    aiChargingPlanHistory,
+    calendarRevision,
+    setAiChargingPlan,
+    setAiChargingPlanStatus,
+    addAiChargingPlanHistory,
+    restoreAiChargingPlanFromHistory,
+    addEvent,
+    updateEvent
+  } = useAppStore();
   const setActiveWeek = useCalendarViewStore((state) => state.setActiveWeek);
   const navigate = useNavigate();
   const [time, setTime] = useState('');
   const [dateLabel, setDateLabel] = useState('');
-  const [showStationOptions, setShowStationOptions] = useState(false);
-  const [selectedStationId, setSelectedStationId] = useState<string | null>(null);
 
   useEffect(() => {
     const updateTime = () => {
@@ -108,10 +181,30 @@ export default function Home() {
     return () => clearInterval(interval);
   }, []);
 
-  const plan = aiChargingPlan ?? fallbackChargingPlan;
+  const scheduleEvents = useMemo(() => events.filter((event) => !event.aiChargingPlan && !event.isAiRecommendationPreview), [events]);
+  const currentPlannerInput = useMemo(
+    () => buildChargingPlanInput(scheduleEvents, vehicle, weather, null, chargingTargetPercent, chargingMinimumBatteryPercent, calendarRevision),
+    [calendarRevision, chargingMinimumBatteryPercent, chargingTargetPercent, scheduleEvents, vehicle, weather]
+  );
+  const currentRecommendationInputSignature = useMemo(
+    () => buildChargingPlanInputSignature(scheduleEvents, vehicle, weather, chargingTargetPercent, chargingMinimumBatteryPercent),
+    [chargingMinimumBatteryPercent, chargingTargetPercent, scheduleEvents, vehicle, weather]
+  );
+  const hasPlan = Boolean(aiChargingPlan);
+  const recommendationInputsChanged = hasPlan && aiChargingPlanInputSignature !== currentRecommendationInputSignature;
+  const shouldUpdateRecommendation = !hasPlan || recommendationInputsChanged || aiChargingPlanStatus === 'idle' || aiChargingPlanStatus === 'error';
+  const isAnotherOptionMode = !shouldUpdateRecommendation;
+  const aiRecommendationButtonLabel = aiChargingPlanStatus === 'loading'
+    ? shouldUpdateRecommendation
+      ? 'Updating AI...'
+      : 'Generating Option...'
+    : shouldUpdateRecommendation
+      ? 'Update AI Recommendation'
+      : 'Another Option';
+  const plan = aiChargingPlan ? normalizeChargingPlanAgainstSchedule(aiChargingPlan, currentPlannerInput) : fallbackChargingPlan;
   const stationRecommendations = plan.stationRecommendations ?? [];
-  const selectedStation = stationRecommendations.find((station, index) => (station.id ?? `gemini-station-${index + 1}`) === selectedStationId) ?? null;
-  const selectedStationCalendarOption = selectedStation ? toCalendarStationOption(selectedStation, stationRecommendations.indexOf(selectedStation)) : null;
+  const selectedStation = stationRecommendations[0] ?? null;
+  const selectedStationCalendarOption = selectedStation ? toCalendarStationOption(selectedStation, 0) : null;
   const selectedStationLocation = selectedStation
     ? displayText(selectedStation.address) !== 'N/A'
       ? displayText(selectedStation.address)
@@ -131,7 +224,8 @@ export default function Home() {
   const plannedEvent = buildCalendarEventFromChargingPlan(planForCalendar);
   const existingPlannedEvent = plannedEvent ? events.find((event) => event.id === plannedEvent.id) : undefined;
   const currentBattery = vehicle.batteryLevel;
-  const recommendedTarget = plan.targetBatteryPercent === null ? 'N/A' : `${plan.targetBatteryPercent}%`;
+  const recommendedTarget = `${chargingTargetPercent}%`;
+  const minimumBatteryTarget = `${chargingMinimumBatteryPercent}%`;
   const isChargeRecommended = plan.shouldCharge;
   const chargingTypeLabel = formatChargingType(plan.chargingType);
   const durationLabel = formatDuration(plan.estimatedChargingDurationMinutes);
@@ -141,20 +235,93 @@ export default function Home() {
   const chargingEnd = parsePlanDateTime(plan.recommendedChargingEnd);
   const nextChargingDate = formatDateLabel(chargingStart, plan.calendarAction.date);
   const nextChargingTime = formatTimeLabel(chargingStart, chargingEnd, plan.calendarAction.startTime, plan.calendarAction.endTime);
+  const navigationStation = selectedStation ?? stationRecommendations[0] ?? null;
+  const chargingStationNavigationUrl = buildGoogleMapsDirectionsUrl(navigationStation, bestChargingStation);
+  const batteryScheduleForecasts = useMemo(() => {
+    const today = startOfLocalDay(new Date());
+    const buckets = [
+      { id: 'today', title: 'Today', subtitle: today.toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' }), startOffset: 0, endOffset: 0 },
+      { id: 'tomorrow', title: 'Tomorrow', subtitle: addLocalDays(today, 1).toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' }), startOffset: 1, endOffset: 1 },
+      { id: 'day-after', title: 'Day After Tomorrow', subtitle: addLocalDays(today, 2).toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' }), startOffset: 2, endOffset: 2 },
+      { id: 'next-week', title: 'Next 3-7 Days', subtitle: `${addLocalDays(today, 3).toLocaleDateString([], { month: 'short', day: 'numeric' })} - ${addLocalDays(today, 7).toLocaleDateString([], { month: 'short', day: 'numeric' })}`, startOffset: 3, endOffset: 7 },
+    ];
+
+    return buckets.map((bucket) => {
+      const bucketDays = Array.from({ length: bucket.endOffset - bucket.startOffset + 1 }, (_, index) => addLocalDays(today, bucket.startOffset + index));
+      const bucketEvents = events
+        .filter((event) => !event.aiChargingPlan && !event.isAiRecommendationPreview)
+        .filter((event) => bucketDays.some((day) => isSameLocalDate(getCalendarEventDate(event.date), day)));
+      const drivingEventCount = bucketEvents.filter((event) => event.carNeeded).length;
+
+      if (!drivingEventCount) {
+        return {
+          ...bucket,
+          totalUsePercent: 0,
+          afterSchedulePercent: vehicle.batteryLevel,
+          trips: [],
+          drivingEventCount,
+        };
+      }
+
+      try {
+        const forecast = buildChargingPlan(
+          bucketEvents,
+          vehicle,
+          weather,
+          chargingTargetPercent,
+          addLocalDays(today, bucket.startOffset - 1),
+          'auto',
+          undefined,
+          [],
+          chargingMinimumBatteryPercent
+        );
+        const totalUsePercent = forecast.scheduleDemand.trips.reduce((sum, trip) => sum + trip.batteryUsePercent, 0);
+
+        return {
+          ...bucket,
+          totalUsePercent,
+          afterSchedulePercent: Math.max(vehicle.batteryLevel - totalUsePercent, 0),
+          trips: forecast.scheduleDemand.trips,
+          drivingEventCount,
+        };
+      } catch {
+        return {
+          ...bucket,
+          totalUsePercent: 0,
+          afterSchedulePercent: vehicle.batteryLevel,
+          trips: [],
+          drivingEventCount,
+        };
+      }
+    });
+  }, [calendarRevision, chargingMinimumBatteryPercent, chargingTargetPercent, dateLabel, events, vehicle, weather]);
 
   const updateAiRecommendation = async () => {
-    const scheduleEvents = events.filter((event) => !event.aiChargingPlan && !event.isAiRecommendationPreview);
-    const plannerInput = buildChargingPlanInput(scheduleEvents, vehicle, weather, null);
-    setSelectedStationId(null);
-    setShowStationOptions(false);
+    const requestAnotherOption = isAnotherOptionMode && Boolean(aiChargingPlan);
+
+    if (requestAnotherOption && aiChargingPlan) {
+      addAiChargingPlanHistory({
+        plan: aiChargingPlan,
+        status: aiChargingPlanStatus === 'fallback' ? 'fallback' : 'ready',
+        inputSignature: currentRecommendationInputSignature,
+        batteryPercent: vehicle.batteryLevel,
+        targetPercent: chargingTargetPercent,
+        minimumPercent: chargingMinimumBatteryPercent,
+      });
+    }
+
     setAiChargingPlanStatus('loading');
 
     try {
-      const nextPlan = await requestChargingPlan(plannerInput);
-      setAiChargingPlan(nextPlan, nextPlan.id === 'ai-charge-na' ? 'fallback' : 'ready');
+      const nextPlan = await requestChargingPlan(currentPlannerInput);
+      setAiChargingPlan(nextPlan, nextPlan.id === 'ai-charge-na' ? 'fallback' : 'ready', currentRecommendationInputSignature);
     } catch {
       setAiChargingPlan(null, 'error');
     }
+  };
+
+  const restoreHistoryOption = (historyId: string) => {
+    restoreAiChargingPlanFromHistory(historyId);
   };
 
   const addChargingPlanToCalendar = () => {
@@ -239,9 +406,12 @@ export default function Home() {
                   <CalendarClock className="h-4 w-4" />
                   Next Charging
                 </p>
-                <button type="button" onClick={() => setShowStationOptions((value) => !value)} className="rounded-lg border border-primary/25 bg-primary/10 px-2.5 py-1 text-[9px] font-black uppercase tracking-widest text-primary transition hover:bg-primary/15">
-                  {showStationOptions ? 'Hide stations' : 'Show other station'}
-                </button>
+                <div className="flex items-center gap-2">
+                  <button type="button" onClick={() => { if (chargingStationNavigationUrl) window.location.href = chargingStationNavigationUrl; }} disabled={!chargingStationNavigationUrl} className="inline-flex items-center gap-1.5 rounded-lg border border-primary/25 bg-primary px-2.5 py-1 text-[9px] font-black uppercase tracking-widest text-on-primary transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:border-outline-variant/45 disabled:bg-surface-container-low disabled:text-slate-500">
+                    <Navigation className="h-3.5 w-3.5" />
+                    Navigate
+                  </button>
+                </div>
               </div>
               <div className="grid gap-4 p-4 sm:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)] sm:items-center">
                 <div className="min-w-0">
@@ -265,43 +435,7 @@ export default function Home() {
               </div>
             </div>
 
-            {showStationOptions && (
-              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                {stationRecommendations.length === 0 && (
-                  <div className="rounded-2xl border border-outline-variant/45 bg-surface-container-low p-3 text-left">
-                    <p className="text-[9px] font-black uppercase tracking-widest text-primary">Other stations</p>
-                    <p className="mt-1 text-sm font-black leading-snug text-slate-100">N/A</p>
-                    <p className="mt-2 text-[11px] font-semibold leading-relaxed text-slate-400">Gemini did not return station recommendations.</p>
-                  </div>
-                )}
-                {stationRecommendations.map((station, index) => {
-                  const stationKey = station.id ?? `gemini-station-${index + 1}`;
-                  const selected = selectedStationId === stationKey;
-                  const detail = [displayText(station.city), displayText(station.provider), formatNumber(station.maxPowerKw, ' kW'), formatNumber(station.stalls, ' stalls')]
-                    .filter((item) => item !== 'N/A')
-                    .join(' · ') || 'N/A';
-                  return (
-                    <button
-                      key={stationKey}
-                      type="button"
-                      onClick={() => setSelectedStationId(stationKey)}
-                      className={cn('rounded-2xl border p-3 text-left transition', selected ? 'border-primary/45 bg-primary/15' : 'border-outline-variant/45 bg-surface-container-low hover:border-primary/35')}
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <p className="text-[9px] font-black uppercase tracking-widest text-primary">Top {index + 1}</p>
-                          <p className="mt-1 text-sm font-black leading-snug text-slate-100">{displayText(station.name)}</p>
-                        </div>
-                        {selected && <Check className="h-4 w-4 shrink-0 text-primary" />}
-                      </div>
-                      <p className="mt-2 text-[11px] font-semibold leading-relaxed text-slate-400">{detail}</p>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
               <div className="rounded-xl border border-outline-variant/45 bg-surface-container-low p-3">
                 <PlugZap className="mb-2 h-4 w-4 text-emerald-500" />
                 <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">Mode</p>
@@ -314,8 +448,13 @@ export default function Home() {
               </div>
               <div className="rounded-xl border border-outline-variant/45 bg-surface-container-low p-3">
                 <BatteryCharging className="mb-2 h-4 w-4 text-emerald-500" />
-                <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">Target</p>
+                <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">Target charge</p>
                 <p className="mt-1 text-xs font-extrabold text-slate-100">{recommendedTarget}</p>
+              </div>
+              <div className="rounded-xl border border-outline-variant/45 bg-surface-container-low p-3">
+                <ShieldCheck className="mb-2 h-4 w-4 text-blue-400" />
+                <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">Minimum</p>
+                <p className="mt-1 text-xs font-extrabold text-slate-100">{minimumBatteryTarget}</p>
               </div>
               <div className="rounded-xl border border-outline-variant/45 bg-surface-container-low p-3">
                 <Battery className="mb-2 h-4 w-4 text-amber-500" />
@@ -349,7 +488,7 @@ export default function Home() {
             <div className="grid grid-cols-2 gap-3">
               <button type="button" onClick={updateAiRecommendation} disabled={aiChargingPlanStatus === 'loading'} className="bg-primary text-on-primary py-3.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all active:scale-98 disabled:cursor-wait disabled:opacity-70 flex items-center justify-center gap-2 shadow-ambient">
                 <BatteryCharging className="w-4 h-4" />
-                {aiChargingPlanStatus === 'loading' ? 'Updating AI...' : 'Update AI Recommendation'}
+                {aiRecommendationButtonLabel}
               </button>
               {plan.calendarAction.shouldCreateEvent && (
                 <button type="button" onClick={addChargingPlanToCalendar} className="bg-surface-container-low border border-outline-variant/45 rounded-xl px-3 py-2 text-center text-[10px] font-black uppercase tracking-widest text-slate-200 transition hover:border-primary/35 hover:text-primary">
@@ -360,10 +499,154 @@ export default function Home() {
           </div>
         </div>
       </section>
+
+      {aiChargingPlanHistory.length > 0 && (
+        <section>
+          <div className="relative overflow-hidden rounded-3xl border border-outline-variant/45 bg-surface-container-lowest p-5 shadow-ambient-lg">
+            <div className="absolute inset-x-0 -top-px h-px bg-gradient-to-r from-transparent via-primary/35 to-transparent" />
+            <div className="relative z-10">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+                <div>
+                  <p className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-primary">
+                    <BatteryCharging className="h-4 w-4" />
+                    Recommendation History
+                  </p>
+                  <h2 className="mt-2 text-2xl font-extrabold leading-tight text-slate-100">Saved AI options</h2>
+                  <p className="mt-1 text-xs font-semibold leading-relaxed text-slate-400">Restore an earlier recommendation if the new option is not better.</p>
+                </div>
+                <div className="rounded-2xl border border-primary/20 bg-primary/10 px-4 py-3 text-right">
+                  <p className="text-[9px] font-black uppercase tracking-widest text-primary">Saved</p>
+                  <p className="mt-1 text-2xl font-black leading-none text-primary">{aiChargingPlanHistory.length}</p>
+                </div>
+              </div>
+
+              <div className="mt-5 grid gap-3 lg:grid-cols-2">
+                {[...aiChargingPlanHistory].reverse().map((entry, index) => {
+                  const entryStart = parsePlanDateTime(entry.plan.recommendedChargingStart);
+                  const entryEnd = parsePlanDateTime(entry.plan.recommendedChargingEnd);
+                  const entryStation = displayText(entry.plan.stationRecommendations?.[0]?.name ?? entry.plan.chargingLocationName ?? entry.plan.calendarAction.location ?? entry.plan.backupPlan.locationName);
+                  const entryDate = formatDateLabel(entryStart, entry.plan.calendarAction.date);
+                  const entryTime = formatTimeLabel(entryStart, entryEnd, entry.plan.calendarAction.startTime, entry.plan.calendarAction.endTime);
+                  const savedAt = new Date(entry.savedAt);
+                  const savedLabel = Number.isNaN(savedAt.getTime())
+                    ? 'Saved option'
+                    : savedAt.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+
+                  return (
+                    <div key={entry.id} className="rounded-2xl border border-outline-variant/45 bg-surface-container-low p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-[10px] font-black uppercase tracking-widest text-primary">Option {aiChargingPlanHistory.length - index}</p>
+                          <h3 className="mt-1 truncate text-base font-black text-slate-100">{displayText(entry.plan.title)}</h3>
+                          <p className="mt-1 text-[11px] font-semibold text-slate-500">{savedLabel}</p>
+                        </div>
+                        <button type="button" onClick={() => restoreHistoryOption(entry.id)} className="shrink-0 rounded-xl border border-primary/25 bg-primary/10 px-3 py-2 text-[10px] font-black uppercase tracking-widest text-primary transition hover:bg-primary hover:text-on-primary">
+                          Restore
+                        </button>
+                      </div>
+
+                      <div className="mt-4 grid grid-cols-2 gap-2">
+                        <div className="rounded-xl border border-outline-variant/45 bg-surface-container-lowest p-3">
+                          <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">Battery</p>
+                          <p className="mt-1 text-sm font-black text-slate-100">{entry.batteryPercent}%</p>
+                        </div>
+                        <div className="rounded-xl border border-outline-variant/45 bg-surface-container-lowest p-3">
+                          <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">Policy</p>
+                          <p className="mt-1 text-sm font-black text-slate-100">{entry.targetPercent}% / {entry.minimumPercent}%</p>
+                        </div>
+                      </div>
+
+                      <div className="mt-3 rounded-xl border border-outline-variant/45 bg-surface-container-lowest p-3">
+                        <p className="flex items-center gap-2 text-[9px] font-black uppercase tracking-widest text-slate-500">
+                          <MapPin className="h-3.5 w-3.5 text-primary" />
+                          {entryStation}
+                        </p>
+                        <p className="mt-2 text-sm font-extrabold leading-snug text-slate-100">{entryDate}</p>
+                        <p className="mt-1 text-xs font-bold text-slate-400">{entryTime}</p>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
+
+      <section>
+        <div className="relative overflow-hidden rounded-3xl border border-outline-variant/45 bg-surface-container-lowest p-5 shadow-ambient-lg">
+          <div className="absolute inset-x-0 -top-px h-px bg-gradient-to-r from-transparent via-emerald-400/35 to-transparent" />
+          <div className="relative z-10">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <p className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-primary">
+                  <Battery className="h-4 w-4" />
+                  Schedule Battery Forecast
+                </p>
+                <h2 className="mt-2 text-2xl font-extrabold leading-tight text-slate-100">Upcoming driving energy</h2>
+                <p className="mt-1 text-xs font-semibold leading-relaxed text-slate-400">Predicted battery use from calendar activities that require the car.</p>
+              </div>
+              <div className="rounded-2xl border border-primary/20 bg-primary/10 px-4 py-3 text-right">
+                <p className="text-[9px] font-black uppercase tracking-widest text-primary">Current battery</p>
+                <p className="mt-1 font-mono text-2xl font-black leading-none text-primary">{currentBattery}%</p>
+              </div>
+            </div>
+
+            <div className="mt-5 grid gap-3 xl:grid-cols-4">
+              {batteryScheduleForecasts.map((bucket) => (
+                <div key={bucket.id} className="flex min-h-[260px] flex-col rounded-2xl border border-outline-variant/45 bg-surface-container-low p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-black text-slate-100">{bucket.title}</p>
+                      <p className="mt-1 text-[10px] font-bold uppercase tracking-widest text-slate-500">{bucket.subtitle}</p>
+                    </div>
+                    <div className={cn('shrink-0 rounded-xl border px-3 py-2 text-right', bucket.totalUsePercent > 25 ? 'border-amber-400/30 bg-amber-500/10' : bucket.totalUsePercent > 0 ? 'border-emerald-400/25 bg-emerald-500/10' : 'border-outline-variant/45 bg-surface-container-lowest')}>
+                      <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">Use</p>
+                      <p className={cn('mt-1 text-lg font-black leading-none', bucket.totalUsePercent > 25 ? 'text-amber-400' : bucket.totalUsePercent > 0 ? 'text-emerald-400' : 'text-slate-300')}>{bucket.totalUsePercent}%</p>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 grid grid-cols-2 gap-2">
+                    <div className="rounded-xl border border-outline-variant/45 bg-surface-container-lowest px-3 py-2">
+                      <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">Driving items</p>
+                      <p className="mt-1 text-sm font-black text-slate-100">{bucket.drivingEventCount}</p>
+                    </div>
+                    <div className="rounded-xl border border-outline-variant/45 bg-surface-container-lowest px-3 py-2">
+                      <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">After</p>
+                      <p className="mt-1 text-sm font-black text-slate-100">{bucket.afterSchedulePercent}%</p>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 flex-1 divide-y divide-outline-variant/35 overflow-hidden rounded-xl border border-outline-variant/35 bg-surface-container-lowest/70">
+                    {bucket.trips.length ? (
+                      bucket.trips.map((trip) => (
+                        <div key={`${bucket.id}-${trip.eventId}`} className="flex items-center justify-between gap-3 px-3 py-3">
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-black leading-tight text-slate-100">{trip.title}</p>
+                            <p className="mt-1 flex items-center gap-1.5 truncate text-[11px] font-semibold text-slate-400">
+                              <MapPin className="h-3.5 w-3.5 shrink-0 text-primary" />
+                              <span className="truncate">{trip.location}</span>
+                            </p>
+                            <p className="mt-1 text-[10px] font-bold uppercase tracking-widest text-slate-500">{trip.eventTime} · {trip.distanceKm} km</p>
+                          </div>
+                          <div className="shrink-0 rounded-xl border border-primary/20 bg-primary/10 px-2.5 py-2 text-right">
+                            <p className="text-[9px] font-black uppercase tracking-widest text-primary">Battery</p>
+                            <p className="mt-1 text-sm font-black leading-none text-primary">-{trip.batteryUsePercent}%</p>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="flex min-h-[96px] items-center justify-center px-3 py-6 text-center">
+                        <p className="text-xs font-semibold leading-relaxed text-slate-500">No driving activities scheduled.</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </section>
     </motion.div>
   );
 }
-
-
-
-

@@ -70,6 +70,33 @@ export interface VehicleState {
   preCooling: boolean;
 }
 
+export type AiChargingPlanHistoryEntry = {
+  id: string;
+  plan: ChargingPlanResult;
+  status: 'ready' | 'fallback';
+  inputSignature: string;
+  savedAt: string;
+  batteryPercent: number;
+  targetPercent: number;
+  minimumPercent: number;
+};
+
+const defaultChargingTargetPercent = 80;
+const defaultChargingMinimumBatteryPercent = 35;
+const minChargingTargetPercent = 50;
+const maxChargingTargetPercent = 100;
+const minChargingMinimumBatteryPercent = 10;
+const maxChargingMinimumBatteryPercent = 60;
+
+function clampChargingTarget(value: number) {
+  return Math.max(minChargingTargetPercent, Math.min(maxChargingTargetPercent, Math.round(value / 5) * 5));
+}
+
+function clampChargingMinimum(value: number, targetPercent: number) {
+  const ceiling = Math.min(maxChargingMinimumBatteryPercent, targetPercent - 5);
+  return Math.max(minChargingMinimumBatteryPercent, Math.min(ceiling, Math.round(value / 5) * 5));
+}
+
 interface AppStore {
   isAuthenticated: boolean;
   user: {
@@ -86,9 +113,13 @@ interface AppStore {
     condition: string;
   };
   vehicle: VehicleState;
+  chargingTargetPercent: number;
+  chargingMinimumBatteryPercent: number;
   events: CalendarEvent[];
   aiChargingPlan: ChargingPlanResult | null;
   aiChargingPlanStatus: 'idle' | 'loading' | 'ready' | 'fallback' | 'error';
+  aiChargingPlanInputSignature: string | null;
+  aiChargingPlanHistory: AiChargingPlanHistoryEntry[];
   calendarRevision: number;
   recentActions: {icon: string, title: string, time: string, description: string}[];
   // Actions
@@ -100,8 +131,12 @@ interface AppStore {
   toggleEngine: () => void;
   togglePreCool: () => void;
   setBatteryLevel: (level: number) => void;
-  setAiChargingPlan: (plan: ChargingPlanResult | null, status?: AppStore['aiChargingPlanStatus']) => void;
+  setChargingTargetPercent: (level: number) => void;
+  setChargingMinimumBatteryPercent: (level: number) => void;
+  setAiChargingPlan: (plan: ChargingPlanResult | null, status?: AppStore['aiChargingPlanStatus'], inputSignature?: string | null) => void;
   setAiChargingPlanStatus: (status: AppStore['aiChargingPlanStatus']) => void;
+  addAiChargingPlanHistory: (entry: Omit<AiChargingPlanHistoryEntry, 'id' | 'savedAt'>) => void;
+  restoreAiChargingPlanFromHistory: (historyId: string) => void;
   addEvent: (event: CalendarEvent) => void;
   updateEvent: (event: CalendarEvent) => void;
   deleteEvent: (eventId: string) => void;
@@ -117,14 +152,14 @@ const businessLocations = {
   shahAlam: 'Shah Alam Logistics Hub',
   putrajaya: 'Putrajaya Government Precinct',
   montKiara: 'Mont Kiara Private Dining',
-  home: 'Home Garage, Damansara Heights',
+  home: 'Xiamen University Malaysia, Sunsuria City, Sepang',
   klia: 'KLIA Terminal 1',
   online: 'Microsoft Teams',
-  charger: 'Home Wallbox, Damansara Heights',
+  charger: 'Home Wallbox, Xiamen University Malaysia',
   dealerService: 'Dealer Service Center, Petaling Jaya',
   mbTech: 'Mercedes-Benz Tech Malaysia',
   royalLake: 'Royal Lake Club',
-  damansara: 'Damansara Heights'
+  damansara: 'Xiamen University Malaysia, Sunsuria City, Sepang'
 };
 
 function dateOf(day: number, monthIndex: number) {
@@ -349,9 +384,13 @@ export const useAppStore = create<AppStore>((set) => ({
     tirePressure: 'OK',
     preCooling: false
   },
+  chargingTargetPercent: defaultChargingTargetPercent,
+  chargingMinimumBatteryPercent: defaultChargingMinimumBatteryPercent,
   events: buildBusinessCalendarEvents(),
   aiChargingPlan: null,
   aiChargingPlanStatus: 'idle',
+  aiChargingPlanInputSignature: null,
+  aiChargingPlanHistory: [],
   calendarRevision: 0,
   recentActions: [
     { icon: 'battery_charging_full', title: 'Charging Window Planned', description: 'Tonight 8:30 PM-10:00 PM', time: '18:45' },
@@ -392,19 +431,55 @@ export const useAppStore = create<AppStore>((set) => ({
   setBatteryLevel: (level) => set((state) => ({
     vehicle: { ...state.vehicle, batteryLevel: Math.max(0, Math.min(100, Math.round(level))) }
   })),
-  setAiChargingPlan: (plan, status = 'ready') => set({ aiChargingPlan: plan, aiChargingPlanStatus: status }),
+  setChargingTargetPercent: (level) => set((state) => {
+    const chargingTargetPercent = clampChargingTarget(level);
+    return {
+      chargingTargetPercent,
+      chargingMinimumBatteryPercent: clampChargingMinimum(state.chargingMinimumBatteryPercent, chargingTargetPercent),
+    };
+  }),
+  setChargingMinimumBatteryPercent: (level) => set((state) => ({
+    chargingMinimumBatteryPercent: clampChargingMinimum(level, state.chargingTargetPercent),
+  })),
+  setAiChargingPlan: (plan, status = 'ready', inputSignature = null) => set({
+    aiChargingPlan: plan,
+    aiChargingPlanStatus: status,
+    aiChargingPlanInputSignature: inputSignature
+  }),
   setAiChargingPlanStatus: (status) => set({ aiChargingPlanStatus: status }),
+  addAiChargingPlanHistory: (entry) => set((state) => ({
+    aiChargingPlanHistory: [
+      ...state.aiChargingPlanHistory,
+      {
+        ...entry,
+        id: `ai-plan-history-${Date.now()}-${state.aiChargingPlanHistory.length + 1}`,
+        savedAt: new Date().toISOString(),
+      }
+    ]
+  })),
+  restoreAiChargingPlanFromHistory: (historyId) => set((state) => {
+    const entry = state.aiChargingPlanHistory.find((item) => item.id === historyId);
+    if (!entry) return {};
+    return {
+      aiChargingPlan: entry.plan,
+      aiChargingPlanStatus: entry.status,
+      aiChargingPlanInputSignature: entry.inputSignature
+    };
+  }),
 
   addEvent: (event) => set((state) => ({
     events: sortCalendarEvents([...state.events, event]),
+    aiChargingPlanInputSignature: null,
     calendarRevision: state.calendarRevision + 1
   })),
   updateEvent: (event) => set((state) => ({
     events: sortCalendarEvents(state.events.map((item) => item.id === event.id ? event : item)),
+    aiChargingPlanInputSignature: null,
     calendarRevision: state.calendarRevision + 1
   })),
   deleteEvent: (eventId) => set((state) => ({
     events: state.events.filter((event) => event.id !== eventId),
+    aiChargingPlanInputSignature: null,
     calendarRevision: state.calendarRevision + 1
   })),
   addRecentAction: (action) => set((state) => ({ recentActions: [action, ...state.recentActions].slice(0, 5) })),
@@ -417,5 +492,3 @@ export const useAppStore = create<AppStore>((set) => ({
   register: () => set({ isAuthenticated: true }),
   updateUser: (data) => set((state) => ({ user: { ...state.user, ...data } }))
 }));
-
-

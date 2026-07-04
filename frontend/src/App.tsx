@@ -11,7 +11,7 @@ import Profile from './pages/Profile';
 import SignIn from './pages/SignIn';
 import CreateAccount from './pages/CreateAccount';
 import { cn } from './lib/utils';
-import { buildChargingPlanInput, requestChargingPlan } from './lib/chargingPlanner';
+import { buildChargingPlanInput, buildChargingPlanInputSignature, requestChargingPlan } from './lib/chargingPlanner';
 import { useAppStore, type CalendarEvent } from './store/useAppStore';
 
 function buildScheduleSignature(events: CalendarEvent[]) {
@@ -37,37 +37,49 @@ function ChargingPlannerSync() {
   const events = useAppStore((state) => state.events);
   const vehicle = useAppStore((state) => state.vehicle);
   const weather = useAppStore((state) => state.weather);
+  const chargingTargetPercent = useAppStore((state) => state.chargingTargetPercent);
+  const chargingMinimumBatteryPercent = useAppStore((state) => state.chargingMinimumBatteryPercent);
+  const calendarRevision = useAppStore((state) => state.calendarRevision);
+  const aiChargingPlan = useAppStore((state) => state.aiChargingPlan);
   const setAiChargingPlan = useAppStore((state) => state.setAiChargingPlan);
   const setAiChargingPlanStatus = useAppStore((state) => state.setAiChargingPlanStatus);
   const planningEvents = useMemo(() => events.filter((event) => !event.aiChargingPlan && !event.isAiRecommendationPreview), [events]);
   const scheduleSignature = useMemo(() => buildScheduleSignature(planningEvents), [planningEvents]);
-  const plannerInput = useMemo(() => buildChargingPlanInput(planningEvents, vehicle, weather), [scheduleSignature, vehicle, weather]);
+  const plannerInput = useMemo(() => buildChargingPlanInput(planningEvents, vehicle, weather, 3, chargingTargetPercent, chargingMinimumBatteryPercent, calendarRevision), [calendarRevision, scheduleSignature, vehicle, weather, chargingTargetPercent, chargingMinimumBatteryPercent]);
+  const plannerInputStableSignature = useMemo(() => buildChargingPlanInputSignature(planningEvents, vehicle, weather, chargingTargetPercent, chargingMinimumBatteryPercent), [scheduleSignature, vehicle, weather, chargingTargetPercent, chargingMinimumBatteryPercent]);
   const plannerInputSignature = useMemo(() => JSON.stringify(plannerInput), [plannerInput]);
   const lastSubmittedSignatureRef = useRef('');
+  const plannerRequestInFlightRef = useRef(false);
 
   useEffect(() => {
     if (!isAuthenticated) return;
+    if (aiChargingPlan || plannerRequestInFlightRef.current) return;
     if (plannerInputSignature === lastSubmittedSignatureRef.current) return;
 
     lastSubmittedSignatureRef.current = plannerInputSignature;
+    plannerRequestInFlightRef.current = true;
     let cancelled = false;
     setAiChargingPlanStatus('loading');
 
     const timer = window.setTimeout(() => {
       requestChargingPlan(plannerInput)
         .then((plan) => {
-          if (!cancelled) setAiChargingPlan(plan, plan.id === 'ai-charge-na' ? 'fallback' : 'ready');
+          if (!cancelled) setAiChargingPlan(plan, plan.id === 'ai-charge-na' ? 'fallback' : 'ready', plannerInputStableSignature);
         })
         .catch(() => {
           if (!cancelled) setAiChargingPlan(null, 'error');
+        })
+        .finally(() => {
+          if (!cancelled) plannerRequestInFlightRef.current = false;
         });
     }, 500);
 
     return () => {
       cancelled = true;
+      plannerRequestInFlightRef.current = false;
       window.clearTimeout(timer);
     };
-  }, [isAuthenticated, plannerInput, plannerInputSignature, setAiChargingPlan, setAiChargingPlanStatus]);
+  }, [aiChargingPlan, isAuthenticated, plannerInput, plannerInputSignature, plannerInputStableSignature, setAiChargingPlan, setAiChargingPlanStatus]);
 
   return null;
 }

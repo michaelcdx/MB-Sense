@@ -95,6 +95,7 @@ const timeColumnWidth = 52;
 const dayColumnMinWidth = 132;
 const snapMinutes = 15;
 const calendarHeight = 24 * hourHeight;
+const initialCalendarScrollHour = 12;
 const demoStart = new Date(2026, 5, 15);
 const demoEnd = new Date(2026, 6, 30);
 const fallbackDemoDate = new Date(2026, 6, 1);
@@ -699,7 +700,16 @@ function CalendarWeekView({ days, weekStart, events, selection, selectedEventId,
   onPointerUp: (event: ReactPointerEvent<HTMLElement>) => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const initialScrollDoneRef = useRef(false);
   const gridTemplateColumns = `${timeColumnWidth}px repeat(${days.length}, minmax(${dayColumnMinWidth}px, 1fr))`;
+
+  useEffect(() => {
+    if (initialScrollDoneRef.current || !scrollRef.current) return;
+    initialScrollDoneRef.current = true;
+    requestAnimationFrame(() => {
+      scrollRef.current?.scrollTo({ top: initialCalendarScrollHour * hourHeight, behavior: 'auto' });
+    });
+  }, []);
 
   useEffect(() => {
     const weekIndex = days.findIndex((day) => sameDay(day, weekStart));
@@ -1423,4 +1433,3 @@ export default function Calendar() {
     </motion.div>
   );
 }
-
