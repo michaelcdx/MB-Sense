@@ -46,8 +46,10 @@ import {
   type ChargingOptionPlan,
   type ChargingPlan,
 } from '../lib/chargingAgents';
+import { fetchOpenChargeMapStations } from '../lib/chargingPlanner';
 import { cn } from '../lib/utils';
 import { useAppStore, type CalendarEvent } from '../store/useAppStore';
+import type { OpenChargeMapStationCandidate } from '../types/chargingPlanner';
 import type { CameraMode, Coordinates, MapCameraState, MapMode, MapTone, MockMapView, SheetState } from '../types/mapModes';
 
 const runtimeGoogleMapsKey =
@@ -273,6 +275,7 @@ type FutureDriveStop = {
   weatherImpactPercent?: number;
   departureTime?: string;
   eventTime?: string;
+  isReturnHome?: boolean;
 };
 
 type FutureDriveSegment = {
@@ -675,25 +678,29 @@ function buildFutureDrivePreviewData(plan: ChargingPlan, selection: FutureDriveP
   ];
   const activityStops: FutureDriveStop[] = [];
 
-  for (const [index, trip] of trips.entries()) {
+  let activityIndex = 0;
+  for (const trip of trips) {
     const position = resolveLocationCoordinates(trip.location);
     if (!position) {
       // TODO: Connect Map page to existing trained EV prediction data source.
       return null;
     }
 
+    if (!trip.isReturnHome) activityIndex += 1;
+    const timelineLabel = trip.isReturnHome ? 'Home' : `A${activityIndex}`;
     runningBattery = clampBatteryPercent(runningBattery - trip.batteryUsePercent);
     const batteryStatus = getBatteryStatusColor(runningBattery);
     const activityStop: FutureDriveStop = {
       id: trip.eventId,
       name: trip.title,
-      shortName: `A${index + 1}`,
+      shortName: timelineLabel,
       batteryPercent: runningBattery,
       position,
       markerTone: batteryStatusVisuals[batteryStatus].tone,
       batteryStatus,
-      activityNumber: index + 1,
-      timelineLabel: `A${index + 1}`,
+      activityNumber: trip.isReturnHome ? undefined : activityIndex,
+      timelineLabel,
+      isReturnHome: trip.isReturnHome,
       originLocation: trip.originLocation,
       destinationLocation: trip.location,
       distanceKm: trip.distanceKm,
@@ -1822,7 +1829,7 @@ function FutureDrivePreviewSheet({
                           </span>
                           <div className="min-w-0">
                             <p className="text-[8.5px] font-semibold uppercase tracking-[0.12em] text-slate-300">
-                              Activity {stop.activityNumber}
+                              {stop.isReturnHome ? 'Return trip' : `Activity ${stop.activityNumber}`}
                             </p>
                             <p className="mt-0.5 text-[12px] font-semibold leading-snug text-white">{stop.name}</p>
                           </div>
@@ -2560,7 +2567,7 @@ function MockMapCanvas({
 }
 
 export default function MapView() {
-  const { addRecentAction, events, vehicle, weather } = useAppStore();
+  const { addRecentAction, events, vehicle, weather, chargingTargetPercent, chargingMinimumBatteryPercent } = useAppStore();
   const [mapMode, setMapMode] = useState<MapMode>('aiRoute');
   const [driveExperienceMode, setDriveExperienceMode] = useState<DriveExperienceMode>('driveNow');
   const [selectedFuturePlanId, setSelectedFuturePlanId] = useState<FutureDrivePlanId>('planA');
@@ -2574,6 +2581,7 @@ export default function MapView() {
   const [selectedFavoriteStop, setSelectedFavoriteStop] = useState<FavoriteStop | null>(null);
   const [selectedRouteVariant, setSelectedRouteVariant] = useState<RouteVariant>('recommended');
   const [futureDriveNextDayRequested, setFutureDriveNextDayRequested] = useState(false);
+  const [futureDriveStations, setFutureDriveStations] = useState<OpenChargeMapStationCandidate[]>([]);
   const [transientToast, setTransientToast] = useState<{ title: string; detail: string; tone: MapTone } | null>(null);
   const [cameraState, setCameraState] = useState<MapCameraState>({
     cameraMode: 'routeOverview',
@@ -2602,14 +2610,47 @@ export default function MapView() {
     ),
     [calendarDataAvailable, calendarToday, events, futureDriveNextDayRequested]
   );
+  const futureDriveStationAnchor = useMemo(() => {
+    const location = previewDrivingDay.events.find((event) => event.location)?.location;
+    return location ? resolveLocationCoordinates(location) : null;
+  }, [previewDrivingDay.events]);
+  const futureDriveStationAnchorKey = futureDriveStationAnchor
+    ? `${futureDriveStationAnchor.lat.toFixed(4)},${futureDriveStationAnchor.lng.toFixed(4)}`
+    : '';
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!futureDriveStationAnchor) {
+      setFutureDriveStations([]);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    setFutureDriveStations([]);
+    fetchOpenChargeMapStations({
+      latitude: futureDriveStationAnchor.lat,
+      longitude: futureDriveStationAnchor.lng,
+      distanceKm: 35,
+      maxResults: 8,
+    }).then((stations) => {
+      if (!cancelled) setFutureDriveStations(stations);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [futureDriveStationAnchorKey]);
+
   const chargingPlan = useMemo(() => {
     if (!previewDrivingDay.date || previewDrivingDay.events.length === 0) return null;
     try {
-      return buildChargingPlan(previewDrivingDay.events, vehicle, weather, undefined, previewDrivingDay.date);
+      return buildChargingPlan(previewDrivingDay.events, vehicle, weather, chargingTargetPercent, previewDrivingDay.date, 'auto', undefined, futureDriveStations, chargingMinimumBatteryPercent);
     } catch {
       return null;
     }
-  }, [previewDrivingDay, vehicle, weather]);
+  }, [chargingMinimumBatteryPercent, chargingTargetPercent, futureDriveStations, previewDrivingDay, vehicle, weather]);
   const futureDrivePreview = useMemo(
     () => (chargingPlan ? buildFutureDrivePreviewData(chargingPlan, previewDrivingDay) : null),
     [chargingPlan, previewDrivingDay]

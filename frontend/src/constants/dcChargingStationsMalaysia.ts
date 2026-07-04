@@ -1,16 +1,7 @@
 export type DCChargingStation = {
   id: string;
   name: string;
-  provider:
-    | "Gentari"
-    | "JomCharge"
-    | "ChargEV"
-    | "Tesla Supercharger"
-    | "ChargeSini"
-    | "ParkEasy"
-    | "Shell Recharge"
-    | "TNB Electron"
-    | "Mock Network";
+  provider: string;
   state: string;
   city: string;
   address: string;

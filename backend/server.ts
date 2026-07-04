@@ -45,6 +45,10 @@ type ChargingCandidateOption = {
     distanceFromAnchorKm: number;
     detourKm: number;
     reason: string;
+    source?: string;
+    latitude?: number;
+    longitude?: number;
+    attribution?: string;
   }>;
 };
 
@@ -74,8 +78,29 @@ type ChargingStationRecommendation = {
   connector?: string | null;
   maxPowerKw?: number | null;
   stalls?: number | null;
+  latitude?: number | null;
+  longitude?: number | null;
   reason?: string | null;
 };
+
+type OpenChargeMapStationCandidate = {
+  id: string;
+  name: string;
+  provider: string;
+  city: string;
+  state?: string | null;
+  address: string;
+  latitude: number;
+  longitude: number;
+  connector: string;
+  maxPowerKw: number;
+  stalls: number;
+  status?: string | null;
+  distanceKm?: number | null;
+  source: "openchargemap";
+  attribution: string;
+};
+
 type ChargingPlanResult = {
   id: string;
   type: "ai_charging_recommendation";
@@ -142,6 +167,21 @@ type ChargingPlanInput = {
     estimatedRangeKm: number;
     connectorType?: "CCS2" | "CHAdeMO" | "Tesla CCS2";
   };
+  targetChargePercent?: number;
+  minimumBatteryPercent?: number;
+  chargingOpportunity?: {
+    nextDayDate: string;
+    nextDayEventCount: number;
+    nextDayDrivingEventCount: number;
+    nextDayHasNoSchedule: boolean;
+    idleTopUpThresholdPercent: number;
+    shouldRecommendIdleTopUp: boolean;
+    preferredChargingStart: string | null;
+    preferredChargingEnd: string | null;
+    estimatedChargingDurationMinutes: number | null;
+    chargingLocationName: string;
+    reason: string | null;
+  };
   calendarEvents: Array<{
     id: string;
     title: string;
@@ -154,6 +194,8 @@ type ChargingPlanInput = {
     status?: string;
     notes?: string;
   }>;
+  calendarRevision?: number;
+  chargingStations?: OpenChargeMapStationCandidate[];
   weather?: Record<string, unknown>;
 };
 
@@ -235,25 +277,367 @@ function numberOrNull(value: unknown) {
   return Number.isFinite(numeric) ? numeric : null;
 }
 
-function validateStationRecommendations(value: unknown): ChargingStationRecommendation[] {
+function parseClockMinutes(value: string | null | undefined) {
+  if (!value) return null;
+  const match = value.trim().match(/^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)?$/i);
+  if (!match) return null;
+
+  let hour = Number(match[1]);
+  const minute = Number(match[2] ?? 0);
+  const meridiem = match[3]?.toUpperCase();
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null;
+  if (meridiem === 'PM' && hour !== 12) hour += 12;
+  if (meridiem === 'AM' && hour === 12) hour = 0;
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+  return hour * 60 + minute;
+}
+
+function parseLocalDateTime(dateValue: string | null | undefined, timeValue: string | null | undefined) {
+  if (!dateValue || !timeValue) return null;
+  const parts = dateValue.split('-').map(Number);
+  const minutes = parseClockMinutes(timeValue);
+  if (parts.length !== 3 || parts.some((part) => !Number.isFinite(part)) || minutes === null) return null;
+
+  const [year, month, day] = parts;
+  const date = new Date(year, month - 1, day, Math.floor(minutes / 60), minutes % 60, 0, 0);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function parseAnyDateTime(value: string | null | undefined) {
+  if (!value) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function addMinutes(date: Date, minutes: number) {
+  const next = new Date(date);
+  next.setMinutes(next.getMinutes() + minutes);
+  return next;
+}
+
+function formatDateValue(date: Date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function formatClockValue(date: Date) {
+  const hour24 = date.getHours();
+  const minute = date.getMinutes();
+  const meridiem = hour24 >= 12 ? 'PM' : 'AM';
+  const hour = hour24 % 12 || 12;
+  return `${hour}:${String(minute).padStart(2, '0')} ${meridiem}`;
+}
+
+function getBusyBlocks(input?: ChargingPlanInput) {
+  if (!input?.calendarEvents?.length) return [];
+
+  return input.calendarEvents
+    .map((event) => {
+      const start = parseLocalDateTime(event.date, event.startTime);
+      if (!start) return null;
+      let end = parseLocalDateTime(event.date, event.endTime) ?? addMinutes(start, 60);
+      if (end <= start) end = addMinutes(start, 60);
+      return {
+        start,
+        end,
+        title: event.title,
+      };
+    })
+    .filter((block): block is { start: Date; end: Date; title: string } => Boolean(block))
+    .sort((a, b) => a.start.getTime() - b.start.getTime());
+}
+
+function windowsOverlap(start: Date, end: Date, busyStart: Date, busyEnd: Date) {
+  return start < busyEnd && end > busyStart;
+}
+
+function findOverlappingBlock(start: Date, end: Date, busyBlocks: ReturnType<typeof getBusyBlocks>) {
+  return busyBlocks.find((block) => windowsOverlap(start, end, block.start, block.end));
+}
+
+function findNextFreeChargingWindow(start: Date, durationMinutes: number, busyBlocks: ReturnType<typeof getBusyBlocks>, maxSearchDays = 7) {
+  const minimumDuration = Math.max(30, Math.round(durationMinutes || 60));
+  let candidateStart = new Date(start);
+  candidateStart.setSeconds(0, 0);
+  const searchEnd = addMinutes(candidateStart, maxSearchDays * 24 * 60);
+
+  while (candidateStart < searchEnd) {
+    const candidateEnd = addMinutes(candidateStart, minimumDuration);
+    const overlap = findOverlappingBlock(candidateStart, candidateEnd, busyBlocks);
+    if (!overlap) return { start: candidateStart, end: candidateEnd };
+    candidateStart = new Date(overlap.end);
+  }
+
+  return null;
+}
+
+function normalizeChargingWindow(value: any, input?: ChargingPlanInput) {
+  const shouldCreateEvent = Boolean(value.calendarAction?.shouldCreateEvent) || Boolean(value.shouldCharge);
+  const start =
+    parseAnyDateTime(stringOrNull(value.recommendedChargingStart)) ??
+    parseLocalDateTime(stringOrNull(value.calendarAction?.date), stringOrNull(value.calendarAction?.startTime));
+  const end =
+    parseAnyDateTime(stringOrNull(value.recommendedChargingEnd)) ??
+    parseLocalDateTime(stringOrNull(value.calendarAction?.date), stringOrNull(value.calendarAction?.endTime));
+
+  if (!shouldCreateEvent || !start || !end || end <= start) {
+    return {
+      start: stringOrNull(value.recommendedChargingStart),
+      end: stringOrNull(value.recommendedChargingEnd),
+      calendarDate: stringOrNull(value.calendarAction?.date),
+      calendarStartTime: stringOrNull(value.calendarAction?.startTime),
+      calendarEndTime: stringOrNull(value.calendarAction?.endTime),
+      adjusted: false,
+      unavailable: false,
+    };
+  }
+
+  const busyBlocks = getBusyBlocks(input);
+  const overlap = findOverlappingBlock(start, end, busyBlocks);
+  const durationMinutes = Math.max(30, Math.round(Number(value.estimatedChargingDurationMinutes) || (end.getTime() - start.getTime()) / 60000));
+  const freeWindow = overlap ? findNextFreeChargingWindow(overlap.end, durationMinutes, busyBlocks) : { start, end };
+
+  if (!freeWindow) {
+    return {
+      start: null,
+      end: null,
+      calendarDate: null,
+      calendarStartTime: null,
+      calendarEndTime: null,
+      adjusted: false,
+      unavailable: true,
+    };
+  }
+
+  return {
+    start: freeWindow.start.toISOString(),
+    end: freeWindow.end.toISOString(),
+    calendarDate: formatDateValue(freeWindow.start),
+    calendarStartTime: formatClockValue(freeWindow.start),
+    calendarEndTime: formatClockValue(freeWindow.end),
+    adjusted: Boolean(overlap),
+    unavailable: false,
+  };
+}
+
+function applyIdleDayChargingOpportunity(value: any, input?: ChargingPlanInput) {
+  const opportunity = input?.chargingOpportunity;
+  const hasChargingWindow = Boolean(value.recommendedChargingStart && value.recommendedChargingEnd)
+    || Boolean(value.calendarAction?.shouldCreateEvent && value.calendarAction?.date && value.calendarAction?.startTime && value.calendarAction?.endTime);
+  if (!opportunity?.shouldRecommendIdleTopUp || (Boolean(value.shouldCharge) && hasChargingWindow)) return value;
+  if (!opportunity.preferredChargingStart || !opportunity.preferredChargingEnd) return value;
+
+  const currentBattery = clampScore(input?.vehicle?.batteryPercent, 0);
+  const targetBattery = Number.isFinite(Number(input?.targetChargePercent))
+    ? clampScore(input?.targetChargePercent, 80)
+    : 80;
+  const energyNeeded = Math.max(0, targetBattery - currentBattery);
+  const reason = opportunity.reason
+    ?? `Tomorrow has no scheduled activities, so use the open day to charge from ${currentBattery}% toward ${targetBattery}%.`;
+
+  return {
+    ...value,
+    id: typeof value.id === 'string' && value.id.trim() ? value.id : 'ai-charge-idle-day-opportunity',
+    riskLevel: value.riskLevel === 'high' ? 'high' : 'medium',
+    mainRisk: value.mainRisk && value.mainRisk !== 'unknown' && value.mainRisk !== 'none' ? value.mainRisk : 'low_battery',
+    mobilityConfidenceScore: Math.max(clampScore(value.mobilityConfidenceScore, 0), 82),
+    confidenceScore: Math.max(clampScore(value.confidenceScore, 0), 82),
+    shouldCharge: true,
+    recommendationStatus: 'recommended',
+    title: typeof value.title === 'string' && value.title.trim() && value.title !== 'N/A' ? value.title : 'Charge during open day',
+    summary: typeof value.summary === 'string' && value.summary.trim() && value.summary !== 'N/A'
+      ? value.summary
+      : `Use tomorrow's empty schedule to charge toward ${targetBattery}%.`,
+    reason,
+    recommendedChargingStart: opportunity.preferredChargingStart,
+    recommendedChargingEnd: opportunity.preferredChargingEnd,
+    chargingLocationName: opportunity.chargingLocationName,
+    chargingLocationType: 'home',
+    chargingType: 'home_ac',
+    currentBatteryPercent: currentBattery,
+    targetBatteryPercent: targetBattery,
+    predictedBatteryAfterSchedule: targetBattery,
+    predictedLowestBatteryPercent: currentBattery,
+    estimatedEnergyNeededPercent: energyNeeded,
+    estimatedChargingDurationMinutes: opportunity.estimatedChargingDurationMinutes,
+    riskBreakdown: {
+      batteryRisk: 'medium',
+      chargingOpportunityRisk: 'low',
+      scheduleDisruptionRisk: 'low',
+      weatherTrafficRisk: value.riskBreakdown?.weatherTrafficRisk ?? 'low',
+    },
+    backupPlan: {
+      available: false,
+      title: null,
+      locationName: null,
+      startTime: null,
+      endTime: null,
+      reason: null,
+    },
+    calendarAction: {
+      shouldCreateEvent: true,
+      title: 'AI Charging Recommendation',
+      date: opportunity.nextDayDate,
+      startTime: formatClockValue(parseAnyDateTime(opportunity.preferredChargingStart) ?? new Date(opportunity.preferredChargingStart)),
+      endTime: formatClockValue(parseAnyDateTime(opportunity.preferredChargingEnd) ?? new Date(opportunity.preferredChargingEnd)),
+      location: opportunity.chargingLocationName,
+      colorType: 'charging',
+    },
+    sidePanelDetails: {
+      mainMessage: 'Tomorrow is open, so MB Sense recommends a low-disruption top-up.',
+      batteryExplanation: `Current battery is ${currentBattery}%, below the idle-day top-up threshold of ${opportunity.idleTopUpThresholdPercent}%.`,
+      scheduleExplanation: `No calendar activities are scheduled on ${opportunity.nextDayDate}.`,
+      chargingExplanation: `Home AC charging can target ${targetBattery}% during the open day.`,
+      backupExplanation: 'No backup charging stop is needed for this open-day top-up.',
+      userActionText: 'Put the charging block in your calendar.',
+    },
+  };
+}
+
+const openChargeMapAttribution = "Open Charge Map contributors";
+
+function objectValue(value: unknown): Record<string, any> {
+  return value && typeof value === 'object' ? value as Record<string, any> : {};
+}
+
+function textValue(value: unknown, fallback = 'N/A') {
+  return typeof value === 'string' && value.trim() ? value.trim() : fallback;
+}
+
+function numberValue(value: unknown, fallback = 0) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+function normalizeConnectorTitle(title: string) {
+  const lower = title.toLowerCase();
+  if (lower.includes('tesla')) return 'Tesla CCS2';
+  if (lower.includes('ccs')) return 'CCS2';
+  if (lower.includes('chademo')) return 'CHAdeMO';
+  if (lower.includes('type 2') || lower.includes('type2') || lower.includes('mennekes')) return 'Type 2';
+  return title || 'N/A';
+}
+
+function connectorPriority(connector: string) {
+  if (connector === 'CCS2' || connector === 'Tesla CCS2') return 0;
+  if (connector === 'CHAdeMO') return 1;
+  if (connector === 'Type 2') return 2;
+  return 3;
+}
+
+function normalizeOpenChargeMapStation(rawStation: unknown): OpenChargeMapStationCandidate | null {
+  const station = objectValue(rawStation);
+  const addressInfo = objectValue(station.AddressInfo);
+  const operatorInfo = objectValue(station.OperatorInfo);
+  const statusInfo = objectValue(station.StatusType);
+  const countryInfo = objectValue(addressInfo.Country);
+  const connections = Array.isArray(station.Connections) ? station.Connections.map(objectValue) : [];
+  const latitude = numberValue(addressInfo.Latitude, Number.NaN);
+  const longitude = numberValue(addressInfo.Longitude, Number.NaN);
+
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+
+  const rankedConnections = connections
+    .map((connection) => {
+      const connector = normalizeConnectorTitle(textValue(objectValue(connection.ConnectionType).Title, 'N/A'));
+      return {
+        connector,
+        powerKw: numberValue(connection.PowerKW, 0),
+        quantity: Math.max(0, Math.round(numberValue(connection.Quantity, 0))),
+      };
+    })
+    .sort((a, b) => connectorPriority(a.connector) - connectorPriority(b.connector) || b.powerKw - a.powerKw);
+
+  const primaryConnection = rankedConnections[0];
+  const maxPowerKw = Math.max(0, ...rankedConnections.map((connection) => connection.powerKw));
+  const stalls = rankedConnections.reduce((sum, connection) => sum + connection.quantity, 0);
+  const city = textValue(addressInfo.Town, 'N/A');
+  const state = textValue(addressInfo.StateOrProvince, '');
+  const country = textValue(countryInfo.Title, '');
+  const addressParts = [
+    textValue(addressInfo.AddressLine1, ''),
+    textValue(addressInfo.AddressLine2, ''),
+    city !== 'N/A' ? city : '',
+    state,
+    country,
+  ].filter(Boolean);
+
+  return {
+    id: `ocm-${String(station.ID ?? `${latitude}-${longitude}`).trim() || `${latitude}-${longitude}`}`,
+    name: textValue(addressInfo.Title, textValue(station.Title, 'Open Charge Map station')),
+    provider: textValue(operatorInfo.Title, 'Open Charge Map'),
+    city,
+    state: state || null,
+    address: addressParts.join(', ') || textValue(addressInfo.Title, 'N/A'),
+    latitude,
+    longitude,
+    connector: primaryConnection?.connector ?? 'N/A',
+    maxPowerKw: Math.round(maxPowerKw),
+    stalls: Math.max(0, stalls || connections.length || 0),
+    status: stringOrNull(statusInfo.Title),
+    distanceKm: numberOrNull(addressInfo.Distance),
+    source: 'openchargemap',
+    attribution: openChargeMapAttribution,
+  };
+}
+
+async function fetchOpenChargeMapStations(latitude: number, longitude: number, distanceKm: number, maxResults: number) {
+  const url = new URL('https://api.openchargemap.io/v3/poi/');
+  url.searchParams.set('output', 'json');
+  url.searchParams.set('latitude', String(latitude));
+  url.searchParams.set('longitude', String(longitude));
+  url.searchParams.set('distance', String(distanceKm));
+  url.searchParams.set('distanceunit', 'KM');
+  url.searchParams.set('maxresults', String(maxResults));
+  url.searchParams.set('compact', 'false');
+  url.searchParams.set('verbose', 'false');
+
+  const apiKey = process.env.OPEN_CHARGE_MAP_API_KEY || process.env.OCM_API_KEY;
+  if (apiKey) url.searchParams.set('key', apiKey);
+
+  const response = await fetch(url, {
+    headers: {
+      Accept: 'application/json',
+      'User-Agent': 'MBSense/1.0 (OpenChargeMap integration)',
+    },
+  });
+
+  if (!response.ok) throw new Error(`Open Charge Map request failed with ${response.status}`);
+
+  const payload = await response.json();
+  const rawStations = Array.isArray(payload) ? payload : [];
+
+  return rawStations
+    .map(normalizeOpenChargeMapStation)
+    .filter((station): station is OpenChargeMapStationCandidate => Boolean(station))
+    .sort((a, b) => connectorPriority(a.connector) - connectorPriority(b.connector) || (b.maxPowerKw ?? 0) - (a.maxPowerKw ?? 0) || (a.distanceKm ?? 999) - (b.distanceKm ?? 999))
+    .slice(0, maxResults);
+}
+
+function validateStationRecommendations(value: unknown, stationCandidates: OpenChargeMapStationCandidate[] = []): ChargingStationRecommendation[] {
   if (!Array.isArray(value)) return [];
   return value.slice(0, 5).map((station, index) => {
     const item = station && typeof station === 'object' ? station as Record<string, unknown> : {};
+    const id = stringOrNull(item.id) ?? `gemini-station-${index + 1}`;
+    const name = stringOrNull(item.name) ?? 'N/A';
+    const matchedCandidate = stationCandidates.find((candidate) => candidate.id === id || candidate.name === name);
     return {
-      id: stringOrNull(item.id) ?? `gemini-station-${index + 1}`,
-      name: stringOrNull(item.name) ?? 'N/A',
+      id,
+      name,
       provider: stringOrNull(item.provider) ?? 'N/A',
       city: stringOrNull(item.city) ?? 'N/A',
       address: stringOrNull(item.address) ?? 'N/A',
       connector: stringOrNull(item.connector) ?? 'N/A',
       maxPowerKw: numberOrNull(item.maxPowerKw),
       stalls: numberOrNull(item.stalls),
+      latitude: numberOrNull(item.latitude) ?? matchedCandidate?.latitude ?? null,
+      longitude: numberOrNull(item.longitude) ?? matchedCandidate?.longitude ?? null,
       reason: stringOrNull(item.reason) ?? 'N/A',
     };
   });
 }
 function validateChargingPlanResult(value: any, input?: ChargingPlanInput): ChargingPlanResult {
   if (!value || typeof value !== "object") throw new Error("Invalid charging plan result");
+  const adjustedValue = applyIdleDayChargingOpportunity(value, input);
 
   const riskLevels = ["low", "medium", "high"] as const;
   const mainRisks = ["none", "low_battery", "limited_charging_opportunity", "schedule_disruption", "long_distance_trip", "weather_traffic_impact", "unknown"] as const;
@@ -262,61 +646,73 @@ function validateChargingPlanResult(value: any, input?: ChargingPlanInput): Char
   const chargingTypes = ["home_ac", "public_dc_fast", "public_ac", "none"] as const;
   const colorTypes = ["charging", "battery-risk", "default"] as const;
   const safe = fallbackChargingPlan;
+  const shouldCharge = Boolean(adjustedValue.shouldCharge);
+  const policyTarget = Number.isFinite(Number(input?.targetChargePercent))
+    ? clampScore(input?.targetChargePercent, 80)
+    : null;
+  const normalizedWindow = normalizeChargingWindow(adjustedValue, input);
+  const overlapAdjustedReason = normalizedWindow.adjusted
+    ? ' Charging time was moved to the next open calendar gap to avoid overlapping an existing schedule.'
+    : '';
+  const unavailableReason = normalizedWindow.unavailable
+    ? ' No non-overlapping charging window was available in the next 7 days.'
+    : '';
+  const shouldCreateCalendarEvent = Boolean(adjustedValue.calendarAction?.shouldCreateEvent) && !normalizedWindow.unavailable;
 
   return {
-    id: typeof value.id === 'string' && value.id.trim() ? value.id.trim() : `ai-charge-${Date.now()}`,
+    id: typeof adjustedValue.id === 'string' && adjustedValue.id.trim() ? adjustedValue.id.trim() : `ai-charge-${Date.now()}`,
     type: "ai_charging_recommendation",
-    riskLevel: isStringOption(value.riskLevel, riskLevels) ? value.riskLevel : safe.riskLevel,
-    mainRisk: isStringOption(value.mainRisk, mainRisks) ? value.mainRisk : safe.mainRisk,
-    mobilityConfidenceScore: clampScore(value.mobilityConfidenceScore, safe.mobilityConfidenceScore),
-    confidenceScore: clampScore(value.confidenceScore, safe.confidenceScore),
-    shouldCharge: Boolean(value.shouldCharge),
-    recommendationStatus: isStringOption(value.recommendationStatus, statuses) ? value.recommendationStatus : safe.recommendationStatus,
-    title: typeof value.title === 'string' && value.title.trim() ? value.title.trim() : safe.title,
-    summary: typeof value.summary === 'string' && value.summary.trim() ? value.summary.trim() : safe.summary,
-    reason: typeof value.reason === 'string' && value.reason.trim() ? value.reason.trim() : safe.reason,
-    recommendedChargingStart: stringOrNull(value.recommendedChargingStart),
-    recommendedChargingEnd: stringOrNull(value.recommendedChargingEnd),
-    chargingLocationName: stringOrNull(value.chargingLocationName),
-    chargingLocationType: isStringOption(value.chargingLocationType, locationTypes) ? value.chargingLocationType : null,
-    chargingType: isStringOption(value.chargingType, chargingTypes) ? value.chargingType : safe.chargingType,
-    currentBatteryPercent: clampScore(value.currentBatteryPercent, input?.vehicle?.batteryPercent ?? safe.currentBatteryPercent),
-    targetBatteryPercent: value.targetBatteryPercent === null ? null : clampScore(value.targetBatteryPercent, safe.targetBatteryPercent ?? 85),
-    predictedBatteryAfterSchedule: clampScore(value.predictedBatteryAfterSchedule, safe.predictedBatteryAfterSchedule),
-    predictedLowestBatteryPercent: clampScore(value.predictedLowestBatteryPercent, safe.predictedLowestBatteryPercent),
-    estimatedEnergyNeededPercent: clampScore(value.estimatedEnergyNeededPercent, safe.estimatedEnergyNeededPercent),
-    estimatedChargingDurationMinutes: value.estimatedChargingDurationMinutes === null ? null : Math.max(0, Math.round(Number(value.estimatedChargingDurationMinutes) || safe.estimatedChargingDurationMinutes || 0)),
-    stationRecommendations: validateStationRecommendations(value.stationRecommendations),
+    riskLevel: isStringOption(adjustedValue.riskLevel, riskLevels) ? adjustedValue.riskLevel : safe.riskLevel,
+    mainRisk: isStringOption(adjustedValue.mainRisk, mainRisks) ? adjustedValue.mainRisk : safe.mainRisk,
+    mobilityConfidenceScore: clampScore(adjustedValue.mobilityConfidenceScore, safe.mobilityConfidenceScore),
+    confidenceScore: clampScore(adjustedValue.confidenceScore, safe.confidenceScore),
+    shouldCharge,
+    recommendationStatus: isStringOption(adjustedValue.recommendationStatus, statuses) ? adjustedValue.recommendationStatus : safe.recommendationStatus,
+    title: typeof adjustedValue.title === 'string' && adjustedValue.title.trim() ? adjustedValue.title.trim() : safe.title,
+    summary: typeof adjustedValue.summary === 'string' && adjustedValue.summary.trim() ? adjustedValue.summary.trim() : safe.summary,
+    reason: `${typeof adjustedValue.reason === 'string' && adjustedValue.reason.trim() ? adjustedValue.reason.trim() : safe.reason}${overlapAdjustedReason}${unavailableReason}`.trim(),
+    recommendedChargingStart: normalizedWindow.start,
+    recommendedChargingEnd: normalizedWindow.end,
+    chargingLocationName: stringOrNull(adjustedValue.chargingLocationName),
+    chargingLocationType: isStringOption(adjustedValue.chargingLocationType, locationTypes) ? adjustedValue.chargingLocationType : null,
+    chargingType: isStringOption(adjustedValue.chargingType, chargingTypes) ? adjustedValue.chargingType : safe.chargingType,
+    currentBatteryPercent: clampScore(adjustedValue.currentBatteryPercent, input?.vehicle?.batteryPercent ?? safe.currentBatteryPercent),
+    targetBatteryPercent: shouldCharge && policyTarget !== null ? policyTarget : adjustedValue.targetBatteryPercent === null ? null : clampScore(adjustedValue.targetBatteryPercent, safe.targetBatteryPercent ?? 85),
+    predictedBatteryAfterSchedule: clampScore(adjustedValue.predictedBatteryAfterSchedule, safe.predictedBatteryAfterSchedule),
+    predictedLowestBatteryPercent: clampScore(adjustedValue.predictedLowestBatteryPercent, safe.predictedLowestBatteryPercent),
+    estimatedEnergyNeededPercent: clampScore(adjustedValue.estimatedEnergyNeededPercent, safe.estimatedEnergyNeededPercent),
+    estimatedChargingDurationMinutes: adjustedValue.estimatedChargingDurationMinutes === null ? null : Math.max(0, Math.round(Number(adjustedValue.estimatedChargingDurationMinutes) || safe.estimatedChargingDurationMinutes || 0)),
+    stationRecommendations: validateStationRecommendations(adjustedValue.stationRecommendations, input?.chargingStations),
     riskBreakdown: {
-      batteryRisk: isStringOption(value.riskBreakdown?.batteryRisk, riskLevels) ? value.riskBreakdown.batteryRisk : safe.riskBreakdown.batteryRisk,
-      chargingOpportunityRisk: isStringOption(value.riskBreakdown?.chargingOpportunityRisk, riskLevels) ? value.riskBreakdown.chargingOpportunityRisk : safe.riskBreakdown.chargingOpportunityRisk,
-      scheduleDisruptionRisk: isStringOption(value.riskBreakdown?.scheduleDisruptionRisk, riskLevels) ? value.riskBreakdown.scheduleDisruptionRisk : safe.riskBreakdown.scheduleDisruptionRisk,
-      weatherTrafficRisk: isStringOption(value.riskBreakdown?.weatherTrafficRisk, riskLevels) ? value.riskBreakdown.weatherTrafficRisk : safe.riskBreakdown.weatherTrafficRisk,
+      batteryRisk: isStringOption(adjustedValue.riskBreakdown?.batteryRisk, riskLevels) ? adjustedValue.riskBreakdown.batteryRisk : safe.riskBreakdown.batteryRisk,
+      chargingOpportunityRisk: isStringOption(adjustedValue.riskBreakdown?.chargingOpportunityRisk, riskLevels) ? adjustedValue.riskBreakdown.chargingOpportunityRisk : safe.riskBreakdown.chargingOpportunityRisk,
+      scheduleDisruptionRisk: isStringOption(adjustedValue.riskBreakdown?.scheduleDisruptionRisk, riskLevels) ? adjustedValue.riskBreakdown.scheduleDisruptionRisk : safe.riskBreakdown.scheduleDisruptionRisk,
+      weatherTrafficRisk: isStringOption(adjustedValue.riskBreakdown?.weatherTrafficRisk, riskLevels) ? adjustedValue.riskBreakdown.weatherTrafficRisk : safe.riskBreakdown.weatherTrafficRisk,
     },
     backupPlan: {
-      available: Boolean(value.backupPlan?.available),
-      title: stringOrNull(value.backupPlan?.title),
-      locationName: stringOrNull(value.backupPlan?.locationName),
-      startTime: stringOrNull(value.backupPlan?.startTime),
-      endTime: stringOrNull(value.backupPlan?.endTime),
-      reason: stringOrNull(value.backupPlan?.reason),
+      available: Boolean(adjustedValue.backupPlan?.available),
+      title: stringOrNull(adjustedValue.backupPlan?.title),
+      locationName: stringOrNull(adjustedValue.backupPlan?.locationName),
+      startTime: stringOrNull(adjustedValue.backupPlan?.startTime),
+      endTime: stringOrNull(adjustedValue.backupPlan?.endTime),
+      reason: stringOrNull(adjustedValue.backupPlan?.reason),
     },
     calendarAction: {
-      shouldCreateEvent: Boolean(value.calendarAction?.shouldCreateEvent),
-      title: typeof value.calendarAction?.title === 'string' && value.calendarAction.title.trim() ? value.calendarAction.title.trim() : safe.calendarAction.title,
-      date: stringOrNull(value.calendarAction?.date),
-      startTime: stringOrNull(value.calendarAction?.startTime),
-      endTime: stringOrNull(value.calendarAction?.endTime),
-      location: stringOrNull(value.calendarAction?.location),
-      colorType: isStringOption(value.calendarAction?.colorType, colorTypes) ? value.calendarAction.colorType : safe.calendarAction.colorType,
+      shouldCreateEvent: shouldCreateCalendarEvent,
+      title: typeof adjustedValue.calendarAction?.title === 'string' && adjustedValue.calendarAction.title.trim() ? adjustedValue.calendarAction.title.trim() : safe.calendarAction.title,
+      date: normalizedWindow.calendarDate,
+      startTime: normalizedWindow.calendarStartTime,
+      endTime: normalizedWindow.calendarEndTime,
+      location: stringOrNull(adjustedValue.calendarAction?.location),
+      colorType: isStringOption(adjustedValue.calendarAction?.colorType, colorTypes) ? adjustedValue.calendarAction.colorType : safe.calendarAction.colorType,
     },
     sidePanelDetails: {
-      mainMessage: typeof value.sidePanelDetails?.mainMessage === 'string' && value.sidePanelDetails.mainMessage.trim() ? value.sidePanelDetails.mainMessage.trim() : safe.sidePanelDetails.mainMessage,
-      batteryExplanation: typeof value.sidePanelDetails?.batteryExplanation === 'string' && value.sidePanelDetails.batteryExplanation.trim() ? value.sidePanelDetails.batteryExplanation.trim() : safe.sidePanelDetails.batteryExplanation,
-      scheduleExplanation: typeof value.sidePanelDetails?.scheduleExplanation === 'string' && value.sidePanelDetails.scheduleExplanation.trim() ? value.sidePanelDetails.scheduleExplanation.trim() : safe.sidePanelDetails.scheduleExplanation,
-      chargingExplanation: typeof value.sidePanelDetails?.chargingExplanation === 'string' && value.sidePanelDetails.chargingExplanation.trim() ? value.sidePanelDetails.chargingExplanation.trim() : safe.sidePanelDetails.chargingExplanation,
-      backupExplanation: typeof value.sidePanelDetails?.backupExplanation === 'string' && value.sidePanelDetails.backupExplanation.trim() ? value.sidePanelDetails.backupExplanation.trim() : safe.sidePanelDetails.backupExplanation,
-      userActionText: typeof value.sidePanelDetails?.userActionText === 'string' && value.sidePanelDetails.userActionText.trim() ? value.sidePanelDetails.userActionText.trim() : safe.sidePanelDetails.userActionText,
+      mainMessage: typeof adjustedValue.sidePanelDetails?.mainMessage === 'string' && adjustedValue.sidePanelDetails.mainMessage.trim() ? adjustedValue.sidePanelDetails.mainMessage.trim() : safe.sidePanelDetails.mainMessage,
+      batteryExplanation: typeof adjustedValue.sidePanelDetails?.batteryExplanation === 'string' && adjustedValue.sidePanelDetails.batteryExplanation.trim() ? adjustedValue.sidePanelDetails.batteryExplanation.trim() : safe.sidePanelDetails.batteryExplanation,
+      scheduleExplanation: typeof adjustedValue.sidePanelDetails?.scheduleExplanation === 'string' && adjustedValue.sidePanelDetails.scheduleExplanation.trim() ? adjustedValue.sidePanelDetails.scheduleExplanation.trim() : safe.sidePanelDetails.scheduleExplanation,
+      chargingExplanation: typeof adjustedValue.sidePanelDetails?.chargingExplanation === 'string' && adjustedValue.sidePanelDetails.chargingExplanation.trim() ? adjustedValue.sidePanelDetails.chargingExplanation.trim() : safe.sidePanelDetails.chargingExplanation,
+      backupExplanation: typeof adjustedValue.sidePanelDetails?.backupExplanation === 'string' && adjustedValue.sidePanelDetails.backupExplanation.trim() ? adjustedValue.sidePanelDetails.backupExplanation.trim() : safe.sidePanelDetails.backupExplanation,
+      userActionText: typeof adjustedValue.sidePanelDetails?.userActionText === 'string' && adjustedValue.sidePanelDetails.userActionText.trim() ? adjustedValue.sidePanelDetails.userActionText.trim() : safe.sidePanelDetails.userActionText,
     },
   };
 }
@@ -333,8 +729,24 @@ ${input.timezone}
 Vehicle:
 ${JSON.stringify(input.vehicle, null, 2)}
 
+Charging policy:
+${JSON.stringify({
+  targetChargePercent: input.targetChargePercent ?? 80,
+  minimumBatteryPercent: input.minimumBatteryPercent ?? 20,
+  behavior: "Recommend charging as rarely as possible. Usually charge only when the forecast without charging would drop below minimumBatteryPercent, then charge toward targetChargePercent. Exception: if chargingOpportunity.shouldRecommendIdleTopUp is true, use the empty next day as a low-disruption home AC top-up window."
+}, null, 2)}
+
+Charging opportunity:
+${JSON.stringify(input.chargingOpportunity ?? null, null, 2)}
+
 Calendar events:
 ${JSON.stringify(input.calendarEvents, null, 2)}
+
+Calendar revision:
+${input.calendarRevision ?? "N/A"}
+
+Open Charge Map charging station candidates:
+${JSON.stringify(input.chargingStations ?? [], null, 2)}
 
 Weather:
 ${JSON.stringify(input.weather ?? null, null, 2)}
@@ -365,7 +777,14 @@ You must predict:
 Decision rules:
 - Never use local mock data, deterministic fallback rankings, or hidden assumptions.
 - Use only the request payload and Gemini reasoning.
+- When Open Charge Map station candidates are provided, recommend only those stations for public charging and preserve their id/name/provider details.
+- Recommend charging as little as possible. Do not recommend charging just to restore the battery to a default target.
+- Use targetChargePercent from the charging policy as the destination battery only when charging is necessary.
+- Use minimumBatteryPercent from the charging policy as the threshold for starting a charging recommendation.
+- If the forecast without charging remains above minimumBatteryPercent, set shouldCharge false unless there is another explicit emergency or chargingOpportunity.shouldRecommendIdleTopUp is true.
+- Empty-day exception: when chargingOpportunity.shouldRecommendIdleTopUp is true, recommend a home AC top-up during preferredChargingStart/preferredChargingEnd because the next local day has no schedule and the battery is below the idle-day threshold. Treat this as recommended/optional, not urgent.
 - Never recommend charging during calendar events.
+- Treat every calendar event in the payload as busy time. recommendedChargingStart/recommendedChargingEnd and calendarAction start/end must not overlap any event date/startTime/endTime.
 - Avoid recommending charging windows shorter than the estimated charging duration.
 - Prefer charging when the car is parked and unused.
 - Recommend a reasonable target battery percentage, not always 100%.
@@ -379,6 +798,27 @@ function getLocalChargingDecision(payload: ChargingPredictionRequest) {
   const ac = payload.options?.ac;
   const dc = payload.options?.dc;
   const prefer = payload.preference;
+  const energy = payload.energy && typeof payload.energy === 'object' ? payload.energy as Record<string, unknown> : {};
+  const chargeRecommended = energy.chargeRecommended === true || Number(energy.topUpPercent ?? 0) > 0;
+
+  if (!chargeRecommended) {
+    return {
+      source: 'fallback',
+      mode: 'AC' as ChargingMode,
+      selectedStationId: null,
+      selectedChoiceId: 'ac-home-window',
+      confidence: 0.78,
+      reason: `No charging is recommended because the no-charge forecast stays above the ${Number(energy.minimumBatteryThreshold ?? energy.reserveTarget ?? 0)}% minimum threshold.`,
+      explanation: 'Hold charging for now. The battery forecast remains above the minimum threshold, so charging to the user target would be unnecessary.',
+      choices: [{
+        id: 'ac-home-window',
+        rank: 1,
+        mode: 'AC' as ChargingMode,
+        reason: 'No charging session needed while the battery stays above the minimum threshold.'
+      }]
+    };
+  }
+
   const acMinutes = Number(ac?.minutesNeeded ?? 0);
   const dcStation = dc?.stationOptions?.[0];
   const canUseAc = Boolean(ac?.canComplete);
@@ -429,6 +869,39 @@ async function startServer() {
   // Simple endpoint to test the server
   app.get('/api/health', (req, res) => {
     res.json({ status: 'ok' });
+  });
+
+  app.get('/api/charging/openchargemap', async (req, res) => {
+    const latitude = Number(req.query.latitude);
+    const longitude = Number(req.query.longitude);
+    const distanceKm = Math.max(1, Math.min(100, Number(req.query.distanceKm) || 35));
+    const maxResults = Math.max(1, Math.min(20, Number(req.query.maxResults) || 8));
+
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+      res.status(400).json({
+        source: 'openchargemap',
+        attribution: openChargeMapAttribution,
+        stations: [],
+        error: 'latitude and longitude are required',
+      });
+      return;
+    }
+
+    try {
+      const stations = await fetchOpenChargeMapStations(latitude, longitude, distanceKm, maxResults);
+      res.json({
+        source: 'openchargemap',
+        attribution: openChargeMapAttribution,
+        stations,
+      });
+    } catch {
+      console.log("Open Charge Map station lookup resolved with no live candidates.");
+      res.json({
+        source: 'openchargemap',
+        attribution: openChargeMapAttribution,
+        stations: [],
+      });
+    }
   });
 
   // Chat endpoint
@@ -514,6 +987,11 @@ Return ONLY valid JSON with this exact shape:
 Rules:
 - Evaluate the full seven-day schedule, energy forecast, AC/DC options, and charging station candidates in the request.
 - Choose and rank only from the provided choices and AC/DC candidate options. Do not invent times, places, or stations.
+- If candidate options include Open Charge Map station fields, treat them as the real public charger source and preserve their station ids.
+- Minimize charging frequency: do not recommend charging just to return to the userTargetCharge.
+- Only recommend an active charging session when energy.chargeRecommended is true, energy.withoutChargeProjectedBattery is below energy.minimumBatteryThreshold, or energy.chargeReason is "idle_day_opportunity".
+- If energy.chargeReason is "idle_day_opportunity", keep the provided AC/home option because the next local day is empty and the battery is below the idle-day top-up threshold.
+- userTargetCharge is the charge destination only after charging becomes necessary; it is not a constant battery level to maintain.
 - Preserve choice ids from the request and return choices sorted from best to worst.
 - If preference is AC or DC and that candidate canComplete is true, obey it.
 - If choosing DC, selectedStationId must be one of options.dc.stationOptions[].id and must support CCS2 or Tesla CCS2 as listed.
@@ -594,7 +1072,7 @@ Required JSON object fields and exact allowed values:
 - recommendationStatus must be one of "not_needed", "optional", "recommended", "urgent".
 - chargingLocationType must be "home", "public_dc", "public_ac", or null.
 - chargingType must be "home_ac", "public_dc_fast", "public_ac", or "none".
-- stationRecommendations must be an array of objects with id, name, provider, city, address, connector, maxPowerKw, stalls, and reason.
+- stationRecommendations must be an array of objects with id, name, provider, city, address, latitude, longitude, connector, maxPowerKw, stalls, and reason.
 - backupPlan, calendarAction, riskBreakdown, and sidePanelDetails must be objects, not strings.
 
 Return this exact JSON shape with no markdown:
@@ -1884,8 +2362,3 @@ Synthesize an elite, sensory 2-sentence parking guidance advisor. Specifically m
 }
 
 startServer();
-
-
-
-
-

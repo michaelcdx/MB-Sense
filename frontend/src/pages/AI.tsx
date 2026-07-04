@@ -19,15 +19,21 @@ import {
 } from 'lucide-react';
 import Chatbot from '../components/Chatbot';
 import VoiceAssistant from '../components/VoiceAssistant';
+import { resolveLocationCoordinates } from '../constants/realWorldRouteData';
 import { buildChargingPlan, buildGeminiChargingPredictionPayload, formatPlanDateTime, formatPlanTimeRange, type ChargingModePreference, type ChargingOptionPlan, type GeminiChargingDecision } from '../lib/chargingAgents';
+import { fetchOpenChargeMapStations } from '../lib/chargingPlanner';
 import { buildScheduleDistanceResults } from '../lib/scheduleDistanceAgent';
 import { cn } from '../lib/utils';
 import { useAppStore } from '../store/useAppStore';
 import { useCalendarViewStore } from '../store/useCalendarViewStore';
+import type { OpenChargeMapStationCandidate } from '../types/chargingPlanner';
 
 const targetChargeOptions = [60, 70, 80, 90, 100];
 const minTargetCharge = 50;
 const maxTargetCharge = 100;
+const minBatteryThresholdOptions = [20, 30, 35, 40, 50];
+const minBatteryThresholdFloor = 10;
+const minBatteryThresholdCeiling = 60;
 
 function trafficClass(traffic: string) {
   if (traffic === 'heavy') return 'text-rose-500 bg-rose-950/70 border-rose-300/25';
@@ -55,20 +61,39 @@ function optionLabel(option: ChargingOptionPlan) {
 }
 
 export default function AI() {
-  const { events, vehicle, weather, calendarRevision } = useAppStore();
+  const {
+    events,
+    vehicle,
+    weather,
+    calendarRevision,
+    chargingTargetPercent,
+    chargingMinimumBatteryPercent,
+    setChargingTargetPercent,
+    setChargingMinimumBatteryPercent,
+  } = useAppStore();
   const selectedDate = useCalendarViewStore((state) => state.selectedDate);
-  const [targetCharge, setTargetCharge] = useState(80);
+  const targetCharge = chargingTargetPercent;
+  const minimumBattery = chargingMinimumBatteryPercent;
   const [chargingPreference, setChargingPreference] = useState<ChargingModePreference>('auto');
   const [geminiDecision, setGeminiDecision] = useState<GeminiChargingDecision | undefined>();
   const [geminiStatus, setGeminiStatus] = useState<'idle' | 'loading' | 'ready' | 'fallback' | 'error'>('idle');
-  const candidatePlan = useMemo(() => buildChargingPlan(events, vehicle, weather, targetCharge, selectedDate, chargingPreference), [events, vehicle, weather, targetCharge, selectedDate, chargingPreference, calendarRevision]);
+  const [openChargeMapStations, setOpenChargeMapStations] = useState<OpenChargeMapStationCandidate[]>([]);
+  const stationAnchor = useMemo(() => {
+    const planningStart = new Date(selectedDate);
+    const drivingEvent = [...events]
+      .filter((event) => event.carNeeded && event.location && new Date(event.date).getTime() >= planningStart.getTime())
+      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())[0];
+    return drivingEvent?.location ? resolveLocationCoordinates(drivingEvent.location) : null;
+  }, [events, selectedDate, calendarRevision]);
+  const stationAnchorKey = stationAnchor ? `${stationAnchor.lat.toFixed(4)},${stationAnchor.lng.toFixed(4)}` : '';
+  const candidatePlan = useMemo(() => buildChargingPlan(events, vehicle, weather, targetCharge, selectedDate, chargingPreference, undefined, openChargeMapStations, minimumBattery), [events, vehicle, weather, targetCharge, selectedDate, chargingPreference, openChargeMapStations, minimumBattery, calendarRevision]);
   const geminiPayload = useMemo(() => buildGeminiChargingPredictionPayload(candidatePlan, chargingPreference), [candidatePlan, chargingPreference]);
   const geminiPayloadSignature = useMemo(() => JSON.stringify(geminiPayload), [geminiPayload]);
-  const plan = useMemo(() => buildChargingPlan(events, vehicle, weather, targetCharge, selectedDate, chargingPreference, geminiDecision), [events, vehicle, weather, targetCharge, selectedDate, chargingPreference, geminiDecision, calendarRevision]);
+  const plan = useMemo(() => buildChargingPlan(events, vehicle, weather, targetCharge, selectedDate, chargingPreference, geminiDecision, openChargeMapStations, minimumBattery), [events, vehicle, weather, targetCharge, selectedDate, chargingPreference, geminiDecision, openChargeMapStations, minimumBattery, calendarRevision]);
   const scheduleDistances = useMemo(() => buildScheduleDistanceResults(events, plan.planningStart), [events, plan.planningStart, calendarRevision]);
   const highlightedDistance = scheduleDistances.find((result) => result.source === 'known-real-world') ?? scheduleDistances.find((result) => result.source === 'coordinate-estimated') ?? scheduleDistances[0];
-  const bestWindowLabel = formatPlanTimeRange(plan.decision.start, plan.decision.end);
-  const projectedRisk = plan.energy.projectedBattery < plan.energy.reserveTarget;
+  const bestWindowLabel = plan.energy.chargeRecommended ? formatPlanTimeRange(plan.decision.start, plan.decision.end) : 'No charge needed';
+  const projectedRisk = plan.energy.chargeRecommended;
   const selectedOption = plan.chargingStrategy.selected;
   const selectedStation = selectedOption.selectedStation;
   const dcOption = plan.chargingStrategy.dc;
@@ -76,19 +101,49 @@ export default function AI() {
   const acMinutes = plan.charging.ac.minutesNeeded;
   const dcMinutes = plan.charging.dcFast.minutesNeeded;
   const dcIsFaster = dcMinutes !== null && dcMinutes < acMinutes;
-  const chargingTimeExplanation = dcOptionStation && dcIsFaster
+  const chargingTimeExplanation = !plan.energy.chargeRecommended
+    ? plan.explanation
+    : dcOptionStation && dcIsFaster
     ? `DC fast charging is recommended because AC charging would take ${acMinutes} minutes. MB Sense selected ${dcOptionStation.station.name} because it supports ${dcOptionStation.connector} and is ${dcOptionStation.distanceFromAnchorKm} km from ${dcOptionStation.anchorLocation}.`
     : plan.explanation;
-  const acOptionDetail = `${acMinutes} minutes${dcIsFaster ? ', not recommended for this schedule' : ', suitable for this schedule'}`;
+  const acOptionDetail = plan.energy.chargeRecommended
+    ? `${acMinutes} minutes${dcIsFaster ? ', not recommended for this schedule' : ', suitable for this schedule'}`
+    : 'No charging needed while forecast stays above minimum';
   const dcOptionDetail = dcOptionStation
     ? `${dcIsFaster ? 'Recommended, ' : ''}${dcOptionStation.connector} compatible, ${dcOptionStation.distanceFromAnchorKm} km away`
-    : 'Recommended when AC cannot fit the schedule';
+    : plan.energy.chargeRecommended ? 'Recommended when AC cannot fit the schedule' : 'No public DC stop needed yet';
   const tripBatteryRows = plan.scheduleDemand.trips.reduce<Array<{ trip: typeof plan.scheduleDemand.trips[number]; beforeBattery: number; afterBattery: number }>>((rows, trip) => {
     const beforeBattery = rows.at(-1)?.afterBattery ?? plan.energy.plannedStartBattery;
     const afterBattery = Math.max(beforeBattery - trip.batteryUsePercent, 0);
     return [...rows, { trip, beforeBattery, afterBattery }];
   }, []);
-  const updateTargetCharge = (value: number) => setTargetCharge(Math.max(minTargetCharge, Math.min(maxTargetCharge, Math.round(value / 5) * 5)));
+  const updateTargetCharge = (value: number) => setChargingTargetPercent(Math.max(minTargetCharge, Math.min(maxTargetCharge, Math.round(value / 5) * 5)));
+  const updateMinimumBattery = (value: number) => setChargingMinimumBatteryPercent(Math.max(minBatteryThresholdFloor, Math.min(Math.min(minBatteryThresholdCeiling, targetCharge - 5), Math.round(value / 5) * 5)));
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!stationAnchor) {
+      setOpenChargeMapStations([]);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    setOpenChargeMapStations([]);
+    fetchOpenChargeMapStations({
+      latitude: stationAnchor.lat,
+      longitude: stationAnchor.lng,
+      distanceKm: 35,
+      maxResults: 8,
+    }).then((stations) => {
+      if (!cancelled) setOpenChargeMapStations(stations);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [stationAnchorKey]);
 
   useEffect(() => {
     let cancelled = false;
@@ -171,8 +226,8 @@ export default function AI() {
               </div>
               <div className="border-t border-outline-variant/45 pt-4">
                 <p className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-slate-500"><PlugZap className="h-4 w-4 text-emerald-500" />Selected plan</p>
-                <p className="mt-1 text-lg font-black text-on-surface">{selectedOption.mode}</p>
-                <p className="mt-1 text-[10px] font-bold text-slate-500">{selectedOption.mode === 'DC' && selectedStation ? selectedStation.station.name : selectedOption.location}</p>
+                <p className="mt-1 text-lg font-black text-on-surface">{plan.energy.chargeRecommended ? selectedOption.mode : 'Wait'}</p>
+                <p className="mt-1 text-[10px] font-bold text-slate-500">{plan.energy.chargeRecommended ? selectedOption.mode === 'DC' && selectedStation ? selectedStation.station.name : selectedOption.location : 'No charging session needed yet'}</p>
               </div>
             </div>
           </div>
@@ -226,6 +281,60 @@ export default function AI() {
               </div>
             </div>
 
+            <div className="mt-5 rounded-2xl border border-outline-variant/45 bg-surface-container-low p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <span className="text-xs font-bold uppercase tracking-widest text-slate-500">Minimum battery</span>
+                  <p className="mt-1 text-[10px] font-bold leading-relaxed text-slate-500">Recommend charging only when the no-charge forecast drops below this level.</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button type="button" onClick={() => updateMinimumBattery(minimumBattery - 5)} className="flex h-8 w-8 items-center justify-center rounded-xl border border-primary/20 bg-surface-container-lowest text-primary transition hover:bg-surface-container" aria-label="Decrease minimum battery">
+                    <Minus className="h-3.5 w-3.5" />
+                  </button>
+                  <span className="min-w-12 text-center text-lg font-black text-on-surface">{minimumBattery}%</span>
+                  <button type="button" onClick={() => updateMinimumBattery(minimumBattery + 5)} className="flex h-8 w-8 items-center justify-center rounded-xl border border-primary/20 bg-surface-container-lowest text-primary transition hover:bg-surface-container" aria-label="Increase minimum battery">
+                    <Plus className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </div>
+              <input
+                type="range"
+                min={minBatteryThresholdFloor}
+                max={Math.min(minBatteryThresholdCeiling, targetCharge - 5)}
+                step={5}
+                value={minimumBattery}
+                onChange={(event) => updateMinimumBattery(Number(event.target.value))}
+                className="mt-4 w-full accent-primary"
+                aria-label="Minimum battery threshold"
+              />
+              <div className="mt-3 grid grid-cols-5 gap-1.5">
+                {minBatteryThresholdOptions.map((value) => {
+                  const disabled = value >= targetCharge;
+                  return (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() => updateMinimumBattery(value)}
+                      disabled={disabled}
+                      className={cn('h-8 rounded-xl border text-[10px] font-black transition disabled:cursor-not-allowed disabled:opacity-40', minimumBattery === value ? 'border-primary bg-primary text-on-primary' : 'border-outline-variant/45 bg-surface-container-lowest text-on-surface-variant hover:border-primary/35 hover:text-primary')}
+                    >
+                      {value}%
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <div className="rounded-xl border border-outline-variant/45 bg-surface-container-lowest px-3 py-2">
+                  <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">No-charge forecast</p>
+                  <p className="mt-1 text-lg font-black text-on-surface">{plan.energy.withoutChargeProjectedBattery}%</p>
+                </div>
+                <div className={cn('rounded-xl border px-3 py-2', plan.energy.chargeRecommended ? 'border-amber-300/35 bg-amber-500/10' : 'border-emerald-300/35 bg-emerald-500/10')}>
+                  <p className={cn('text-[9px] font-black uppercase tracking-widest', plan.energy.chargeRecommended ? 'text-amber-600' : 'text-emerald-600')}>Charging behavior</p>
+                  <p className="mt-1 text-sm font-black text-on-surface">{plan.energy.chargeRecommended ? `Charge to ${plan.energy.userTargetBattery}%` : 'Wait'}</p>
+                </div>
+              </div>
+            </div>
+
             <div className="mt-5 border-t border-outline-variant/45 pt-5">
               <span className="text-xs font-bold uppercase tracking-widest text-slate-500">Charging mode</span>
               <div className="mt-3 grid grid-cols-3 gap-2">
@@ -240,7 +349,7 @@ export default function AI() {
                   </button>
                 ))}
               </div>
-              <p className="mt-3 text-[10px] font-bold leading-relaxed text-slate-500">MB Sense compares AC and DC charging, then selects the fastest compatible charger near the departure location.</p>
+              <p className="mt-3 text-[10px] font-bold leading-relaxed text-slate-500">MB Sense waits while the forecast stays above minimum, then compares AC and DC only when charging is needed.</p>
             </div>
 
             <div className="mt-5 grid gap-3 sm:grid-cols-2">
@@ -276,7 +385,7 @@ export default function AI() {
                     <p className="text-[10px] font-black uppercase tracking-widest text-emerald-500">DC fast charging</p>
                     <span className="inline-flex items-center gap-1 rounded-full border border-emerald-300/30 bg-emerald-500/10 px-2 py-1 text-[9px] font-black uppercase tracking-widest text-emerald-500">
                       <CheckCircle2 className="h-3 w-3" />
-                      {selectedOption.mode === 'DC' ? 'Selected' : 'Recommended'}
+                      {!plan.energy.chargeRecommended ? 'Not needed' : selectedOption.mode === 'DC' ? 'Selected' : 'Recommended'}
                     </span>
                   </div>
                   <p className="mt-3 text-2xl font-black text-on-surface">
