@@ -13,7 +13,8 @@
     "moduleResolution": "bundler",
     "types": [
       "node",
-      "google.maps"
+      "google.maps",
+      "vite/client"
     ],
     "isolatedModules": true,
     "moduleDetection": "force",
