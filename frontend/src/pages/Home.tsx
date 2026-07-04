@@ -1,5 +1,6 @@
 ﻿import { motion } from 'motion/react';
 import { useAppStore, type ChargingStationCalendarOption } from '../store/useAppStore';
+import { AnimatePresence } from 'motion/react';
 import { BatteryCharging, Battery, CalendarClock, MapPin, Navigation, PlugZap, ShieldCheck, Timer, Zap } from 'lucide-react';
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -181,6 +182,7 @@ export default function Home() {
   const navigate = useNavigate();
   const [time, setTime] = useState('');
   const [dateLabel, setDateLabel] = useState('');
+  const [showAllTodayForecastTrips, setShowAllTodayForecastTrips] = useState(false);
 
   useEffect(() => {
     const updateTime = () => {
@@ -248,7 +250,8 @@ export default function Home() {
   const nextChargingDate = formatDateLabel(chargingStart, plan.calendarAction.date);
   const nextChargingTime = formatTimeLabel(chargingStart, chargingEnd, plan.calendarAction.startTime, plan.calendarAction.endTime);
   const navigationStation = selectedStation ?? stationRecommendations[0] ?? null;
-  const chargingStationNavigationUrl = buildMapDirectionsUrl(navigationStation, bestChargingStation);
+  const chargingStationNavigationUrl = buildGoogleMapsDirectionsUrl(navigationStation, bestChargingStation);
+  const weatherTemperatureLabel = `${Math.round(Number(weather.temp) || 0)}\u00B0C`;
   const batteryScheduleForecasts = useMemo(() => {
     const today = startOfLocalDay(new Date());
     const buckets = [
@@ -307,6 +310,15 @@ export default function Home() {
       }
     });
   }, [calendarRevision, chargingMinimumBatteryPercent, chargingTargetPercent, dateLabel, events, vehicle, weather]);
+  const todayForecast = batteryScheduleForecasts.find((bucket) => bucket.id === 'today') ?? batteryScheduleForecasts[0];
+  const futureForecasts = batteryScheduleForecasts.filter((bucket) => bucket.id !== 'today');
+  const visibleTodayTrips = showAllTodayForecastTrips ? todayForecast.trips : todayForecast.trips.slice(0, 3);
+  const hiddenTodayTripCount = Math.max(todayForecast.trips.length - visibleTodayTrips.length, 0);
+  const aiStatusLabel = aiChargingPlanStatus === 'loading'
+    ? 'MB Sense is evaluating the latest calendar and battery data'
+    : isChargeRecommended
+      ? 'MB Sense recommends charging before the forecast crosses your minimum battery'
+      : 'MB Sense is holding charging because the forecast remains above your minimum battery';
 
   const updateAiRecommendation = async () => {
     const requestAnotherOption = isAnotherOptionMode && Boolean(aiChargingPlan);
@@ -370,18 +382,11 @@ export default function Home() {
       exit={{ opacity: 0, y: -10 }}
       className="flex flex-col gap-6"
     >
-      <section className="flex justify-between items-end">
-        <div>
-          <h1 className="text-3xl font-bold text-slate-100">Hello, {user.name.split(' ')[0]}</h1>
-          <p className="mt-1 text-sm font-medium tracking-wide text-slate-400">{time}</p>
-          <p className="mt-0.5 text-xs font-semibold tracking-wide text-slate-500">{dateLabel}</p>
-        </div>
-        <div className="flex items-center gap-3 bg-surface-container-lowest border border-outline-variant/45 px-4 py-2 rounded-xl shadow-ambient">
-          <div className="text-right">
-            <p className="text-xs text-slate-300 font-medium">{location}</p>
-            <p className="text-lg font-semibold text-blue-400">{weather.temp}Â°C</p>
-          </div>
-        </div>
+      <section className="px-1">
+        <h1 className="text-3xl font-bold text-slate-100">Hello, {user.name.split(' ')[0]}</h1>
+        <p className="mt-1 text-sm font-semibold leading-relaxed text-slate-400">
+          {time} · {dateLabel} · {weatherTemperatureLabel} · {location}
+        </p>
       </section>
 
       <section>
@@ -390,16 +395,7 @@ export default function Home() {
           <div className="relative z-10 flex flex-col gap-5">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <span className={cn(
-                  'inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border',
-                  isChargeRecommended
-                    ? 'bg-amber-950/70 text-amber-500 border-amber-500/25'
-                    : 'bg-emerald-950/70 text-emerald-500 border-emerald-500/25'
-                )}>
-                  <Zap className="w-3.5 h-3.5" />
-                  {aiChargingPlanStatus === 'loading' ? 'AI evaluating' : isChargeRecommended ? 'Charge recommended' : 'Battery ready'}
-                </span>
-                <h2 className="mt-3 text-2xl font-extrabold text-slate-100 leading-tight">AI Charging Recommendation</h2>
+                <h2 className="text-2xl font-extrabold text-slate-100 leading-tight">AI Charging Recommendation</h2>
                 <p className="mt-1 text-xs font-semibold text-slate-400 leading-relaxed">
                   MB Sense predicts charging before the battery becomes a problem.
                 </p>
@@ -419,8 +415,8 @@ export default function Home() {
                   Next Charging
                 </p>
                 <div className="flex items-center gap-2">
-                  <button type="button" onClick={() => { if (chargingStationNavigationUrl) navigate(chargingStationNavigationUrl); }} disabled={!chargingStationNavigationUrl} className="inline-flex items-center gap-1.5 rounded-lg border border-primary/25 bg-primary px-2.5 py-1 text-[9px] font-black uppercase tracking-widest text-on-primary transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:border-outline-variant/45 disabled:bg-surface-container-low disabled:text-slate-500">
-                    <Navigation className="h-3.5 w-3.5" />
+                  <button type="button" onClick={() => { if (chargingStationNavigationUrl) window.location.href = chargingStationNavigationUrl; }} disabled={!chargingStationNavigationUrl} className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-primary/35 bg-primary px-4 py-2.5 text-xs font-black uppercase tracking-widest text-on-primary shadow-ambient transition hover:bg-primary/90 hover:shadow-ambient-lg active:scale-[0.98] disabled:cursor-not-allowed disabled:border-outline-variant/45 disabled:bg-surface-container-low disabled:text-slate-500">
+                    <Navigation className="h-4 w-4" />
                     Navigate
                   </button>
                 </div>
@@ -493,7 +489,7 @@ export default function Home() {
               <div>
                 <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Why now</p>
                 <p className="mt-1 text-sm font-semibold text-slate-100 leading-relaxed">{plan.reason}</p>
-                <p className="mt-2 text-xs font-bold text-slate-400">{plan.sidePanelDetails.chargingExplanation}</p>
+                <p className="mt-2 text-xs font-bold leading-relaxed text-slate-400">{aiStatusLabel}. {plan.sidePanelDetails.chargingExplanation}</p>
               </div>
             </div>
 
@@ -604,57 +600,106 @@ export default function Home() {
               </div>
             </div>
 
-            <div className="mt-5 grid gap-3 xl:grid-cols-4">
-              {batteryScheduleForecasts.map((bucket) => (
-                <div key={bucket.id} className="flex min-h-[260px] flex-col rounded-2xl border border-outline-variant/45 bg-surface-container-low p-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="text-sm font-black text-slate-100">{bucket.title}</p>
-                      <p className="mt-1 text-[10px] font-bold uppercase tracking-widest text-slate-500">{bucket.subtitle}</p>
-                    </div>
-                    <div className={cn('shrink-0 rounded-xl border px-3 py-2 text-right', bucket.totalUsePercent > 25 ? 'border-amber-400/30 bg-amber-500/10' : bucket.totalUsePercent > 0 ? 'border-emerald-400/25 bg-emerald-500/10' : 'border-outline-variant/45 bg-surface-container-lowest')}>
-                      <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">Use</p>
-                      <p className={cn('mt-1 text-lg font-black leading-none', bucket.totalUsePercent > 25 ? 'text-amber-400' : bucket.totalUsePercent > 0 ? 'text-emerald-400' : 'text-slate-300')}>{bucket.totalUsePercent}%</p>
-                    </div>
+            <div className="mt-5 grid gap-3 xl:grid-cols-[minmax(0,1fr)_260px]">
+              <div className="rounded-2xl border border-outline-variant/45 bg-surface-container-low p-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0">
+                    <p className="text-lg font-black text-slate-100">{todayForecast.title}</p>
+                    <p className="mt-1 text-[10px] font-bold uppercase tracking-widest text-slate-500">{todayForecast.subtitle}</p>
                   </div>
-
-                  <div className="mt-4 grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-3 gap-2 sm:min-w-[300px]">
+                    <div className={cn('rounded-xl border px-3 py-2', todayForecast.totalUsePercent > 25 ? 'border-amber-400/30 bg-amber-500/10' : todayForecast.totalUsePercent > 0 ? 'border-emerald-400/25 bg-emerald-500/10' : 'border-outline-variant/45 bg-surface-container-lowest')}>
+                      <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">Use</p>
+                      <p className={cn('mt-1 text-sm font-black leading-none', todayForecast.totalUsePercent > 25 ? 'text-amber-400' : todayForecast.totalUsePercent > 0 ? 'text-emerald-400' : 'text-slate-300')}>{todayForecast.totalUsePercent}%</p>
+                    </div>
                     <div className="rounded-xl border border-outline-variant/45 bg-surface-container-lowest px-3 py-2">
-                      <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">Driving items</p>
-                      <p className="mt-1 text-sm font-black text-slate-100">{bucket.drivingEventCount}</p>
+                      <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">Driving</p>
+                      <p className="mt-1 text-sm font-black text-slate-100">{todayForecast.drivingEventCount}</p>
                     </div>
                     <div className="rounded-xl border border-outline-variant/45 bg-surface-container-lowest px-3 py-2">
                       <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">After</p>
-                      <p className="mt-1 text-sm font-black text-slate-100">{bucket.afterSchedulePercent}%</p>
+                      <p className="mt-1 text-sm font-black text-slate-100">{todayForecast.afterSchedulePercent}%</p>
                     </div>
                   </div>
-
-                  <div className="mt-4 flex-1 divide-y divide-outline-variant/35 overflow-hidden rounded-xl border border-outline-variant/35 bg-surface-container-lowest/70">
-                    {bucket.trips.length ? (
-                      bucket.trips.map((trip) => (
-                        <div key={`${bucket.id}-${trip.eventId}`} className="flex items-center justify-between gap-3 px-3 py-3">
-                          <div className="min-w-0">
-                            <p className="truncate text-sm font-black leading-tight text-slate-100">{trip.title}</p>
-                            <p className="mt-1 flex items-center gap-1.5 truncate text-[11px] font-semibold text-slate-400">
-                              <MapPin className="h-3.5 w-3.5 shrink-0 text-primary" />
-                              <span className="truncate">{trip.location}</span>
-                            </p>
-                            <p className="mt-1 text-[10px] font-bold uppercase tracking-widest text-slate-500">{trip.eventTime} · {trip.distanceKm} km</p>
-                          </div>
-                          <div className="shrink-0 rounded-xl border border-primary/20 bg-primary/10 px-2.5 py-2 text-right">
-                            <p className="text-[9px] font-black uppercase tracking-widest text-primary">Battery</p>
-                            <p className="mt-1 text-sm font-black leading-none text-primary">-{trip.batteryUsePercent}%</p>
-                          </div>
-                        </div>
-                      ))
-                    ) : (
-                      <div className="flex min-h-[96px] items-center justify-center px-3 py-6 text-center">
-                        <p className="text-xs font-semibold leading-relaxed text-slate-500">No driving activities scheduled.</p>
-                      </div>
-                    )}
-                  </div>
                 </div>
-              ))}
+
+                <motion.div layout className="mt-4 overflow-hidden rounded-xl border border-outline-variant/35 bg-surface-container-lowest/70">
+                  {visibleTodayTrips.length ? (
+                    <>
+                      <div className="divide-y divide-outline-variant/35">
+                        <AnimatePresence initial={false}>
+                          {visibleTodayTrips.map((trip) => (
+                            <motion.div
+                              key={`${todayForecast.id}-${trip.eventId}`}
+                              layout
+                              initial={{ opacity: 0, height: 0, y: -8 }}
+                              animate={{ opacity: 1, height: 'auto', y: 0 }}
+                              exit={{ opacity: 0, height: 0, y: -8 }}
+                              transition={{ duration: 0.22, ease: 'easeOut' }}
+                              className="overflow-hidden"
+                            >
+                              <div className="flex items-center justify-between gap-3 px-3 py-3">
+                                <div className="min-w-0">
+                                  <p className="truncate text-sm font-black leading-tight text-slate-100">{trip.title}</p>
+                                  <p className="mt-1 flex items-center gap-1.5 truncate text-[11px] font-semibold text-slate-400">
+                                    <MapPin className="h-3.5 w-3.5 shrink-0 text-primary" />
+                                    <span className="truncate">{trip.location}</span>
+                                  </p>
+                                  <p className="mt-1 text-[10px] font-bold uppercase tracking-widest text-slate-500">{trip.eventTime} · {trip.distanceKm} km</p>
+                                </div>
+                                <div className="shrink-0 rounded-xl border border-primary/20 bg-primary/10 px-2.5 py-2 text-right">
+                                  <p className="text-[9px] font-black uppercase tracking-widest text-primary">Battery</p>
+                                  <p className="mt-1 text-sm font-black leading-none text-primary">-{trip.batteryUsePercent}%</p>
+                                </div>
+                              </div>
+                            </motion.div>
+                          ))}
+                        </AnimatePresence>
+                      </div>
+                      {todayForecast.trips.length > 3 && (
+                        <button
+                          type="button"
+                          onClick={() => setShowAllTodayForecastTrips((current) => !current)}
+                          className="flex min-h-11 w-full items-center justify-center border-t border-outline-variant/35 bg-surface-container-low px-3 text-[10px] font-black uppercase tracking-widest text-primary transition hover:bg-primary/10"
+                        >
+                          {showAllTodayForecastTrips ? 'Show less' : `Show ${hiddenTodayTripCount} more`}
+                        </button>
+                      )}
+                    </>
+                  ) : (
+                    <div className="flex min-h-[112px] items-center justify-center px-3 py-6 text-center">
+                      <p className="text-xs font-semibold leading-relaxed text-slate-500">No driving activities scheduled today.</p>
+                    </div>
+                  )}
+                </motion.div>
+              </div>
+
+              <div className="grid gap-2">
+                {futureForecasts.map((bucket) => (
+                  <div key={bucket.id} className="rounded-xl border border-outline-variant/45 bg-surface-container-low p-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="text-xs font-black text-slate-100">{bucket.title}</p>
+                        <p className="mt-1 text-[10px] font-bold uppercase tracking-widest text-slate-500">{bucket.subtitle}</p>
+                      </div>
+                      <div className={cn('shrink-0 rounded-lg border px-2.5 py-1.5 text-right', bucket.totalUsePercent > 25 ? 'border-amber-400/30 bg-amber-500/10' : bucket.totalUsePercent > 0 ? 'border-emerald-400/25 bg-emerald-500/10' : 'border-outline-variant/45 bg-surface-container-lowest')}>
+                        <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">Use</p>
+                        <p className={cn('mt-1 text-sm font-black leading-none', bucket.totalUsePercent > 25 ? 'text-amber-400' : bucket.totalUsePercent > 0 ? 'text-emerald-400' : 'text-slate-300')}>{bucket.totalUsePercent}%</p>
+                      </div>
+                    </div>
+                    <div className="mt-2 grid grid-cols-2 gap-2">
+                      <div className="rounded-lg border border-outline-variant/45 bg-surface-container-lowest px-2.5 py-1.5">
+                        <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">Driving</p>
+                        <p className="mt-1 text-sm font-black text-slate-100">{bucket.drivingEventCount}</p>
+                      </div>
+                      <div className="rounded-lg border border-outline-variant/45 bg-surface-container-lowest px-2.5 py-1.5">
+                        <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">After</p>
+                        <p className="mt-1 text-sm font-black text-slate-100">{bucket.afterSchedulePercent}%</p>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         </div>
