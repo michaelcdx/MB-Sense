@@ -121,6 +121,20 @@ type BatteryStatusColor = 'green' | 'yellow' | 'red';
 type FutureDrivePreviewMode = 'tomorrow' | 'tomorrowEmpty' | 'nextDrivingDay' | 'empty' | 'calendarUnavailable';
 type RouteVariant = 'recommended' | 'comfort' | 'eco';
 
+type MapEvStation = {
+  id: string;
+  name: string;
+  label: string;
+  availability: string;
+  speed: string;
+  detour: string;
+  position: Coordinates;
+  recommended: boolean;
+  provider?: string;
+  source: 'openchargemap' | 'local-fallback';
+  availabilityPercent: number;
+};
+
 type MockDestination = {
   id: string;
   name: string;
@@ -230,6 +244,51 @@ const mockDestinations: MockDestination[] = [
     routeInsight: 'Suggested route preserves battery efficiency while keeping arrival near the main entrance.',
   },
 ];
+
+const fallbackMapEvStations: MapEvStation[] = evStations.map((station, index) => ({
+  id: station.id ?? `fallback-ev-${index + 1}`,
+  name: station.name,
+  label: station.label,
+  availability: station.availability,
+  speed: station.speed,
+  detour: station.detour,
+  position: station.position ?? mapCenter,
+  recommended: station.recommended,
+  source: 'local-fallback',
+  availabilityPercent: station.id === 'mb-partner' ? 25 : station.id === 'chargepoint-sunnyvale' ? 100 : 50,
+}));
+
+function formatStationPower(station: OpenChargeMapStationCandidate) {
+  return station.maxPowerKw > 0 ? `${station.maxPowerKw} kW` : 'Power N/A';
+}
+
+function formatStationAvailability(station: OpenChargeMapStationCandidate) {
+  if (station.status) return station.status;
+  if (station.stalls > 0) return `${station.stalls} stall${station.stalls === 1 ? '' : 's'}`;
+  return 'Availability N/A';
+}
+
+function formatStationDistance(station: OpenChargeMapStationCandidate) {
+  return typeof station.distanceKm === 'number'
+    ? `${station.distanceKm.toFixed(1)} km away`
+    : 'Nearby';
+}
+
+function mapOpenChargeMapStationToMapStation(station: OpenChargeMapStationCandidate, index: number): MapEvStation {
+  return {
+    id: station.id,
+    name: station.name,
+    label: formatStationPower(station),
+    availability: formatStationAvailability(station),
+    speed: formatStationPower(station),
+    detour: formatStationDistance(station),
+    position: { lat: station.latitude, lng: station.longitude },
+    recommended: index === 0,
+    provider: station.provider,
+    source: 'openchargemap',
+    availabilityPercent: station.stalls > 0 ? Math.min(100, Math.max(15, station.stalls * 20)) : 55,
+  };
+}
 
 const routeVariants: Array<{
   key: RouteVariant;
@@ -1392,7 +1451,7 @@ function FavoriteStopMarker({ stop }: { stop: FavoriteStop }) {
   );
 }
 
-function EVStationMarker({ station }: { station: (typeof evStations)[number] }) {
+function EVStationMarker({ station }: { station: MapEvStation }) {
   return (
     <MapModeBadge
       icon="ev"
@@ -2071,6 +2130,7 @@ function MockMapCanvas({
   routePath,
   alternativePath,
   destination,
+  evStationOptions,
   addedEvStop,
   selectedFavoriteStop,
   onViewChange,
@@ -2090,7 +2150,8 @@ function MockMapCanvas({
   routePath: Coordinates[];
   alternativePath: Coordinates[];
   destination: Coordinates;
-  addedEvStop?: (typeof evStations)[number] | null;
+  evStationOptions: MapEvStation[];
+  addedEvStop?: MapEvStation | null;
   selectedFavoriteStop?: FavoriteStop | null;
   onViewChange: (updater: (view: MockMapView) => MockMapView) => void;
   onManualPan: () => void;
@@ -2406,7 +2467,7 @@ function MockMapCanvas({
           })}
 
         {!isFutureDrivePreview && mode === 'evStations' &&
-          evStations.map((station) => {
+          evStationOptions.map((station) => {
             const pos = coordsToPercent(station.position);
             const isAdded = addedEvStop?.id === station.id;
             return (
@@ -2577,7 +2638,8 @@ export default function MapView() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedDestination, setSelectedDestination] = useState<MockDestination>(mockDestinations[0]);
   const [activePanel, setActivePanel] = useState<ActivePanel>(null);
-  const [selectedEvStop, setSelectedEvStop] = useState<(typeof evStations)[number] | null>(null);
+  const [openChargeMapEvStations, setOpenChargeMapEvStations] = useState<MapEvStation[]>([]);
+  const [selectedEvStop, setSelectedEvStop] = useState<MapEvStation | null>(null);
   const [selectedFavoriteStop, setSelectedFavoriteStop] = useState<FavoriteStop | null>(null);
   const [selectedRouteVariant, setSelectedRouteVariant] = useState<RouteVariant>('recommended');
   const [futureDriveNextDayRequested, setFutureDriveNextDayRequested] = useState(false);
@@ -2643,6 +2705,25 @@ export default function MapView() {
     };
   }, [futureDriveStationAnchorKey]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    fetchOpenChargeMapStations({
+      latitude: mapCenter.lat,
+      longitude: mapCenter.lng,
+      distanceKm: 50,
+      maxResults: 8,
+    }).then((stations) => {
+      if (!cancelled) setOpenChargeMapEvStations(stations.map(mapOpenChargeMapStationToMapStation));
+    }).catch(() => {
+      if (!cancelled) setOpenChargeMapEvStations([]);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const chargingPlan = useMemo(() => {
     if (!previewDrivingDay.date || previewDrivingDay.events.length === 0) return null;
     try {
@@ -2679,6 +2760,9 @@ export default function MapView() {
   const activeTool = toolChips.find((tool) => tool.key === mapMode) ?? toolChips[0];
   const ActiveModeIcon = activeTool.icon;
   const { activeNavigation, cameraMode, currentZoom, followCar, userInteractingWithMap } = cameraState;
+  const displayEvStations = openChargeMapEvStations.length ? openChargeMapEvStations : fallbackMapEvStations;
+  const primaryEvStation = displayEvStations[0] ?? fallbackMapEvStations[0];
+  const evStationSourceLabel = openChargeMapEvStations.length ? 'Open Charge Map' : 'Fallback stations';
   const filteredDestinations =
     searchQuery.trim().length === 0
       ? mockDestinations
@@ -2695,7 +2779,29 @@ export default function MapView() {
       ]
     : selectedDestination.routePath;
   const activeRouteVariant = routeVariants.find((variant) => variant.key === selectedRouteVariant) ?? routeVariants[0];
-  const sheetBase = bottomSheets[mapMode];
+  const evStationsSheet = useMemo(() => ({
+    ...bottomSheets.evStations,
+    title: primaryEvStation.name,
+    subtitle: `${evStationSourceLabel} fast chargers near route`,
+    collapsedTitle: `${displayEvStations.length} fast charger${displayEvStations.length === 1 ? '' : 's'} nearby`,
+    collapsedMeta: `Recommended: ${primaryEvStation.name}`,
+    collapsedStatus: `${primaryEvStation.speed} - ${primaryEvStation.detour}`,
+    metrics: [
+      { label: 'Source', value: evStationSourceLabel, tone: 'cyan' as const },
+      { label: 'Open', value: primaryEvStation.availability, tone: 'emerald' as const },
+      { label: 'Speed', value: primaryEvStation.speed },
+      { label: 'Distance', value: primaryEvStation.detour, tone: 'cyan' as const },
+    ],
+    options: displayEvStations.map((station) => ({
+      label: station.name,
+      value: station.availability,
+      detail: `${station.speed} - ${station.detour}`,
+    })),
+    insight: openChargeMapEvStations.length
+      ? 'Live station candidates are loaded from Open Charge Map. If that lookup fails, MB Sense falls back to stored demo stations.'
+      : mockEvStations.note,
+  }), [displayEvStations, evStationSourceLabel, openChargeMapEvStations.length, primaryEvStation]);
+  const sheetBase = mapMode === 'evStations' ? evStationsSheet : bottomSheets[mapMode];
   const sheet = {
     ...sheetBase,
     title: mapMode === 'aiRoute' ? selectedDestination.name : sheetBase.title,
@@ -2758,10 +2864,10 @@ export default function MapView() {
             },
             {
               label: 'Open',
-              value: evStations[0].availability,
-              percent: 25,
+              value: primaryEvStation.availability,
+              percent: primaryEvStation.availabilityPercent,
               tone: 'emerald',
-              detail: `${evStations[0].speed} partner charger`,
+              detail: `${primaryEvStation.speed} ${primaryEvStation.source === 'openchargemap' ? 'Open Charge Map' : 'fallback'} charger`,
             },
           ]
         : mapMode === 'cost'
@@ -2833,7 +2939,7 @@ export default function MapView() {
     }
 
     if (mode === 'evStations') {
-      return [...routePathWithStops, ...evStations.map((station) => station.position)];
+      return [...routePathWithStops, ...displayEvStations.map((station) => station.position)];
     }
 
     if (mode === 'cost') {
@@ -2841,7 +2947,7 @@ export default function MapView() {
     }
 
     return [...routePathWithStops, ...selectedDestination.alternativePath];
-  }, [routePathWithStops, selectedDestination.alternativePath]);
+  }, [displayEvStations, routePathWithStops, selectedDestination.alternativePath]);
 
   const fitRouteOverview = useCallback((nextMode: MapMode = mapMode) => {
     clearPinchRefocusTimer();
@@ -3290,7 +3396,7 @@ export default function MapView() {
     showTransientToast('Route applied', nextVariant.name, nextVariant.tone);
   };
 
-  const handleEvStopSelect = (station: (typeof evStations)[number]) => {
+  const handleEvStopSelect = (station: MapEvStation) => {
     setSelectedEvStop(station);
     setActivePanel(null);
     setSheetState('collapsed');
@@ -3543,7 +3649,7 @@ export default function MapView() {
                 </AdvancedMarker>
               ))}
             {!isFutureDrivePreview && mapMode === 'evStations' &&
-              evStations.map((station) => (
+              displayEvStations.map((station) => (
                 <AdvancedMarker key={station.id} position={station.position}>
                   <EVStationMarker station={station} />
                 </AdvancedMarker>
@@ -3591,6 +3697,7 @@ export default function MapView() {
           routePath={routePathWithStops}
           alternativePath={selectedDestination.alternativePath}
           destination={selectedDestination.position}
+          evStationOptions={displayEvStations}
           addedEvStop={selectedEvStop}
           selectedFavoriteStop={selectedFavoriteStop}
           onViewChange={setMockView}
@@ -4052,7 +4159,7 @@ export default function MapView() {
                         tone="cyan"
                         detail="Charging is optional for this route"
                       />
-                      {evStations.map((station) => (
+                      {displayEvStations.map((station) => (
                         <PremiumPanelCard
                           key={station.id}
                           onClick={() => handleEvStopSelect(station)}
@@ -4066,7 +4173,7 @@ export default function MapView() {
                           <PremiumMetricBar
                             label="Charger availability"
                             value={station.availability}
-                            percent={station.id === 'mb-partner' ? 25 : station.id === 'chargepoint-sunnyvale' ? 100 : 50}
+                            percent={station.availabilityPercent}
                             tone="cyan"
                           />
                         </PremiumPanelCard>
