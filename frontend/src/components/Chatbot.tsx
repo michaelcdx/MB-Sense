@@ -146,6 +146,19 @@ function getCalendarEventDateKey(event: CalendarEvent) {
   return `${year}-${month}-${day}`;
 }
 
+function getDateKey(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function addCalendarDays(date: Date, amount: number) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + amount);
+  return next;
+}
+
 function normalizeSearchText(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 }
@@ -165,6 +178,14 @@ function displayTimeToInputTime(value?: string) {
   if (hour > 23) return undefined;
 
   return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+}
+
+function displayTimeToMinutes(value?: string) {
+  const inputTime = displayTimeToInputTime(value);
+  if (!inputTime) return 0;
+
+  const [hour, minute] = inputTime.split(':').map(Number);
+  return hour * 60 + minute;
 }
 
 function eventToScheduleDraft(event: CalendarEvent): ScheduleDraft {
@@ -200,6 +221,54 @@ function hasScheduleDeleteIntent(message: string) {
 function hasScheduleDetailChange(message: string) {
   return /\b(change|update|edit|modify|revise|reschedule|set|move)\b/i.test(message)
     || /\b(title|event|name|date|day|time|place|location|venue|destination)\s*[:=]/i.test(message);
+}
+
+function resolveScheduleQueryDateKey(message: string) {
+  const parsedDate = mergeScheduleDraft(null, message).date;
+  if (parsedDate) return parsedDate;
+
+  const now = new Date();
+  if (/\btomorrow\b/i.test(message)) return getDateKey(addCalendarDays(now, 1));
+  if (/\btoday\b/i.test(message)) return getDateKey(now);
+  return null;
+}
+
+function hasDailyScheduleQueryIntent(message: string) {
+  const lower = message.toLowerCase();
+  const hasScheduleNoun = /\b(schedule|calendar|agenda|events?|appointments?|meetings?)\b/i.test(lower);
+  const hasQueryPhrase = /\b(what|which|show|list|tell|give|display|view|check)\b/i.test(lower)
+    || /\bdo i have\b/i.test(lower)
+    || /\bwhat do i have\b/i.test(lower);
+  const hasCreationIntent = /\b(add|create|make|book|block|reserve|put)\b/i.test(lower)
+    || /\bschedule\s+(?:a|an|the|my\s+)?(?:meeting|appointment|event|class|lunch|dinner|call|visit|trip)\b/i.test(lower);
+
+  return !hasCreationIntent
+    && hasQueryPhrase
+    && (hasScheduleNoun || /\bwhat do i have\b/i.test(lower))
+    && Boolean(resolveScheduleQueryDateKey(message));
+}
+
+function getDailyScheduleEvents(events: CalendarEvent[], dateKey: string) {
+  return events
+    .filter((event) => getCalendarEventDateKey(event) === dateKey && !event.isAiRecommendationPreview)
+    .sort((a, b) => displayTimeToMinutes(a.time) - displayTimeToMinutes(b.time));
+}
+
+function formatCalendarEventTime(event: CalendarEvent) {
+  return event.endTime ? `${event.time} - ${event.endTime}` : event.time;
+}
+
+function formatDailyScheduleList(events: CalendarEvent[], dateKey: string) {
+  const scheduledEvents = getDailyScheduleEvents(events, dateKey);
+  const lines = [`### ${formatScheduleDate(dateKey)}`, ''];
+
+  if (!scheduledEvents.length) {
+    lines.push('No schedules found for this day.');
+    return lines.join('\n');
+  }
+
+  lines.push(...scheduledEvents.map((event) => `- **Title:** ${event.title} | **Time:** ${formatCalendarEventTime(event)}`));
+  return lines.join('\n');
 }
 
 function scoreTextMatch(source: string, query?: string) {
@@ -488,6 +557,19 @@ export default function Chatbot({ embedded = false, defaultOpen = false, classNa
     appendAssistantMessage(formatCalendarEventDetails(matchedEvent));
     return true;
   };
+
+  const handleDailyScheduleQuery = (userMsg: string) => {
+    if (!hasDailyScheduleQueryIntent(userMsg)) return false;
+
+    const dateKey = resolveScheduleQueryDateKey(userMsg);
+    if (!dateKey) return false;
+
+    setPendingSchedule(null);
+    setPendingScheduleUpdate(null);
+    appendAssistantMessage(formatDailyScheduleList(events, dateKey));
+    return true;
+  };
+
   const handleScheduleMessage = (userMsg: string) => {
     if (!pendingSchedule && !isScheduleIntent(userMsg)) return false;
 
@@ -521,6 +603,7 @@ export default function Chatbot({ embedded = false, defaultOpen = false, classNa
     setInput('');
     setMessages((prev) => [...prev, { id: createMessageId('user'), role: 'user', content: userMsg }]);
 
+    if (handleDailyScheduleQuery(userMsg)) return;
     if (pendingScheduleUpdate && handleScheduleUpdateMessage(userMsg)) return;
     if (pendingSchedule && handleScheduleMessage(userMsg)) return;
     if (handleScheduleUpdateMessage(userMsg)) return;
