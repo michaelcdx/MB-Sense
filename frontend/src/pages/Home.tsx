@@ -175,6 +175,7 @@ export default function Home() {
     setAiChargingPlan,
     setAiChargingPlanStatus,
     addAiChargingPlanHistory,
+    clearAiChargingPlanHistory,
     restoreAiChargingPlanFromHistory,
     addEvent,
     updateEvent
@@ -333,6 +334,10 @@ export default function Home() {
         targetPercent: chargingTargetPercent,
         minimumPercent: chargingMinimumBatteryPercent,
       });
+    }
+
+    if (!requestAnotherOption && recommendationInputsChanged && aiChargingPlanHistory.length) {
+      clearAiChargingPlanHistory();
     }
 
     setAiChargingPlanStatus('loading');
@@ -504,13 +509,13 @@ export default function Home() {
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <button type="button" onClick={updateAiRecommendation} disabled={aiChargingPlanStatus === 'loading'} className="bg-primary text-on-primary py-3.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all active:scale-98 disabled:cursor-wait disabled:opacity-70 flex items-center justify-center gap-2 shadow-ambient">
-                <BatteryCharging className="w-4 h-4" />
+            <div className="grid gap-3 sm:grid-cols-2">
+              <button type="button" onClick={updateAiRecommendation} disabled={aiChargingPlanStatus === 'loading'} className="flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-primary px-4 py-3 text-center text-[11px] font-black uppercase leading-tight tracking-widest text-on-primary shadow-ambient transition-all hover:bg-primary-dim hover:shadow-ambient-lg active:scale-[0.98] disabled:cursor-wait disabled:opacity-70">
+                <BatteryCharging className="h-4 w-4 shrink-0" />
                 {aiRecommendationButtonLabel}
               </button>
               {plan.calendarAction.shouldCreateEvent && (
-                <button type="button" onClick={addChargingPlanToCalendar} className="bg-surface-container-low border border-outline-variant/45 rounded-xl px-3 py-2 text-center text-[10px] font-black uppercase tracking-widest text-slate-200 transition hover:border-primary/35 hover:text-primary">
+                <button type="button" onClick={addChargingPlanToCalendar} className="min-h-12 rounded-2xl border border-outline-variant/45 bg-surface-container-low px-4 py-3 text-center text-[10px] font-black uppercase leading-tight tracking-widest text-slate-200 transition hover:border-primary/35 hover:text-primary">
                   Put in your Calendar
                 </button>
               )}
@@ -521,25 +526,25 @@ export default function Home() {
 
       {aiChargingPlanHistory.length > 0 && (
         <section>
-          <div className="relative overflow-hidden rounded-3xl border border-outline-variant/45 bg-surface-container-lowest p-5 shadow-ambient-lg">
+          <div className="relative rounded-3xl border border-outline-variant/45 bg-surface-container-lowest p-5 shadow-ambient-lg">
             <div className="absolute inset-x-0 -top-px h-px bg-gradient-to-r from-transparent via-primary/35 to-transparent" />
             <div className="relative z-10">
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-                <div>
-                  <p className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-primary">
-                    <BatteryCharging className="h-4 w-4" />
-                    Recommendation History
-                  </p>
-                  <h2 className="mt-2 text-2xl font-extrabold leading-tight text-slate-100">Saved AI options</h2>
-                  <p className="mt-1 text-xs font-semibold leading-relaxed text-slate-400">Restore an earlier recommendation if the new option is not better.</p>
+              <div>
+                <p className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-primary">
+                  <BatteryCharging className="h-4 w-4" />
+                  Recommendation History
+                </p>
+                <div className="mt-2 flex items-center justify-between gap-3">
+                  <h2 className="min-w-0 text-xl font-extrabold leading-tight text-slate-100 sm:text-2xl">Saved AI options</h2>
+                  <div className="inline-flex shrink-0 items-center gap-2 rounded-full border border-primary/20 bg-primary/10 px-3 py-1.5 text-primary">
+                    <span className="text-[9px] font-black uppercase tracking-widest">Saved</span>
+                    <span className="text-lg font-black leading-none">{aiChargingPlanHistory.length}</span>
+                  </div>
                 </div>
-                <div className="rounded-2xl border border-primary/20 bg-primary/10 px-4 py-3 text-right">
-                  <p className="text-[9px] font-black uppercase tracking-widest text-primary">Saved</p>
-                  <p className="mt-1 text-2xl font-black leading-none text-primary">{aiChargingPlanHistory.length}</p>
-                </div>
+                <p className="mt-1 text-xs font-semibold leading-relaxed text-slate-400">Restore an earlier recommendation if the new option is not better.</p>
               </div>
 
-              <div className="mt-5 grid gap-3 lg:grid-cols-2">
+              <div className="mt-5 grid min-w-0 gap-3 lg:grid-cols-2">
                 {[...aiChargingPlanHistory].reverse().map((entry, index) => {
                   const entryStart = parsePlanDateTime(entry.plan.recommendedChargingStart);
                   const entryEnd = parsePlanDateTime(entry.plan.recommendedChargingEnd);
@@ -552,11 +557,11 @@ export default function Home() {
                     : savedAt.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 
                   return (
-                    <div key={entry.id} className="rounded-2xl border border-outline-variant/45 bg-surface-container-low p-4">
+                    <div key={entry.id} className="min-w-0 rounded-2xl border border-outline-variant/45 bg-surface-container-low p-4">
                       <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
+                        <div className="min-w-0 flex-1">
                           <p className="text-[10px] font-black uppercase tracking-widest text-primary">Option {aiChargingPlanHistory.length - index}</p>
-                          <h3 className="mt-1 truncate text-base font-black text-slate-100">{displayText(entry.plan.title)}</h3>
+                          <h3 className="mt-1 break-words text-base font-black leading-snug text-slate-100">{displayText(entry.plan.title)}</h3>
                           <p className="mt-1 text-[11px] font-semibold text-slate-500">{savedLabel}</p>
                         </div>
                         <button type="button" onClick={() => restoreHistoryOption(entry.id)} className="shrink-0 rounded-xl border border-primary/25 bg-primary/10 px-3 py-2 text-[10px] font-black uppercase tracking-widest text-primary transition hover:bg-primary hover:text-on-primary">
@@ -564,7 +569,7 @@ export default function Home() {
                         </button>
                       </div>
 
-                      <div className="mt-4 grid grid-cols-2 gap-2">
+                      <div className="mt-4 grid gap-2 sm:grid-cols-2">
                         <div className="rounded-xl border border-outline-variant/45 bg-surface-container-lowest p-3">
                           <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">Battery</p>
                           <p className="mt-1 text-sm font-black text-slate-100">{entry.batteryPercent}%</p>
@@ -576,9 +581,9 @@ export default function Home() {
                       </div>
 
                       <div className="mt-3 rounded-xl border border-outline-variant/45 bg-surface-container-lowest p-3">
-                        <p className="flex items-center gap-2 text-[9px] font-black uppercase tracking-widest text-slate-500">
-                          <MapPin className="h-3.5 w-3.5 text-primary" />
-                          {entryStation}
+                        <p className="flex min-w-0 items-start gap-2 text-[9px] font-black uppercase tracking-widest text-slate-500">
+                          <MapPin className="h-3.5 w-3.5 shrink-0 text-primary" />
+                          <span className="min-w-0 break-words">{entryStation}</span>
                         </p>
                         <p className="mt-2 text-sm font-extrabold leading-snug text-slate-100">{entryDate}</p>
                         <p className="mt-1 text-xs font-bold text-slate-400">{entryTime}</p>

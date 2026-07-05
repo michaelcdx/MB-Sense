@@ -65,14 +65,14 @@ type SpeechRecognitionLike = {
 
 type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
 
-function AiLogo({ className, inverted = false }: { className?: string; inverted?: boolean }) {
+function AiLogo({ className }: { className?: string }) {
   return (
     <img
-      src="/AI-logo-cropped.svg"
+      src="/AI-Logo.svg"
       alt=""
       aria-hidden="true"
       draggable={false}
-      className={cn('object-contain', inverted && 'brightness-0 invert', className)}
+      className={cn('block object-contain drop-shadow-[0_8px_18px_rgb(70_71_211_/_0.2)]', className)}
     />
   );
 }
@@ -700,8 +700,8 @@ export default function Chatbot({ embedded = false, defaultOpen = false, classNa
     >
       <div className="flex items-center justify-between border-b border-outline-variant/45 bg-surface-container-low px-5 py-4">
         <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-full border border-primary/25 bg-primary/10">
-            <AiLogo className="h-6 w-6" />
+          <div className="flex h-9 w-9 items-center justify-center rounded-2xl border border-primary/20 bg-surface-container-lowest/90 p-1 shadow-ambient">
+            <AiLogo className="h-full w-full" />
           </div>
           <div>
             <h3 className="font-bold uppercase leading-tight tracking-wide text-on-surface">MB Sense Assistant</h3>
@@ -846,8 +846,8 @@ export default function Chatbot({ embedded = false, defaultOpen = false, classNa
   return (
     <>
       {!isOpen && (
-        <button onClick={() => setIsOpen(true)} className="fixed bottom-24 right-6 z-[60] sm:bottom-6 flex h-14 w-14 items-center justify-center rounded-2xl border border-primary/25 bg-primary text-on-primary shadow-ambient-lg transition-all hover:bg-primary-dim active:scale-95" aria-label="Open AI assistant">
-          <AiLogo className="h-11 w-11" inverted />
+        <button onClick={() => setIsOpen(true)} className="floating-glass-button fixed bottom-24 right-6 z-[60] sm:bottom-6" aria-label="Open AI assistant">
+          <AiLogo className="h-9 w-9" />
         </button>
       )}
 

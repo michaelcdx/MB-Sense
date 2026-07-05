@@ -1,6 +1,6 @@
 import { motion } from 'motion/react';
 import { CalendarEvent, useAppStore, type ChargingStationCalendarOption } from '../store/useAppStore';
-import { AlertTriangle, BatteryCharging, BrainCircuit, Car, Check, Crosshair, MapPin, Save, Search, Trash2, Video, X, Zap } from 'lucide-react';
+import { AlertTriangle, BatteryCharging, BrainCircuit, Car, Check, Crosshair, MapPin, Plus, Save, Search, Trash2, Video, X, Zap } from 'lucide-react';
 import { cn } from '../lib/utils';
 import GlassButton from '../components/GlassButton';
 import { FormEvent, PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from 'react';
@@ -906,7 +906,7 @@ function EventSidePanel({ mode, form, editingEvent, onChange, onClose, onDelete,
   };
 
   return (
-    <aside className="h-full min-h-0 overflow-hidden border-t border-outline-variant/45 bg-surface-container-low text-on-surface shadow-ambient-lg lg:border-l lg:border-t-0">
+    <aside className="min-h-0 overflow-hidden border-t border-outline-variant/45 bg-surface-container-low text-on-surface lg:border-l lg:border-t-0">
       <form onSubmit={onSubmit} className="h-full overflow-y-auto p-4 pb-[calc(5rem+env(safe-area-inset-bottom))] lg:pb-4">
         <div className="mb-4 flex items-start justify-between gap-2">
           <div className="min-w-0">
@@ -1248,25 +1248,12 @@ export default function Calendar() {
   const displayedSelection = panelMode ? dragSelection : dragSelection ?? selectedEmptySlot;
   const hasPanel = panelMode !== null;
 
-  const focusDateWithoutHorizontalJump = (date: Date) => {
-    const nextDate = startOfDay(date);
-    const timelineStart = timelineDays[0] ? startOfDay(timelineDays[0]) : startOfDay(weekStart);
-    const timelineEnd = addDays(timelineDays[timelineDays.length - 1] ? startOfDay(timelineDays[timelineDays.length - 1]) : startOfDay(demoEnd), 1);
-
-    if (nextDate < timelineStart || nextDate >= timelineEnd) {
-      setActiveWeek(nextDate);
-      return;
-    }
-
-    setSelectedDate(nextDate);
-  };
-
   const openPanelForCreate = (date: Date, start = 9 * 60, end = 10 * 60) => {
     setSelectedEmptySlot(null);
     setEditingEvent(null);
     setForm(buildEmptyForm(date, start, end));
     setPanelMode('create');
-    focusDateWithoutHorizontalJump(date);
+    setActiveWeek(date);
   };
 
   const openPanelForEvent = (event: CalendarEvent) => {
@@ -1275,7 +1262,7 @@ export default function Calendar() {
     setEditingEvent(event);
     setForm(formFromEvent(event));
     setPanelMode('edit');
-    focusDateWithoutHorizontalJump(eventDate);
+    setActiveWeek(eventDate);
   };
 
   const closePanel = () => {
@@ -1367,7 +1354,7 @@ export default function Calendar() {
     else addEvent(nextEvent);
 
     setSelectedEmptySlot(null);
-    focusDateWithoutHorizontalJump(date);
+    setActiveWeek(date);
     setEditingEvent(nextEvent);
     setForm(formFromEvent(nextEvent));
     setPanelMode('edit');
@@ -1389,7 +1376,7 @@ export default function Calendar() {
     const existingEvent = calendarEvents.find((item) => item.id === confirmedEvent.id);
     if (existingEvent) updateEvent({ ...existingEvent, ...confirmedEvent });
     else addEvent(confirmedEvent);
-    focusDateWithoutHorizontalJump(getEventDate(confirmedEvent));
+    setActiveWeek(getEventDate(confirmedEvent));
     setEditingEvent(confirmedEvent);
     setForm(formFromEvent(confirmedEvent));
     setPanelMode('edit');
@@ -1419,7 +1406,7 @@ export default function Calendar() {
 
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="relative flex h-full min-h-0 flex-col overflow-hidden bg-surface text-on-surface">
-      <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)] overflow-hidden">
+      <div className={cn('grid min-h-0 flex-1 overflow-hidden', hasPanel ? 'grid-rows-[minmax(0,1fr)_minmax(240px,34vh)] lg:grid-cols-[minmax(0,1fr)_300px] lg:grid-rows-1' : 'grid-rows-[minmax(0,1fr)]')}>
         <CalendarWeekView
           days={timelineDays}
           weekStart={weekStart}
@@ -1432,10 +1419,8 @@ export default function Calendar() {
           onPointerMove={handleGridPointerMove}
           onPointerUp={handleGridPointerUp}
         />
-      </div>
 
-      {hasPanel && (
-        <div className="absolute inset-x-0 bottom-0 z-50 h-[min(520px,70dvh)] overflow-hidden lg:inset-y-0 lg:left-auto lg:right-0 lg:h-auto lg:w-[320px]">
+        {hasPanel && (
           <EventSidePanel
             mode={panelMode}
             form={form}
@@ -1447,18 +1432,18 @@ export default function Calendar() {
             onStationSelect={handleChargingStationSelect}
             onAddChargingPlan={handleAddChargingPlan}
           />
-        </div>
-      )}
+        )}
+      </div>
 
       {!hasPanel && (
         <button
           type="button"
           onClick={handleCreateFromSelectedSlot}
-          className="absolute bottom-[calc(6.25rem+env(safe-area-inset-bottom))] left-4 z-40 flex h-12 w-12 items-center justify-center rounded-full border border-primary/25 bg-primary text-on-primary shadow-ambient-lg transition hover:bg-primary-dim active:scale-95 sm:bottom-5"
+          className="floating-glass-button absolute bottom-[calc(6.25rem+env(safe-area-inset-bottom))] left-4 z-40 sm:bottom-5"
           aria-label={selectedEmptySlot ? 'Create schedule in selected time slot' : 'Create schedule'}
           title={selectedEmptySlot ? 'Create schedule in selected time slot' : 'Create schedule'}
         >
-          <span className="-mt-0.5 text-3xl font-black leading-none">+</span>
+          <Plus className="h-6 w-6 stroke-[3]" aria-hidden="true" />
         </button>
       )}
 

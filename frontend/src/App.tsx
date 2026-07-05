@@ -136,7 +136,7 @@ function AppShell() {
           <AppRoutes />
         </main>
         <BottomNav />
-        <Chatbot />
+        {!isMap && <Chatbot />}
       </div>
     </div>
   );

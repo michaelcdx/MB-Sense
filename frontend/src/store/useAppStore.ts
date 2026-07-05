@@ -144,6 +144,7 @@ interface AppStore {
   setAiChargingPlan: (plan: ChargingPlanResult | null, status?: AppStore['aiChargingPlanStatus'], inputSignature?: string | null) => void;
   setAiChargingPlanStatus: (status: AppStore['aiChargingPlanStatus']) => void;
   addAiChargingPlanHistory: (entry: Omit<AiChargingPlanHistoryEntry, 'id' | 'savedAt'>) => void;
+  clearAiChargingPlanHistory: () => void;
   restoreAiChargingPlanFromHistory: (historyId: string) => void;
   addEvent: (event: CalendarEvent) => void;
   updateEvent: (event: CalendarEvent) => void;
@@ -583,6 +584,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       }
     ]
   })),
+  clearAiChargingPlanHistory: () => set({ aiChargingPlanHistory: [] }),
   restoreAiChargingPlanFromHistory: (historyId) => set((state) => {
     const entry = state.aiChargingPlanHistory.find((item) => item.id === historyId);
     if (!entry) return {};
