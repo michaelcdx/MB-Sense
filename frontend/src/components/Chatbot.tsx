@@ -129,6 +129,7 @@ function applySingleFieldFallback(previousDraft: ScheduleDraft | null, nextDraft
 }
 
 export default function Chatbot({ embedded = false, defaultOpen = false, className }: ChatbotProps) {
+  const events = useAppStore((state) => state.events);
   const addEvent = useAppStore((state) => state.addEvent);
   const addRecentAction = useAppStore((state) => state.addRecentAction);
   const setActiveWeek = useCalendarViewStore((state) => state.setActiveWeek);
@@ -150,6 +151,31 @@ export default function Chatbot({ embedded = false, defaultOpen = false, classNa
   const latestVoiceTranscriptRef = useRef('');
   const loadingRef = useRef(false);
   const voiceAnswersRef = useRef(false);
+  const shouldSubmitVoiceTranscriptRef = useRef(true);
+  const closingVoiceRecognitionRef = useRef(false);
+
+  function closeVoiceRecognition(mode: 'stop' | 'abort' = 'abort', shouldSubmitTranscript = false, updateListeningState = true) {
+    shouldSubmitVoiceTranscriptRef.current = shouldSubmitTranscript;
+    const recognition = recognitionRef.current;
+    if (updateListeningState) setVoiceListening(false);
+
+    if (!recognition) {
+      closingVoiceRecognitionRef.current = false;
+      return;
+    }
+
+    if (closingVoiceRecognitionRef.current) return;
+    closingVoiceRecognitionRef.current = true;
+
+    try {
+      if (mode === 'stop') recognition.stop();
+      else recognition.abort();
+    } catch (error) {
+      console.error('Unable to close speech recognition', error);
+      recognitionRef.current = null;
+      closingVoiceRecognitionRef.current = false;
+    }
+  }
 
   useEffect(() => {
     loadingRef.current = loading;
@@ -179,11 +205,15 @@ export default function Chatbot({ embedded = false, defaultOpen = false, classNa
     setVoiceSupported(Boolean(getSpeechRecognitionConstructor()));
     setVoiceAnswerSupported(getSpeechAnswerSupported());
     return () => {
-      recognitionRef.current?.abort();
+      closeVoiceRecognition('abort', false, false);
       recognitionRef.current = null;
       if (getSpeechAnswerSupported()) window.speechSynthesis.cancel();
     };
   }, []);
+
+  useEffect(() => {
+    if (!isOpen && recognitionRef.current) closeVoiceRecognition('abort', false);
+  }, [isOpen]);
 
   const speakAssistantText = (content: string) => {
     if (!voiceAnswersRef.current || !getSpeechAnswerSupported()) return;
@@ -278,7 +308,7 @@ export default function Chatbot({ embedded = false, defaultOpen = false, classNa
 
   const startVoiceInput = () => {
     if (voiceListening) {
-      recognitionRef.current?.stop();
+      closeVoiceRecognition('stop', true);
       return;
     }
 
@@ -297,6 +327,8 @@ export default function Chatbot({ embedded = false, defaultOpen = false, classNa
       recognition.continuous = false;
       recognition.interimResults = true;
       recognition.maxAlternatives = 1;
+      shouldSubmitVoiceTranscriptRef.current = true;
+      closingVoiceRecognitionRef.current = false;
       finalVoiceTranscriptRef.current = '';
       latestVoiceTranscriptRef.current = '';
 
@@ -306,41 +338,55 @@ export default function Chatbot({ embedded = false, defaultOpen = false, classNa
 
       recognition.onresult = (event) => {
         let interimTranscript = '';
+        let receivedFinalTranscript = false;
+
         for (let index = event.resultIndex; index < event.results.length; index += 1) {
           const result = event.results[index];
           const transcript = result[0]?.transcript ?? '';
-          if (result.isFinal) finalVoiceTranscriptRef.current = normalizeTranscript(`${finalVoiceTranscriptRef.current} ${transcript}`);
-          else interimTranscript = normalizeTranscript(`${interimTranscript} ${transcript}`);
+          if (result.isFinal) {
+            finalVoiceTranscriptRef.current = normalizeTranscript(`${finalVoiceTranscriptRef.current} ${transcript}`);
+            receivedFinalTranscript = true;
+          } else {
+            interimTranscript = normalizeTranscript(`${interimTranscript} ${transcript}`);
+          }
         }
 
         const visibleTranscript = normalizeTranscript(`${finalVoiceTranscriptRef.current} ${interimTranscript}`);
         latestVoiceTranscriptRef.current = visibleTranscript;
         if (visibleTranscript) setInput(visibleTranscript);
+        if (receivedFinalTranscript) closeVoiceRecognition('stop', true);
       };
-
       recognition.onerror = (event) => {
-        console.error('Speech recognition error', event.error ?? event.message ?? event);
+        if (!closingVoiceRecognitionRef.current) console.error('Speech recognition error', event.error ?? event.message ?? event);
+        closeVoiceRecognition('abort', false);
       };
 
       recognition.onend = () => {
         const spokenMessage = normalizeTranscript(finalVoiceTranscriptRef.current || latestVoiceTranscriptRef.current);
+        const shouldSubmitTranscript = shouldSubmitVoiceTranscriptRef.current;
         finalVoiceTranscriptRef.current = '';
         latestVoiceTranscriptRef.current = '';
         recognitionRef.current = null;
+        closingVoiceRecognitionRef.current = false;
+        shouldSubmitVoiceTranscriptRef.current = true;
         setVoiceListening(false);
-        if (spokenMessage) void sendMessage(spokenMessage);
+        if (shouldSubmitTranscript && spokenMessage) void sendMessage(spokenMessage);
       };
 
       recognitionRef.current = recognition;
       recognition.start();
     } catch (error) {
       console.error('Unable to start speech recognition', error);
+      recognitionRef.current = null;
+      closingVoiceRecognitionRef.current = false;
+      finalVoiceTranscriptRef.current = '';
+      latestVoiceTranscriptRef.current = '';
       setVoiceListening(false);
     }
   };
 
   const handlePutInCalendar = (messageId: string, draft: CompleteScheduleDraft) => {
-    const event = buildCalendarEventFromDraft(draft);
+    const event = buildCalendarEventFromDraft(draft, events);
     addEvent(event);
     setActiveWeek(event.date);
     addRecentAction({

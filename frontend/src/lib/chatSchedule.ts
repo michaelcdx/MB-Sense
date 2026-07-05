@@ -21,6 +21,7 @@ export type ScheduleField = 'title' | 'place' | 'date' | 'time';
 const allFieldLabels = [
   'time and date',
   'date and time',
+  'destination',
   'location',
   'place',
   'venue',
@@ -42,6 +43,8 @@ const nonTitleWords = [
   'book',
   'block',
   'reserve',
+  'today',
+  'tomorrow',
 ];
 
 const monthIndexes: Record<string, number> = {
@@ -325,13 +328,18 @@ function parseTime(message: string) {
 }
 
 function extractPlace(message: string) {
-  const labeled = extractFieldValue(message, ['place', 'location', 'venue']);
+  const labeled = extractFieldValue(message, ['place', 'location', 'venue', 'destination']);
   if (labeled) return labeled;
 
-  const placeMatches = Array.from(message.matchAll(/\b(?:at|in)\s+(.+?)(?=\s+\b(?:on|at|from|by|tomorrow|today|next)\b|[,.;]|$)/gi));
+  const placeMatches = Array.from(message.matchAll(/\b(?:at|in|towards)\s+(.+?)(?=\s+\b(?:on|at|from|by|tomorrow|today|tonight|next|date|time)\b|[,.;]|$)/gi));
+  const destinationMatches = Array.from(message.matchAll(/\b(?:go(?:ing)?|travel(?:ing)?|drive|head(?:ing)?|visit(?:ing)?|come)\s+to\s+(.+?)(?=\s+\b(?:on|at|from|by|tomorrow|today|tonight|next|date|time)\b|[,.;]|$)/gi));
   const value = placeMatches
+    .concat(destinationMatches)
     .map((match) => cleanExtractedValue(match[1]))
-    .find((candidate) => candidate && !/^\d{1,2}(?::\d{2})?\s*(am|pm)?$/i.test(candidate) && !/^my calendar$/i.test(candidate));
+    .find((candidate) => candidate
+      && !/^\d{1,2}(?::\d{2})?\s*(am|pm)?$/i.test(candidate)
+      && !/^my calendar$/i.test(candidate)
+      && !/^(today|tomorrow|tonight|next\s+\w+)$/i.test(candidate));
 
   if (!value) return undefined;
   return value;
@@ -357,20 +365,57 @@ function normalizeTitleValue(value: string) {
   return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
 }
 
+function isWeakTitle(value: string) {
+  const lower = value.toLowerCase();
+  return !lower
+    || nonTitleWords.includes(lower)
+    || /^(today|tomorrow|tonight|next\s+\w+)$/.test(lower)
+    || /^(sun|mon|tue|tues|wed|thu|thurs|fri|sat)(day)?$/.test(lower)
+    || /^\d{1,2}(?::\d{2})?\s*(am|pm)?$/i.test(value)
+    || /^\d{4}-\d{1,2}-\d{1,2}$/.test(value)
+    || /^\d{1,2}[/.]\d{1,2}(?:[/.](?:20\d{2}|\d{2}))?$/.test(value);
+}
+
+function titleFromPlace(message: string, place: string) {
+  const lower = message.toLowerCase();
+  const cleanedPlace = normalizeTitleValue(place);
+  if (!cleanedPlace) return undefined;
+
+  if (/\b(class|lecture|seminar|workshop|exam)\b/.test(lower)) return `Attending ${cleanedPlace}`;
+  if (/\b(meet|meeting|appointment|discussion|sync)\b/.test(lower)) return `Meeting at ${cleanedPlace}`;
+  if (/\b(lunch|dinner|breakfast|coffee)\b/.test(lower)) {
+    const meal = lower.match(/\b(lunch|dinner|breakfast|coffee)\b/)?.[1] ?? 'meal';
+    return `${meal.charAt(0).toUpperCase()}${meal.slice(1)} at ${cleanedPlace}`;
+  }
+  if (/\b(pick up|pickup|collect)\b/.test(lower)) return `Pickup at ${cleanedPlace}`;
+  if (/\b(drop off|dropoff)\b/.test(lower)) return `Drop-off at ${cleanedPlace}`;
+  if (/\b(visit|visiting|go to|going to|travel to|drive to|head to|come to)\b/.test(lower)) return `Visiting ${cleanedPlace}`;
+
+  return `Visiting ${cleanedPlace}`;
+}
 function extractPurposeTitle(message: string) {
   const match = message.match(/\b(?:make|create|add|plan|book|block|reserve|put|schedule)?\s*(?:a\s+)?(?:schedule|calendar\s+event|event|appointment)\s+(?:for|about|called|named|titled)\s+(.+?)(?=\s+\b(?:at|in|on|from|until|till|through|today|tomorrow|next|place|location|venue|date|time)\b|[,.;]|$)/i);
   if (!match?.[1]) return undefined;
 
   const title = normalizeTitleValue(match[1]);
-  return title && !nonTitleWords.includes(title.toLowerCase()) ? title : undefined;
+  return title && !isWeakTitle(title) ? title : undefined;
 }
 
 function extractTitle(message: string) {
   const labeled = extractFieldValue(message, ['title', 'event', 'name']);
-  if (labeled) return normalizeTitleValue(labeled);
+  if (labeled) {
+    const title = normalizeTitleValue(labeled);
+    if (title && !isWeakTitle(title)) return title;
+  }
 
   const purposeTitle = extractPurposeTitle(message);
   if (purposeTitle) return purposeTitle;
+
+  const inferredPlace = extractPlace(message);
+  if (inferredPlace) {
+    const inferredTitle = titleFromPlace(message, inferredPlace);
+    if (inferredTitle && !isWeakTitle(inferredTitle)) return inferredTitle;
+  }
 
   let working = normalizeSpaces(message)
     .replace(/^(please|can you|could you|help me|i want to|i need to|i would like to)\s+/i, '')
@@ -383,7 +428,7 @@ function extractTitle(message: string) {
   working = working.split(/\s+\b(?:at|in|on|from|until|till|through)\b\s+/i)[0];
   working = normalizeTitleValue(working);
 
-  if (!working || nonTitleWords.includes(working.toLowerCase())) return undefined;
+  if (!working || isWeakTitle(working)) return undefined;
   return working;
 }
 
@@ -456,18 +501,20 @@ export function formatScheduleTimeRange(draft: Pick<CompleteScheduleDraft, 'star
 }
 
 export function formatMissingScheduleQuestion(missing: ScheduleField[]) {
+  if (!missing.length) return 'I have all the schedule details.';
+
   const labels: Record<ScheduleField, string> = {
     title: 'title',
     place: 'place',
     date: 'date',
-    time: 'time',
+    time: 'start time',
   };
   const missingLabels = missing.map((field) => labels[field]);
   const joined = missingLabels.length === 1
     ? missingLabels[0]
     : `${missingLabels.slice(0, -1).join(', ')} and ${missingLabels[missingLabels.length - 1]}`;
 
-  return `I can put that in your calendar once I have the ${joined}.`;
+  return `I can put that in your calendar once I have the ${joined}. Please send only the missing schedule details; I will not guess them.`;
 }
 
 function getEventType(startTime: string): CalendarEvent['type'] {
@@ -479,7 +526,7 @@ function getEventType(startTime: string): CalendarEvent['type'] {
 
 function getEventCategory(title: string): CalendarEvent['category'] {
   const lower = title.toLowerCase();
-  if (/\b(class|lecture|study|exam)\b/.test(lower)) return 'study';
+  if (/\b(class|lecture|study|exam|university|campus|school)\b/.test(lower)) return 'study';
   if (/\b(deadline|assignment|submission)\b/.test(lower)) return 'assignment';
   if (/\b(urgent|important|pitch|board)\b/.test(lower)) return 'important';
   if (/\b(charge|charging)\b/.test(lower)) return 'charging';
@@ -492,9 +539,87 @@ function isRemotePlace(place: string) {
   return /\b(online|remote|zoom|teams|google meet|meet call|video call)\b/i.test(place);
 }
 
-export function buildCalendarEventFromDraft(draft: CompleteScheduleDraft): CalendarEvent {
+function getEventDate(event: CalendarEvent) {
+  return event.date instanceof Date ? event.date : new Date(event.date);
+}
+
+function parseDisplayTimeToMinutes(value: string) {
+  const match = value.match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
+  if (!match) return 0;
+
+  let hour = Number(match[1]);
+  const minute = Number(match[2]);
+  const meridiem = match[3]?.toUpperCase();
+  if (meridiem === 'PM' && hour !== 12) hour += 12;
+  if (meridiem === 'AM' && hour === 12) hour = 0;
+  return hour * 60 + minute;
+}
+
+function getEventDateTime(event: CalendarEvent, time = event.time) {
+  const date = getEventDate(event);
+  const minutes = parseDisplayTimeToMinutes(time);
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate(), Math.floor(minutes / 60), minutes % 60);
+}
+
+function normalizeLocationKey(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function samePlace(a: string, b: string) {
+  const first = normalizeLocationKey(a);
+  const second = normalizeLocationKey(b);
+  return Boolean(first && second && (first === second || first.includes(second) || second.includes(first)));
+}
+
+function shortPlaceLabel(place: string) {
+  return cleanExtractedValue(place).split(',')[0] || 'previous location';
+}
+
+function findPreviousEvent(events: CalendarEvent[], targetStart: Date) {
+  return [...events]
+    .filter((event) => getEventDateTime(event, event.endTime ?? event.time) <= targetStart)
+    .sort((a, b) => getEventDateTime(b, b.endTime ?? b.time).getTime() - getEventDateTime(a, a.endTime ?? a.time).getTime())[0];
+}
+
+function predictTravelContext(draft: CompleteScheduleDraft, events: CalendarEvent[]) {
   const [year, month, day] = draft.date.split('-').map(Number);
-  const carNeeded = !isRemotePlace(draft.place);
+  const startMinutes = inputTimeToMinutes(draft.startTime);
+  const targetStart = new Date(year, month - 1, day, Math.floor(startMinutes / 60), startMinutes % 60);
+  const previousEvent = findPreviousEvent(events, targetStart);
+
+  if (isRemotePlace(draft.place)) {
+    return {
+      carNeeded: false,
+      status: 'Remote / No Car',
+      notes: 'Created from MB Sense Assistant. This looks remote, so no drive is planned.',
+    };
+  }
+
+  if (previousEvent && samePlace(previousEvent.location, draft.place)) {
+    return {
+      carNeeded: false,
+      status: `Already at ${shortPlaceLabel(draft.place)}`,
+      notes: `Created from MB Sense Assistant. Previous calendar location is also ${shortPlaceLabel(draft.place)}, so no drive is planned.`,
+    };
+  }
+
+  if (previousEvent && !isRemotePlace(previousEvent.location)) {
+    return {
+      carNeeded: true,
+      status: `Vehicle Required from ${shortPlaceLabel(previousEvent.location)}`,
+      notes: `Created from MB Sense Assistant. Previous calendar location is ${shortPlaceLabel(previousEvent.location)}, so MB Sense marked this as a driving event.`,
+    };
+  }
+
+  return {
+    carNeeded: true,
+    status: 'Vehicle Required',
+    notes: 'Created from MB Sense Assistant. No earlier physical calendar location was found, so MB Sense marked this as a driving event.',
+  };
+}
+export function buildCalendarEventFromDraft(draft: CompleteScheduleDraft, existingEvents: CalendarEvent[] = []): CalendarEvent {
+  const [year, month, day] = draft.date.split('-').map(Number);
+  const travelContext = predictTravelContext(draft, existingEvents);
 
   return {
     id: `chat-${Date.now()}`,
@@ -503,11 +628,11 @@ export function buildCalendarEventFromDraft(draft: CompleteScheduleDraft): Calen
     time: formatScheduleTime(draft.startTime),
     endTime: formatScheduleTime(draft.endTime),
     date: new Date(year, month - 1, day),
-    carNeeded,
+    carNeeded: travelContext.carNeeded,
     type: getEventType(draft.startTime),
     category: getEventCategory(draft.title),
-    status: carNeeded ? 'Vehicle Required' : 'Remote / No Car',
-    notes: 'Created from MB Sense Assistant.',
+    status: travelContext.status,
+    notes: travelContext.notes,
   };
 }
 
