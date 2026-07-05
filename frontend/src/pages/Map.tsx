@@ -723,10 +723,10 @@ function buildDriveDestinationFromLocationSearch(result: LocationSearchResult): 
   });
 }
 
-function buildCalendarDriveDestinations(events: CalendarEvent[], today: Date, geocodedLocations: Record<string, Coordinates | null>) {
+function buildCalendarDriveDestinations(events: CalendarEvent[], targetDate: Date, geocodedLocations: Record<string, Coordinates | null>) {
   const drivingEvents = [...events]
     .filter((event) => isDrivingRequiredActivity(event))
-    .filter((event) => isSameCalendarDay(getEventDate(event), today))
+    .filter((event) => isSameCalendarDay(getEventDate(event), targetDate))
     .sort((a, b) => {
       const dateDelta = getEventDate(a).getTime() - getEventDate(b).getTime();
       return dateDelta || parseCalendarTimeToMinutes(a.departureTime ?? a.time) - parseCalendarTimeToMinutes(b.departureTime ?? b.time);
@@ -3138,14 +3138,19 @@ export default function MapView() {
   const cameraStateRef = useRef<MapCameraState>(cameraState);
   const isFutureDrivePreview = driveExperienceMode === 'futureDrivePreview';
   const [calendarToday] = useState(() => startOfCalendarDay(new Date()));
+  const calendarTomorrow = useMemo(() => addCalendarDays(calendarToday, 1), [calendarToday]);
   const [selectedFutureDateKey, setSelectedFutureDateKey] = useState(() => getMapDateKey(addCalendarDays(startOfCalendarDay(new Date()), 1)));
   const routeRequestDestination = useMemo(() => buildRouteDestinationFromParams(searchParams), [searchParams]);
   const calendarDriveDestinations = useMemo(
     () => buildCalendarDriveDestinations(events, calendarToday, geocodedCalendarLocations),
     [calendarToday, events, geocodedCalendarLocations]
   );
+  const calendarTomorrowDriveDestinations = useMemo(
+    () => buildCalendarDriveDestinations(events, calendarTomorrow, geocodedCalendarLocations),
+    [calendarTomorrow, events, geocodedCalendarLocations]
+  );
   const driveDestinations = useMemo(() => {
-    const destinations = [...calendarDriveDestinations];
+    const destinations = [...calendarDriveDestinations, ...calendarTomorrowDriveDestinations];
 
     if (manualDriveDestination && !destinations.some((destination) => destination.id === manualDriveDestination.id)) {
       destinations.unshift(manualDriveDestination);
@@ -3156,17 +3161,32 @@ export default function MapView() {
     }
 
     return destinations;
-  }, [calendarDriveDestinations, manualDriveDestination, routeRequestDestination]);
-  const visibleDrivingDestinations = useMemo(() => {
+  }, [calendarDriveDestinations, calendarTomorrowDriveDestinations, manualDriveDestination, routeRequestDestination]);
+  const destinationMatchesSearch = useCallback((destination: DriveDestination, query: string) => (
+    `${destination.name} ${destination.detail} ${destination.eventName ?? ''} ${destination.eventLocation ?? ''}`.toLowerCase().includes(query)
+  ), []);
+  const visibleTodayDrivingDestinations = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
     const destinations = query
-      ? calendarDriveDestinations.filter((destination) =>
-          `${destination.name} ${destination.detail} ${destination.eventName ?? ''} ${destination.eventLocation ?? ''}`.toLowerCase().includes(query)
-        )
+      ? calendarDriveDestinations.filter((destination) => destinationMatchesSearch(destination, query))
       : calendarDriveDestinations;
 
     return destinations.slice(0, 4);
-  }, [calendarDriveDestinations, searchQuery]);
+  }, [calendarDriveDestinations, destinationMatchesSearch, searchQuery]);
+  const visibleTomorrowDrivingDestinations = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    const destinations = query
+      ? calendarTomorrowDriveDestinations.filter((destination) => destinationMatchesSearch(destination, query))
+      : calendarTomorrowDriveDestinations;
+
+    return destinations.slice(0, 4);
+  }, [calendarTomorrowDriveDestinations, destinationMatchesSearch, searchQuery]);
+  const visibleDrivingDestinations = useMemo(
+    () => isFutureDrivePreview
+      ? [...visibleTomorrowDrivingDestinations, ...visibleTodayDrivingDestinations]
+      : [...visibleTodayDrivingDestinations, ...visibleTomorrowDrivingDestinations],
+    [isFutureDrivePreview, visibleTodayDrivingDestinations, visibleTomorrowDrivingDestinations]
+  );
   const showDrivingDestinationPanel = searchPanelOpen;
   const selectedDestination = useMemo(
     () => (
@@ -3287,14 +3307,16 @@ export default function MapView() {
 
     events.forEach((event) => {
       if (!isDrivingRequiredActivity(event)) return;
-      if (!isSameCalendarDay(getEventDate(event), calendarToday)) return;
+      const eventDate = getEventDate(event);
+      const isTodayOrTomorrow = isSameCalendarDay(eventDate, calendarToday) || isSameCalendarDay(eventDate, calendarTomorrow);
+      if (!isTodayOrTomorrow) return;
       if (resolveLocationCoordinates(event.location)) return;
       if (hasGeocodedLocationKey(geocodedCalendarLocations, event.location)) return;
       locationNames.add(event.location);
     });
 
     return Array.from(locationNames);
-  }, [calendarToday, events, geocodedCalendarLocations]);
+  }, [calendarToday, calendarTomorrow, events, geocodedCalendarLocations]);
 
   useEffect(() => {
     if (!unresolvedCalendarLocationNames.length) return;
@@ -4642,6 +4664,84 @@ export default function MapView() {
       : 'Overview';
   const MapStateIcon = activeNavigation ? Navigation : isManualExplore ? LocateFixed : Route;
   const showLocationSearchResults = !isFutureDrivePreview && searchQuery.trim().length >= 2;
+  const destinationQueryActive = searchQuery.trim().length > 0;
+  const showTodayDestinationSection = destinationQueryActive
+    ? visibleTodayDrivingDestinations.length > 0
+    : calendarDriveDestinations.length > 0;
+  const showTomorrowDestinationSection = destinationQueryActive
+    ? visibleTomorrowDrivingDestinations.length > 0
+    : calendarTomorrowDriveDestinations.length > 0;
+  const hasVisibleScheduledDestinations = showTodayDestinationSection || showTomorrowDestinationSection;
+  const scheduledDestinationEmptyMessage = destinationQueryActive
+    ? 'No matching scheduled driving destinations.'
+    : 'No car-needed drives on today or tomorrow\'s schedule.';
+
+  const renderDrivingDestinationRow = (destination: DriveDestination) => {
+    const isSelected = selectedDestination.id === destination.id;
+    const isLoading = routeLoadingDestinationId === destination.id;
+    const locationStatus = destination.locationStatus ?? 'resolved';
+    const isLocationResolved = locationStatus === 'resolved';
+    const routeMeta = isLoading
+      ? 'Loading route...'
+      : locationStatus === 'resolving'
+        ? 'Resolving calendar location...'
+        : locationStatus === 'unavailable'
+          ? 'Location unavailable'
+          : [destination.departAt, destination.eta, destination.distance].join(' - ');
+    const title = destination.eventName ?? destination.name;
+    const detail = destination.eventName && isLocationResolved
+      ? `${destination.name} - ${routeMeta}`
+      : routeMeta;
+
+    return (
+      <button
+        key={destination.id}
+        type="button"
+        onMouseDown={(event) => event.preventDefault()}
+        onClick={() => handleDestinationSelect(destination)}
+        aria-disabled={!isLocationResolved}
+        className={cn(
+          'flex min-h-14 w-full items-center gap-2.5 rounded-[18px] px-2.5 py-2 text-left transition active:scale-[0.99]',
+          isSelected ? 'bg-primary/12 text-on-surface' : 'hover:bg-primary/10',
+          !isLocationResolved && 'cursor-not-allowed opacity-65 hover:bg-transparent active:scale-100'
+        )}
+      >
+        <span
+          className={cn(
+            'flex h-8 w-8 shrink-0 items-center justify-center rounded-full border',
+            isSelected ? 'border-primary/35 bg-primary text-on-primary' : 'border-primary/20 bg-primary/10 text-primary'
+          )}
+        >
+          <MapPin className="h-3.5 w-3.5" />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-[13px] font-semibold text-on-surface">{title}</span>
+          <span className="mt-0.5 block truncate text-[10.5px] font-semibold text-slate-500">
+            {detail}
+          </span>
+        </span>
+        <span className="shrink-0 rounded-full border border-outline-variant/45 bg-surface-container-low px-2 py-0.5 text-[9px] font-black text-slate-300">
+          {destination.traffic}
+        </span>
+      </button>
+    );
+  };
+
+  const renderDrivingDestinationSection = (label: string, total: number, destinations: DriveDestination[], divided = false) => {
+    if (!destinations.length) return null;
+
+    return (
+      <div className={cn(divided && 'mt-1 border-t border-outline-variant/35 pt-1')}>
+        <div className="flex items-center justify-between gap-3 px-2 py-1">
+          <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">{label}</p>
+          <span className="rounded-full border border-primary/18 bg-primary/10 px-2 py-0.5 text-[9px] font-black text-primary">
+            {total}
+          </span>
+        </div>
+        {destinations.map(renderDrivingDestinationRow)}
+      </div>
+    );
+  };
   const mapStatePositionClass = activeNavigation
     ? 'bottom-[calc(17.25rem+env(safe-area-inset-bottom))]'
     : 'bottom-[calc(18.25rem+env(safe-area-inset-bottom))]';
@@ -4761,62 +4861,11 @@ export default function MapView() {
 
           {showDrivingDestinationPanel && (
             <div className="mt-2 overflow-hidden rounded-[22px] border border-outline-variant/45 bg-surface-container-lowest/92 p-2 shadow-ambient-lg backdrop-blur-2xl">
-              <div className="flex items-center justify-between gap-3 px-2 pb-1.5">
-                <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">Today's driving destinations</p>
-                <span className="rounded-full border border-primary/18 bg-primary/10 px-2 py-0.5 text-[9px] font-black text-primary">
-                  {calendarDriveDestinations.length}
-                </span>
-              </div>
               <div className="max-h-[min(34dvh,18rem)] overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                {visibleDrivingDestinations.map((destination) => {
-                  const isSelected = selectedDestination.id === destination.id;
-                  const isLoading = routeLoadingDestinationId === destination.id;
-                  const locationStatus = destination.locationStatus ?? 'resolved';
-                  const isLocationResolved = locationStatus === 'resolved';
-                  const destinationMeta = isLoading
-                    ? 'Loading route...'
-                    : locationStatus === 'resolving'
-                      ? 'Resolving calendar location...'
-                      : locationStatus === 'unavailable'
-                        ? 'Location unavailable'
-                        : [destination.departAt, destination.eta, destination.distance].join(' - ');
-
-                  return (
-                    <button
-                      key={destination.id}
-                      type="button"
-                      onMouseDown={(event) => event.preventDefault()}
-                      onClick={() => handleDestinationSelect(destination)}
-                      aria-disabled={!isLocationResolved}
-                      className={cn(
-                        'flex min-h-14 w-full items-center gap-2.5 rounded-[18px] px-2.5 py-2 text-left transition active:scale-[0.99]',
-                        isSelected ? 'bg-primary/12 text-on-surface' : 'hover:bg-primary/10',
-                        !isLocationResolved && 'cursor-not-allowed opacity-65 hover:bg-transparent active:scale-100'
-                      )}
-                    >
-                      <span
-                        className={cn(
-                          'flex h-8 w-8 shrink-0 items-center justify-center rounded-full border',
-                          isSelected ? 'border-primary/35 bg-primary text-on-primary' : 'border-primary/20 bg-primary/10 text-primary'
-                        )}
-                      >
-                        <MapPin className="h-3.5 w-3.5" />
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-[13px] font-semibold text-on-surface">{destination.name}</span>
-                        <span className="mt-0.5 block truncate text-[10.5px] font-semibold text-slate-500">
-                          {destinationMeta}
-                        </span>
-                      </span>
-                      <span className="shrink-0 rounded-full border border-outline-variant/45 bg-surface-container-low px-2 py-0.5 text-[9px] font-black text-slate-300">
-                        {destination.traffic}
-                      </span>
-                    </button>
-                  );
-                })}
-
+                {renderDrivingDestinationSection('Today\'s driving destinations', calendarDriveDestinations.length, visibleTodayDrivingDestinations)}
+                {renderDrivingDestinationSection('Tomorrow destination', calendarTomorrowDriveDestinations.length, visibleTomorrowDrivingDestinations, showTodayDestinationSection)}
                 {showLocationSearchResults && (
-                  <div className={cn(visibleDrivingDestinations.length && 'mt-1 border-t border-outline-variant/35 pt-1')}>
+                  <div className={cn(hasVisibleScheduledDestinations && 'mt-1 border-t border-outline-variant/35 pt-1')}>
                     <div className="flex items-center justify-between gap-3 px-2 py-1">
                       <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">KL locations</p>
                       {locationSearchStatus === 'loading' && (
@@ -4873,9 +4922,9 @@ export default function MapView() {
                   </div>
                 )}
 
-                {!visibleDrivingDestinations.length && !showLocationSearchResults && (
+                {!hasVisibleScheduledDestinations && !showLocationSearchResults && (
                   <div className="flex min-h-14 items-center justify-center rounded-[18px] px-3 py-3 text-center">
-                    <p className="text-[11px] font-semibold leading-relaxed text-slate-500">No car-needed drives on today's schedule.</p>
+                    <p className="text-[11px] font-semibold leading-relaxed text-slate-500">{scheduledDestinationEmptyMessage}</p>
                   </div>
                 )}
               </div>
