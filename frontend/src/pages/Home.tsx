@@ -1,5 +1,5 @@
 import { motion } from 'motion/react';
-import { useAppStore, type ChargingStationCalendarOption } from '../store/useAppStore';
+import { getResolvedAppDate, useAppStore, type ChargingStationCalendarOption } from '../store/useAppStore';
 import { AnimatePresence } from 'motion/react';
 import { BatteryCharging, Battery, CalendarClock, Clock, MapPin, Navigation, PlugZap, ShieldCheck, Thermometer, Timer, Zap } from 'lucide-react';
 import { useState, useEffect, useMemo } from 'react';
@@ -166,6 +166,8 @@ export default function Home() {
     vehicle,
     chargingTargetPercent,
     chargingMinimumBatteryPercent,
+    appTimeMode,
+    manualAppDateTime,
     events,
     aiChargingPlan,
     aiChargingPlanStatus,
@@ -182,29 +184,31 @@ export default function Home() {
   } = useAppStore();
   const setActiveWeek = useCalendarViewStore((state) => state.setActiveWeek);
   const navigate = useNavigate();
-  const [time, setTime] = useState('');
-  const [dateLabel, setDateLabel] = useState('');
+  const [clockTick, setClockTick] = useState(() => Date.now());
   const [showAllTodayForecastTrips, setShowAllTodayForecastTrips] = useState(false);
 
   useEffect(() => {
-    const updateTime = () => {
-      const now = new Date();
-      setTime(now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
-      setDateLabel(now.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }));
-    };
+    if (appTimeMode !== 'realtime') return;
+
+    const updateTime = () => setClockTick(Date.now());
     updateTime();
     const interval = setInterval(updateTime, 60000);
     return () => clearInterval(interval);
-  }, []);
+  }, [appTimeMode]);
 
+  const appNow = useMemo(() => getResolvedAppDate(appTimeMode, manualAppDateTime, new Date(clockTick)), [appTimeMode, manualAppDateTime, clockTick]);
+  const appNowTime = appNow.getTime();
+  const appClockSignature = appTimeMode === 'manual' ? manualAppDateTime ?? appNow.toISOString() : `realtime:${startOfLocalDay(appNow).getTime()}`;
+  const time = appNow.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const dateLabel = appNow.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
   const scheduleEvents = useMemo(() => events.filter((event) => !event.aiChargingPlan && !event.isAiRecommendationPreview), [events]);
   const currentPlannerInput = useMemo(
-    () => buildChargingPlanInput(scheduleEvents, vehicle, weather, null, chargingTargetPercent, chargingMinimumBatteryPercent, calendarRevision),
-    [calendarRevision, chargingMinimumBatteryPercent, chargingTargetPercent, scheduleEvents, vehicle, weather]
+    () => buildChargingPlanInput(scheduleEvents, vehicle, weather, null, chargingTargetPercent, chargingMinimumBatteryPercent, calendarRevision, appNow),
+    [appNowTime, calendarRevision, chargingMinimumBatteryPercent, chargingTargetPercent, scheduleEvents, vehicle, weather]
   );
   const currentRecommendationInputSignature = useMemo(
-    () => buildChargingPlanInputSignature(scheduleEvents, vehicle, weather, chargingTargetPercent, chargingMinimumBatteryPercent),
-    [chargingMinimumBatteryPercent, chargingTargetPercent, scheduleEvents, vehicle, weather]
+    () => `${appClockSignature}:${buildChargingPlanInputSignature(scheduleEvents, vehicle, weather, chargingTargetPercent, chargingMinimumBatteryPercent, appNow)}`,
+    [appClockSignature, appNow, chargingMinimumBatteryPercent, chargingTargetPercent, scheduleEvents, vehicle, weather]
   );
   const hasPlan = Boolean(aiChargingPlan);
   const recommendationInputsChanged = hasPlan && aiChargingPlanInputSignature !== currentRecommendationInputSignature;
@@ -255,7 +259,7 @@ export default function Home() {
   const chargingStationNavigationUrl = buildMapDirectionsUrl(navigationStation, bestChargingStation);
   const weatherTemperatureLabel = `${Math.round(Number(weather.temp) || 0)}\u00B0C`;
   const batteryScheduleForecasts = useMemo(() => {
-    const today = startOfLocalDay(new Date());
+    const today = startOfLocalDay(appNow);
     const buckets = [
       { id: 'today', title: 'Today', subtitle: today.toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' }), startOffset: 0, endOffset: 0 },
       { id: 'tomorrow', title: 'Tomorrow', subtitle: addLocalDays(today, 1).toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' }), startOffset: 1, endOffset: 1 },
@@ -311,7 +315,7 @@ export default function Home() {
         };
       }
     });
-  }, [calendarRevision, chargingMinimumBatteryPercent, chargingTargetPercent, dateLabel, events, vehicle, weather]);
+  }, [appNowTime, calendarRevision, chargingMinimumBatteryPercent, chargingTargetPercent, events, vehicle, weather]);
   const todayForecast = batteryScheduleForecasts.find((bucket) => bucket.id === 'today') ?? batteryScheduleForecasts[0];
   const futureForecasts = batteryScheduleForecasts.filter((bucket) => bucket.id !== 'today');
   const visibleTodayTrips = showAllTodayForecastTrips ? todayForecast.trips : todayForecast.trips.slice(0, 3);

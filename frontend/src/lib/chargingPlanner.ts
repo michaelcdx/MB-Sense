@@ -332,11 +332,12 @@ function applyIdleDayChargingOpportunity(plan: ChargingPlanResult, input: Chargi
   };
 }
 
-export function buildChargingPlanInputSignature(events: CalendarEvent[], vehicle: VehicleState, weather: WeatherSnapshot, targetChargePercent = 80, minimumBatteryPercent = 35) {
+export function buildChargingPlanInputSignature(events: CalendarEvent[], vehicle: VehicleState, weather: WeatherSnapshot, targetChargePercent = 80, minimumBatteryPercent = 35, now = new Date()) {
   const planningEvents = events.filter((event) => !event.isAiRecommendationPreview);
-  const chargingOpportunity = buildChargingOpportunityContext(planningEvents, vehicle, targetChargePercent, minimumBatteryPercent);
+  const chargingOpportunity = buildChargingOpportunityContext(planningEvents, vehicle, targetChargePercent, minimumBatteryPercent, now);
 
   return JSON.stringify({
+    currentDate: toDateValue(now),
     vehicle: {
       batteryPercent: vehicle.batteryLevel,
       estimatedRangeKm: Math.round(620 * vehicle.batteryLevel / 100),
@@ -432,8 +433,7 @@ async function enrichChargingPlanInputWithStations(input: ChargingPlanInput): Pr
   return stations.length ? { ...input, chargingStations: stations } : input;
 }
 
-export function buildChargingPlanInput(events: CalendarEvent[], vehicle: VehicleState, weather: WeatherSnapshot, horizonDays: number | null = 3, targetChargePercent = 80, minimumBatteryPercent = 35, calendarRevision?: number): ChargingPlanInput {
-  const now = new Date();
+export function buildChargingPlanInput(events: CalendarEvent[], vehicle: VehicleState, weather: WeatherSnapshot, horizonDays: number | null = 3, targetChargePercent = 80, minimumBatteryPercent = 35, calendarRevision?: number, now = new Date()): ChargingPlanInput {
   const horizonEnd = horizonDays === null ? null : new Date(now.getFullYear(), now.getMonth(), now.getDate() + horizonDays);
   const planningEvents = events.filter((event) => !event.isAiRecommendationPreview);
   const chargingOpportunity = buildChargingOpportunityContext(planningEvents, vehicle, targetChargePercent, minimumBatteryPercent, now);

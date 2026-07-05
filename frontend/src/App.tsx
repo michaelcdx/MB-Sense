@@ -13,7 +13,7 @@ import CreateAccount from './pages/CreateAccount';
 import Chatbot from './components/Chatbot';
 import { cn } from './lib/utils';
 import { buildChargingPlanInput, buildChargingPlanInputSignature, requestChargingPlan } from './lib/chargingPlanner';
-import { useAppStore, type CalendarEvent } from './store/useAppStore';
+import { getResolvedAppDate, useAppStore, type CalendarEvent } from './store/useAppStore';
 
 function buildScheduleSignature(events: CalendarEvent[]) {
   return JSON.stringify(events.map((event) => {
@@ -41,13 +41,17 @@ function ChargingPlannerSync() {
   const chargingTargetPercent = useAppStore((state) => state.chargingTargetPercent);
   const chargingMinimumBatteryPercent = useAppStore((state) => state.chargingMinimumBatteryPercent);
   const calendarRevision = useAppStore((state) => state.calendarRevision);
+  const appTimeMode = useAppStore((state) => state.appTimeMode);
+  const manualAppDateTime = useAppStore((state) => state.manualAppDateTime);
   const aiChargingPlan = useAppStore((state) => state.aiChargingPlan);
   const setAiChargingPlan = useAppStore((state) => state.setAiChargingPlan);
   const setAiChargingPlanStatus = useAppStore((state) => state.setAiChargingPlanStatus);
   const planningEvents = useMemo(() => events.filter((event) => !event.aiChargingPlan && !event.isAiRecommendationPreview), [events]);
+  const plannerClockDate = useMemo(() => getResolvedAppDate(appTimeMode, manualAppDateTime), [appTimeMode, manualAppDateTime]);
+  const plannerClockSignature = appTimeMode === 'manual' ? manualAppDateTime ?? plannerClockDate.toISOString() : 'realtime';
   const scheduleSignature = useMemo(() => buildScheduleSignature(planningEvents), [planningEvents]);
-  const plannerInput = useMemo(() => buildChargingPlanInput(planningEvents, vehicle, weather, 3, chargingTargetPercent, chargingMinimumBatteryPercent, calendarRevision), [calendarRevision, scheduleSignature, vehicle, weather, chargingTargetPercent, chargingMinimumBatteryPercent]);
-  const plannerInputStableSignature = useMemo(() => buildChargingPlanInputSignature(planningEvents, vehicle, weather, chargingTargetPercent, chargingMinimumBatteryPercent), [scheduleSignature, vehicle, weather, chargingTargetPercent, chargingMinimumBatteryPercent]);
+  const plannerInput = useMemo(() => buildChargingPlanInput(planningEvents, vehicle, weather, 3, chargingTargetPercent, chargingMinimumBatteryPercent, calendarRevision, plannerClockDate), [calendarRevision, scheduleSignature, vehicle, weather, chargingTargetPercent, chargingMinimumBatteryPercent, plannerClockDate, plannerClockSignature]);
+  const plannerInputStableSignature = useMemo(() => `${plannerClockSignature}:${buildChargingPlanInputSignature(planningEvents, vehicle, weather, chargingTargetPercent, chargingMinimumBatteryPercent, plannerClockDate)}`, [scheduleSignature, vehicle, weather, chargingTargetPercent, chargingMinimumBatteryPercent, plannerClockDate, plannerClockSignature]);
   const plannerInputSignature = useMemo(() => JSON.stringify(plannerInput), [plannerInput]);
   const lastSubmittedSignatureRef = useRef('');
   const plannerRequestInFlightRef = useRef(false);

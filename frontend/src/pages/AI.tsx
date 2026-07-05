@@ -2,18 +2,20 @@ import { useEffect, useMemo, useState } from 'react';
 import { motion } from 'motion/react';
 import {
   BatteryCharging,
+  CalendarClock,
   CheckCircle2,
+  Clock,
   Minus,
   PlugZap,
   Plus,
+  RotateCcw,
   Settings
 } from 'lucide-react';
 import { resolveLocationCoordinates } from '../constants/realWorldRouteData';
 import { buildChargingPlan, buildGeminiChargingPredictionPayload, formatPlanTimeRange, type ChargingModePreference, type ChargingOptionPlan, type GeminiChargingDecision } from '../lib/chargingAgents';
 import { fetchOpenChargeMapStations } from '../lib/chargingPlanner';
 import { cn } from '../lib/utils';
-import { useAppStore } from '../store/useAppStore';
-import { useCalendarViewStore } from '../store/useCalendarViewStore';
+import { getResolvedAppDate, toLocalDateTimeInputValue, useAppStore } from '../store/useAppStore';
 import type { OpenChargeMapStationCandidate } from '../types/chargingPlanner';
 
 const targetChargeOptions = [60, 70, 80, 90, 100];
@@ -44,28 +46,37 @@ export default function AI() {
     calendarRevision,
     chargingTargetPercent,
     chargingMinimumBatteryPercent,
+    appTimeMode,
+    manualAppDateTime,
     setChargingTargetPercent,
     setChargingMinimumBatteryPercent,
+    setAppTimeMode,
+    setManualAppDateTime,
   } = useAppStore();
-  const selectedDate = useCalendarViewStore((state) => state.selectedDate);
   const targetCharge = chargingTargetPercent;
   const minimumBattery = chargingMinimumBatteryPercent;
   const [chargingPreference, setChargingPreference] = useState<ChargingModePreference>('auto');
   const [geminiDecision, setGeminiDecision] = useState<GeminiChargingDecision | undefined>();
   const [geminiStatus, setGeminiStatus] = useState<'idle' | 'loading' | 'ready' | 'fallback' | 'error'>('idle');
   const [openChargeMapStations, setOpenChargeMapStations] = useState<OpenChargeMapStationCandidate[]>([]);
+  const activeAppDate = useMemo(() => getResolvedAppDate(appTimeMode, manualAppDateTime), [appTimeMode, manualAppDateTime]);
+  const activeAppDateTime = activeAppDate.getTime();
+  const manualDateTimeValue = manualAppDateTime ?? toLocalDateTimeInputValue(activeAppDate);
+  const timezoneLabel = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone || 'Local timezone', []);
+  const activeClockLabel = activeAppDate.toLocaleString([], { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const syncManualClockToNow = () => setManualAppDateTime(toLocalDateTimeInputValue(new Date()));
   const stationAnchor = useMemo(() => {
-    const planningStart = new Date(selectedDate);
+    const planningStart = new Date(activeAppDate);
     const drivingEvent = [...events]
       .filter((event) => event.carNeeded && event.location && new Date(event.date).getTime() >= planningStart.getTime())
       .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())[0];
     return drivingEvent?.location ? resolveLocationCoordinates(drivingEvent.location) : null;
-  }, [events, selectedDate, calendarRevision]);
+  }, [events, activeAppDateTime, calendarRevision]);
   const stationAnchorKey = stationAnchor ? `${stationAnchor.lat.toFixed(4)},${stationAnchor.lng.toFixed(4)}` : '';
-  const candidatePlan = useMemo(() => buildChargingPlan(events, vehicle, weather, targetCharge, selectedDate, chargingPreference, undefined, openChargeMapStations, minimumBattery), [events, vehicle, weather, targetCharge, selectedDate, chargingPreference, openChargeMapStations, minimumBattery, calendarRevision]);
+  const candidatePlan = useMemo(() => buildChargingPlan(events, vehicle, weather, targetCharge, activeAppDate, chargingPreference, undefined, openChargeMapStations, minimumBattery), [events, vehicle, weather, targetCharge, activeAppDateTime, chargingPreference, openChargeMapStations, minimumBattery, calendarRevision]);
   const geminiPayload = useMemo(() => buildGeminiChargingPredictionPayload(candidatePlan, chargingPreference), [candidatePlan, chargingPreference]);
   const geminiPayloadSignature = useMemo(() => JSON.stringify(geminiPayload), [geminiPayload]);
-  const plan = useMemo(() => buildChargingPlan(events, vehicle, weather, targetCharge, selectedDate, chargingPreference, geminiDecision, openChargeMapStations, minimumBattery), [events, vehicle, weather, targetCharge, selectedDate, chargingPreference, geminiDecision, openChargeMapStations, minimumBattery, calendarRevision]);
+  const plan = useMemo(() => buildChargingPlan(events, vehicle, weather, targetCharge, activeAppDate, chargingPreference, geminiDecision, openChargeMapStations, minimumBattery), [events, vehicle, weather, targetCharge, activeAppDateTime, chargingPreference, geminiDecision, openChargeMapStations, minimumBattery, calendarRevision]);
   const selectedOption = plan.chargingStrategy.selected;
   const dcOption = plan.chargingStrategy.dc;
   const dcOptionStation = dcOption.selectedStation;
@@ -318,6 +329,72 @@ export default function AI() {
                 </button>
               </div>
             </div>
+        </div>
+      </section>
+      <section className="overflow-hidden rounded-3xl border border-outline-variant/45 bg-surface-container-lowest shadow-ambient-lg">
+        <div className="p-5 sm:p-6">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <p className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-primary">
+                <CalendarClock className="h-4 w-4" />
+                Demo Clock
+              </p>
+              <h2 className="mt-2 text-xl font-black text-on-surface">Time source</h2>
+            </div>
+            <span className="inline-flex w-fit items-center gap-2 rounded-2xl border border-primary/20 bg-primary/10 px-3 py-2 text-[10px] font-black uppercase tracking-widest text-primary">
+              <Clock className="h-3.5 w-3.5" />
+              {appTimeMode === 'manual' ? 'Manual' : 'Real time'}
+            </span>
+          </div>
+
+          <div className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(260px,360px)]">
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-2">
+                {(['realtime', 'manual'] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => setAppTimeMode(mode)}
+                    aria-pressed={appTimeMode === mode}
+                    className={cn('min-h-11 rounded-xl border px-3 text-xs font-black uppercase tracking-widest transition', appTimeMode === mode ? 'border-primary bg-primary text-on-primary' : 'border-outline-variant/45 bg-surface-container-low text-on-surface-variant hover:border-primary/35 hover:text-primary')}
+                  >
+                    {mode === 'manual' ? 'Manual' : 'Real time'}
+                  </button>
+                ))}
+              </div>
+
+              <label className="block">
+                <span className="text-xs font-bold uppercase tracking-widest text-slate-500">Manual date and time</span>
+                <input
+                  type="datetime-local"
+                  value={manualDateTimeValue}
+                  disabled={appTimeMode !== 'manual'}
+                  onChange={(event) => setManualAppDateTime(event.target.value)}
+                  className="mt-2 h-12 w-full rounded-xl border border-outline-variant/55 bg-surface-container-low px-3 text-sm font-bold text-on-surface outline-none transition disabled:cursor-not-allowed disabled:opacity-50 focus:border-primary/50"
+                />
+              </label>
+
+              <button
+                type="button"
+                onClick={syncManualClockToNow}
+                className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-outline-variant/45 bg-surface-container-low px-4 text-xs font-black uppercase tracking-widest text-on-surface-variant transition hover:border-primary/35 hover:text-primary active:scale-[0.98]"
+              >
+                <RotateCcw className="h-4 w-4" />
+                Sync now
+              </button>
+            </div>
+
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-1">
+              <div className="rounded-xl border border-outline-variant/45 bg-surface-container-low p-3">
+                <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">Active clock</p>
+                <p className="mt-1 text-sm font-black leading-snug text-on-surface">{activeClockLabel}</p>
+              </div>
+              <div className="rounded-xl border border-outline-variant/45 bg-surface-container-low p-3">
+                <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">Timezone</p>
+                <p className="mt-1 text-sm font-black leading-snug text-on-surface">{timezoneLabel}</p>
+              </div>
+            </div>
+          </div>
         </div>
       </section>
     </motion.div>

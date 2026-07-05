@@ -71,6 +71,27 @@ export interface VehicleState {
 }
 
 type AuthMode = 'signed-out' | 'database' | 'demo';
+export type AppTimeMode = 'realtime' | 'manual';
+
+export function toLocalDateTimeInputValue(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  const hour = String(date.getHours()).padStart(2, '0');
+  const minute = String(date.getMinutes()).padStart(2, '0');
+  return `${year}-${month}-${day}T${hour}:${minute}`;
+}
+
+export function getResolvedAppDate(mode: AppTimeMode, manualDateTime?: string | null, fallback = new Date()) {
+  if (mode !== 'manual' || !manualDateTime) return fallback;
+  const manualDate = new Date(manualDateTime);
+  return Number.isNaN(manualDate.getTime()) ? fallback : manualDate;
+}
+
+function normalizeManualAppDateTime(value: string | null | undefined, fallback = new Date()) {
+  const parsed = value ? new Date(value) : fallback;
+  return toLocalDateTimeInputValue(Number.isNaN(parsed.getTime()) ? fallback : parsed);
+}
 
 export type UserProfile = {
   name: string;
@@ -122,6 +143,8 @@ interface AppStore {
   vehicle: VehicleState;
   chargingTargetPercent: number;
   chargingMinimumBatteryPercent: number;
+  appTimeMode: AppTimeMode;
+  manualAppDateTime: string | null;
   events: CalendarEvent[];
   aiChargingPlan: ChargingPlanResult | null;
   aiChargingPlanStatus: 'idle' | 'loading' | 'ready' | 'fallback' | 'error';
@@ -141,6 +164,8 @@ interface AppStore {
   setBatteryLevel: (level: number) => void;
   setChargingTargetPercent: (level: number) => void;
   setChargingMinimumBatteryPercent: (level: number) => void;
+  setAppTimeMode: (mode: AppTimeMode) => void;
+  setManualAppDateTime: (value: string) => void;
   setAiChargingPlan: (plan: ChargingPlanResult | null, status?: AppStore['aiChargingPlanStatus'], inputSignature?: string | null) => void;
   setAiChargingPlanStatus: (status: AppStore['aiChargingPlanStatus']) => void;
   addAiChargingPlanHistory: (entry: Omit<AiChargingPlanHistoryEntry, 'id' | 'savedAt'>) => void;
@@ -517,6 +542,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
   },
   chargingTargetPercent: defaultChargingTargetPercent,
   chargingMinimumBatteryPercent: defaultChargingMinimumBatteryPercent,
+  appTimeMode: 'realtime',
+  manualAppDateTime: toLocalDateTimeInputValue(new Date()),
   events: buildBusinessCalendarEvents(),
   aiChargingPlan: null,
   aiChargingPlanStatus: 'idle',
@@ -568,6 +595,20 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setChargingMinimumBatteryPercent: (level) => set((state) => ({
     chargingMinimumBatteryPercent: clampChargingMinimum(level, state.chargingTargetPercent),
   })),
+  setAppTimeMode: (mode) => set((state) => ({
+    appTimeMode: mode,
+    manualAppDateTime: state.manualAppDateTime ?? toLocalDateTimeInputValue(new Date()),
+    aiChargingPlan: null,
+    aiChargingPlanStatus: 'idle',
+    aiChargingPlanInputSignature: null,
+  })),
+  setManualAppDateTime: (value) => set({
+    appTimeMode: 'manual',
+    manualAppDateTime: normalizeManualAppDateTime(value),
+    aiChargingPlan: null,
+    aiChargingPlanStatus: 'idle',
+    aiChargingPlanInputSignature: null,
+  }),
   setAiChargingPlan: (plan, status = 'ready', inputSignature = null) => set({
     aiChargingPlan: plan,
     aiChargingPlanStatus: status,

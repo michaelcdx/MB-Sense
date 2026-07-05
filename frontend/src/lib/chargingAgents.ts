@@ -358,12 +358,16 @@ function serializeScheduleEventForPrediction(event: CalendarEvent): ChargingSche
 
 function getPlanningStart(events: CalendarEvent[], planningAnchor?: Date) {
   if (planningAnchor && !Number.isNaN(planningAnchor.getTime())) {
-    const anchorDay = startOfDay(planningAnchor);
+    const anchor = new Date(planningAnchor);
+    anchor.setSeconds(0, 0);
+    const anchorDay = startOfDay(anchor);
+    const hasExplicitTime = anchor.getHours() !== 0 || anchor.getMinutes() !== 0;
+    if (hasExplicitTime) return anchor;
+
     const now = new Date();
     now.setSeconds(0, 0);
     return sameDay(anchorDay, now) ? now : anchorDay;
   }
-
   const today = startOfDay(new Date());
   const datedEvents = events.map((event) => event.date instanceof Date ? event.date : new Date(event.date));
   const min = datedEvents.reduce<Date | null>((current, date) => current && current < date ? current : date, null);

@@ -3,7 +3,7 @@ import { MessageSquare, X, Send, Loader2, Mic, CalendarPlus, CheckCircle2, Volum
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
 import Markdown from 'react-markdown';
-import { useAppStore, type CalendarEvent } from '../store/useAppStore';
+import { getResolvedAppDate, useAppStore, type CalendarEvent } from '../store/useAppStore';
 import { useCalendarViewStore } from '../store/useCalendarViewStore';
 import {
   buildCalendarEventFromDraft,
@@ -223,17 +223,16 @@ function hasScheduleDetailChange(message: string) {
     || /\b(title|event|name|date|day|time|place|location|venue|destination)\s*[:=]/i.test(message);
 }
 
-function resolveScheduleQueryDateKey(message: string) {
-  const parsedDate = mergeScheduleDraft(null, message).date;
+function resolveScheduleQueryDateKey(message: string, now = new Date()) {
+  const parsedDate = mergeScheduleDraft(null, message, now).date;
   if (parsedDate) return parsedDate;
 
-  const now = new Date();
   if (/\btomorrow\b/i.test(message)) return getDateKey(addCalendarDays(now, 1));
   if (/\btoday\b/i.test(message)) return getDateKey(now);
   return null;
 }
 
-function hasDailyScheduleQueryIntent(message: string) {
+function hasDailyScheduleQueryIntent(message: string, now = new Date()) {
   const lower = message.toLowerCase();
   const hasScheduleNoun = /\b(schedule|calendar|agenda|events?|appointments?|meetings?)\b/i.test(lower);
   const hasQueryPhrase = /\b(what|which|show|list|tell|give|display|view|check)\b/i.test(lower)
@@ -245,7 +244,7 @@ function hasDailyScheduleQueryIntent(message: string) {
   return !hasCreationIntent
     && hasQueryPhrase
     && (hasScheduleNoun || /\bwhat do i have\b/i.test(lower))
-    && Boolean(resolveScheduleQueryDateKey(message));
+    && Boolean(resolveScheduleQueryDateKey(message, now));
 }
 
 function getDailyScheduleEvents(events: CalendarEvent[], dateKey: string) {
@@ -285,8 +284,8 @@ function scoreTextMatch(source: string, query?: string) {
   return matched ? Math.min(4, matched) : 0;
 }
 
-function findBestScheduleMatch(events: CalendarEvent[], message: string) {
-  const criteria = mergeScheduleDraft(null, message);
+function findBestScheduleMatch(events: CalendarEvent[], message: string, now = new Date()) {
+  const criteria = mergeScheduleDraft(null, message, now);
   const hasTextCriteria = Boolean(criteria.title || criteria.place);
   const hasDateTimeCriteria = Boolean(criteria.date && criteria.startTime);
   if (!hasTextCriteria && !hasDateTimeCriteria) return null;
@@ -359,6 +358,8 @@ export default function Chatbot({ embedded = false, defaultOpen = false, classNa
   const updateEvent = useAppStore((state) => state.updateEvent);
   const deleteEvent = useAppStore((state) => state.deleteEvent);
   const addRecentAction = useAppStore((state) => state.addRecentAction);
+  const appTimeMode = useAppStore((state) => state.appTimeMode);
+  const manualAppDateTime = useAppStore((state) => state.manualAppDateTime);
   const setActiveWeek = useCalendarViewStore((state) => state.setActiveWeek);
   const [isOpen, setIsOpen] = useState(embedded || defaultOpen);
   const [messages, setMessages] = useState<Message[]>([
@@ -381,6 +382,7 @@ export default function Chatbot({ embedded = false, defaultOpen = false, classNa
   const voiceAnswersRef = useRef(false);
   const shouldSubmitVoiceTranscriptRef = useRef(true);
   const closingVoiceRecognitionRef = useRef(false);
+  const getCurrentChatDate = () => getResolvedAppDate(appTimeMode, manualAppDateTime);
 
   function closeVoiceRecognition(mode: 'stop' | 'abort' = 'abort', shouldSubmitTranscript = false, updateListeningState = true) {
     shouldSubmitVoiceTranscriptRef.current = shouldSubmitTranscript;
@@ -488,14 +490,14 @@ export default function Chatbot({ embedded = false, defaultOpen = false, classNa
       icon: 'event',
       title: 'Schedule Deleted',
       description: `${event.title} removed`,
-      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      time: getCurrentChatDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     });
     appendAssistantMessage(formatScheduleDeleteConfirmation(event));
   };
 
   const prepareScheduleUpdate = (currentEvent: CalendarEvent, userMsg: string) => {
     const currentDraft = eventToScheduleDraft(currentEvent);
-    const nextDraft = mergeScheduleDraft(currentDraft, userMsg);
+    const nextDraft = mergeScheduleDraft(currentDraft, userMsg, getCurrentChatDate());
 
     if (!scheduleDraftHasChanges(currentDraft, nextDraft)) {
       appendAssistantMessage(formatCalendarEventDetails(currentEvent));
@@ -533,7 +535,7 @@ export default function Chatbot({ embedded = false, defaultOpen = false, classNa
 
     if (!hasScheduleModifyIntent(userMsg)) return false;
 
-    const matchedEvent = findBestScheduleMatch(events, userMsg);
+    const matchedEvent = findBestScheduleMatch(events, userMsg, getCurrentChatDate());
     if (!matchedEvent) {
       if (!hasScheduleReference(userMsg)) return false;
       appendAssistantMessage('Please input the schedule title, date, time, or place so I can find the existing schedule you want to change or delete.');
@@ -548,7 +550,7 @@ export default function Chatbot({ embedded = false, defaultOpen = false, classNa
     }
 
     const currentDraft = eventToScheduleDraft(matchedEvent);
-    const nextDraft = mergeScheduleDraft(currentDraft, userMsg);
+    const nextDraft = mergeScheduleDraft(currentDraft, userMsg, getCurrentChatDate());
     if (hasScheduleDetailChange(userMsg) && scheduleDraftHasChanges(currentDraft, nextDraft)) {
       return prepareScheduleUpdate(matchedEvent, userMsg);
     }
@@ -559,9 +561,10 @@ export default function Chatbot({ embedded = false, defaultOpen = false, classNa
   };
 
   const handleDailyScheduleQuery = (userMsg: string) => {
-    if (!hasDailyScheduleQueryIntent(userMsg)) return false;
+    const appDate = getCurrentChatDate();
+    if (!hasDailyScheduleQueryIntent(userMsg, appDate)) return false;
 
-    const dateKey = resolveScheduleQueryDateKey(userMsg);
+    const dateKey = resolveScheduleQueryDateKey(userMsg, appDate);
     if (!dateKey) return false;
 
     setPendingSchedule(null);
@@ -575,7 +578,7 @@ export default function Chatbot({ embedded = false, defaultOpen = false, classNa
 
     if (!pendingSchedule) setPendingScheduleUpdate(null);
 
-    const parsedDraft = mergeScheduleDraft(pendingSchedule, userMsg);
+    const parsedDraft = mergeScheduleDraft(pendingSchedule, userMsg, getCurrentChatDate());
     const nextDraft = applySingleFieldFallback(pendingSchedule, parsedDraft, userMsg);
     const missing = getMissingScheduleFields(nextDraft);
 
@@ -726,7 +729,7 @@ export default function Chatbot({ embedded = false, defaultOpen = false, classNa
       icon: 'event',
       title: 'Schedule Added',
       description: `${event.title} at ${event.time}`,
-      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      time: getCurrentChatDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     });
 
     const confirmation = `Done. I put **${event.title}** in your calendar for ${formatScheduleDate(draft.date)} at ${formatScheduleTimeRange(draft)}.`;
@@ -749,7 +752,7 @@ export default function Chatbot({ embedded = false, defaultOpen = false, classNa
       icon: 'event',
       title: 'Schedule Updated',
       description: `${event.title} at ${event.time}`,
-      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      time: getCurrentChatDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     });
 
     const confirmation = `Done. I updated **${event.title}** in your calendar for ${formatScheduleDate(getCalendarEventDateKey(event))} at ${event.endTime ? `${event.time} - ${event.endTime}` : event.time}.`;
