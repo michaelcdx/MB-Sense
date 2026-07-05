@@ -1,9 +1,9 @@
 import { useState, useRef, useEffect, type FormEvent } from 'react';
-import { MessageSquare, X, Send, BrainCircuit, Loader2, Mic, CalendarPlus, CheckCircle2, Volume2 } from 'lucide-react';
+import { MessageSquare, X, Send, Loader2, Mic, CalendarPlus, CheckCircle2, Volume2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
 import Markdown from 'react-markdown';
-import { useAppStore } from '../store/useAppStore';
+import { useAppStore, type CalendarEvent } from '../store/useAppStore';
 import { useCalendarViewStore } from '../store/useCalendarViewStore';
 import {
   buildCalendarEventFromDraft,
@@ -24,6 +24,8 @@ interface Message {
   content: string;
   scheduleDraft?: CompleteScheduleDraft;
   scheduleStatus?: 'ready' | 'added';
+  scheduleUpdate?: CalendarEvent;
+  scheduleUpdateStatus?: 'ready' | 'updated';
 }
 
 interface ChatbotProps {
@@ -63,6 +65,17 @@ type SpeechRecognitionLike = {
 
 type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
 
+function AiLogo({ className, inverted = false }: { className?: string; inverted?: boolean }) {
+  return (
+    <img
+      src="/AI-logo-cropped.svg"
+      alt=""
+      aria-hidden="true"
+      draggable={false}
+      className={cn('object-contain', inverted && 'brightness-0 invert', className)}
+    />
+  );
+}
 function getSpeechRecognitionConstructor() {
   if (typeof window === 'undefined') return undefined;
   const speechWindow = window as Window & {
@@ -106,17 +119,160 @@ function formatScheduleSummary(draft: CompleteScheduleDraft) {
   ].join('\n');
 }
 
-function formatKnownDraftDetails(draft: ScheduleDraft) {
-  const rows = [
-    draft.title ? `- Title: ${draft.title}` : null,
-    draft.place ? `- Place: ${draft.place}` : null,
-    draft.date ? `- Date: ${formatScheduleDate(draft.date)}` : null,
-    draft.startTime && draft.endTime ? `- Time: ${formatScheduleTimeRange({ startTime: draft.startTime, endTime: draft.endTime })}` : null,
-  ].filter(Boolean);
-
-  return rows.length ? `\n\nCurrent details:\n${rows.join('\n')}` : '';
+function formatDraftField(value?: string) {
+  return value?.trim() || '__________';
 }
 
+function formatDraftTime(draft: ScheduleDraft) {
+  if (draft.startTime && draft.endTime) return formatScheduleTimeRange({ startTime: draft.startTime, endTime: draft.endTime });
+  return '__________';
+}
+
+function formatKnownDraftDetails(draft: ScheduleDraft) {
+  return [
+    '',
+    `- Title: ${formatDraftField(draft.title)}`,
+    `- Date: ${draft.date ? formatScheduleDate(draft.date) : '__________'}`,
+    `- Time: ${formatDraftTime(draft)}`,
+    `- Place: ${formatDraftField(draft.place)}`,
+  ].join('\n');
+}
+
+function getCalendarEventDateKey(event: CalendarEvent) {
+  const date = event.date instanceof Date ? event.date : new Date(event.date);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function normalizeSearchText(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function displayTimeToInputTime(value?: string) {
+  if (!value) return undefined;
+  const match = value.match(/\b(\d{1,2})(?::(\d{2}))?\s*(AM|PM)?\b/i);
+  if (!match) return undefined;
+
+  let hour = Number(match[1]);
+  const minute = Number(match[2] ?? '0');
+  const meridiem = match[3]?.toUpperCase();
+
+  if (minute > 59) return undefined;
+  if (meridiem === 'PM' && hour !== 12) hour += 12;
+  if (meridiem === 'AM' && hour === 12) hour = 0;
+  if (hour > 23) return undefined;
+
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+}
+
+function eventToScheduleDraft(event: CalendarEvent): ScheduleDraft {
+  return {
+    title: event.title,
+    place: event.location,
+    date: getCalendarEventDateKey(event),
+    startTime: displayTimeToInputTime(event.time),
+    endTime: displayTimeToInputTime(event.endTime),
+  };
+}
+
+function scheduleDraftHasChanges(before: ScheduleDraft, after: ScheduleDraft) {
+  return before.title !== after.title
+    || before.place !== after.place
+    || before.date !== after.date
+    || before.startTime !== after.startTime
+    || before.endTime !== after.endTime;
+}
+
+function hasScheduleModifyIntent(message: string) {
+  return /\b(change|update|edit|modify|revise|reschedule|delete|remove|cancel)\b/i.test(message);
+}
+
+function hasScheduleReference(message: string) {
+  return /\b(schedule|calendar|event|appointment|meeting)\b/i.test(message);
+}
+
+function hasScheduleDeleteIntent(message: string) {
+  return /\b(delete|remove|cancel)\b/i.test(message);
+}
+
+function hasScheduleDetailChange(message: string) {
+  return /\b(change|update|edit|modify|revise|reschedule|set|move)\b/i.test(message)
+    || /\b(title|event|name|date|day|time|place|location|venue|destination)\s*[:=]/i.test(message);
+}
+
+function scoreTextMatch(source: string, query?: string) {
+  const sourceText = normalizeSearchText(source);
+  const queryText = normalizeSearchText(query ?? '');
+  if (!sourceText || !queryText) return 0;
+  if (sourceText === queryText) return 8;
+  if (sourceText.includes(queryText) || queryText.includes(sourceText)) return 6;
+
+  const sourceTokens = new Set(sourceText.split(' ').filter((token) => token.length > 2));
+  const queryTokens = queryText.split(' ').filter((token) => token.length > 2);
+  if (!sourceTokens.size || !queryTokens.length) return 0;
+  const matched = queryTokens.filter((token) => sourceTokens.has(token)).length;
+  return matched ? Math.min(4, matched) : 0;
+}
+
+function findBestScheduleMatch(events: CalendarEvent[], message: string) {
+  const criteria = mergeScheduleDraft(null, message);
+  const hasTextCriteria = Boolean(criteria.title || criteria.place);
+  const hasDateTimeCriteria = Boolean(criteria.date && criteria.startTime);
+  if (!hasTextCriteria && !hasDateTimeCriteria) return null;
+
+  const ranked = events
+    .map((event) => {
+      const textScore = scoreTextMatch(event.title, criteria.title) + scoreTextMatch(event.location, criteria.place);
+      const eventStartTime = displayTimeToInputTime(event.time);
+      const eventEndTime = displayTimeToInputTime(event.endTime);
+      const dateTimeScore = (criteria.date && getCalendarEventDateKey(event) === criteria.date ? 6 : 0)
+        + (criteria.startTime && eventStartTime === criteria.startTime ? 5 : 0)
+        + (criteria.endTime && eventEndTime === criteria.endTime ? 2 : 0);
+      return { event, score: textScore + dateTimeScore, textScore, dateTimeScore };
+    })
+    .filter((item) => item.textScore >= 3 || (hasDateTimeCriteria && item.dateTimeScore >= 10))
+    .sort((a, b) => b.score - a.score);
+
+  return ranked[0]?.event ?? null;
+}
+
+function formatCalendarEventDetails(event: CalendarEvent) {
+  return [
+    'I found this schedule:',
+    '',
+    `- Title: ${event.title}`,
+    `- Date: ${formatScheduleDate(getCalendarEventDateKey(event))}`,
+    `- Time: ${event.endTime ? `${event.time} - ${event.endTime}` : event.time}`,
+    `- Place: ${event.location}`,
+    '',
+    'Tell me what to change, or say delete this schedule.',
+  ].join('\n');
+}
+
+function formatScheduleUpdateSummary(event: CalendarEvent) {
+  return [
+    'The schedule update is ready:',
+    '',
+    `- Title: ${event.title}`,
+    `- Date: ${formatScheduleDate(getCalendarEventDateKey(event))}`,
+    `- Time: ${event.endTime ? `${event.time} - ${event.endTime}` : event.time}`,
+    `- Place: ${event.location}`,
+    '',
+    'Use the button below to update the schedule.',
+  ].join('\n');
+}
+
+function formatScheduleDeleteConfirmation(event: CalendarEvent) {
+  return [
+    `Deleted **${event.title}** from your calendar.`,
+    '',
+    `- Date: ${formatScheduleDate(getCalendarEventDateKey(event))}`,
+    `- Time: ${event.endTime ? `${event.time} - ${event.endTime}` : event.time}`,
+    `- Place: ${event.location}`,
+  ].join('\n');
+}
 function applySingleFieldFallback(previousDraft: ScheduleDraft | null, nextDraft: ScheduleDraft, message: string): ScheduleDraft {
   const missingBefore = getMissingScheduleFields(previousDraft ?? {});
   const directAnswer = message.trim().replace(/[.;]+$/g, '');
@@ -131,6 +287,8 @@ function applySingleFieldFallback(previousDraft: ScheduleDraft | null, nextDraft
 export default function Chatbot({ embedded = false, defaultOpen = false, className }: ChatbotProps) {
   const events = useAppStore((state) => state.events);
   const addEvent = useAppStore((state) => state.addEvent);
+  const updateEvent = useAppStore((state) => state.updateEvent);
+  const deleteEvent = useAppStore((state) => state.deleteEvent);
   const addRecentAction = useAppStore((state) => state.addRecentAction);
   const setActiveWeek = useCalendarViewStore((state) => state.setActiveWeek);
   const [isOpen, setIsOpen] = useState(embedded || defaultOpen);
@@ -143,6 +301,7 @@ export default function Chatbot({ embedded = false, defaultOpen = false, classNa
   const [voiceAnswers, setVoiceAnswers] = useState(false);
   const [voiceAnswerSupported, setVoiceAnswerSupported] = useState(() => getSpeechAnswerSupported());
   const [pendingSchedule, setPendingSchedule] = useState<ScheduleDraft | null>(null);
+  const [pendingScheduleUpdate, setPendingScheduleUpdate] = useState<CalendarEvent | null>(null);
   const [voiceListening, setVoiceListening] = useState(false);
   const [voiceSupported, setVoiceSupported] = useState(() => Boolean(getSpeechRecognitionConstructor()));
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -230,7 +389,7 @@ export default function Chatbot({ embedded = false, defaultOpen = false, classNa
     window.speechSynthesis.speak(utterance);
   };
 
-  const appendAssistantMessage = (content: string, options: Pick<Message, 'scheduleDraft' | 'scheduleStatus'> = {}) => {
+  const appendAssistantMessage = (content: string, options: Partial<Pick<Message, 'scheduleDraft' | 'scheduleStatus' | 'scheduleUpdate' | 'scheduleUpdateStatus'>> = {}) => {
     const message: Message = {
       id: createMessageId('assistant'),
       role: 'assistant',
@@ -243,8 +402,96 @@ export default function Chatbot({ embedded = false, defaultOpen = false, classNa
     return message;
   };
 
+  const buildUpdatedScheduleEvent = (currentEvent: CalendarEvent, draft: CompleteScheduleDraft) => {
+    const predictedEvent = buildCalendarEventFromDraft(draft, events.filter((event) => event.id !== currentEvent.id));
+    return {
+      ...predictedEvent,
+      id: currentEvent.id,
+    };
+  };
+
+  const deleteMatchedSchedule = (event: CalendarEvent) => {
+    deleteEvent(event.id);
+    setPendingSchedule(null);
+    setPendingScheduleUpdate(null);
+    setActiveWeek(event.date instanceof Date ? event.date : new Date(event.date));
+    addRecentAction({
+      icon: 'event',
+      title: 'Schedule Deleted',
+      description: `${event.title} removed`,
+      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    });
+    appendAssistantMessage(formatScheduleDeleteConfirmation(event));
+  };
+
+  const prepareScheduleUpdate = (currentEvent: CalendarEvent, userMsg: string) => {
+    const currentDraft = eventToScheduleDraft(currentEvent);
+    const nextDraft = mergeScheduleDraft(currentDraft, userMsg);
+
+    if (!scheduleDraftHasChanges(currentDraft, nextDraft)) {
+      appendAssistantMessage(formatCalendarEventDetails(currentEvent));
+      return true;
+    }
+
+    const completeDraft = completeScheduleDraft(nextDraft);
+    if (!completeDraft) {
+      appendAssistantMessage(`${formatMissingScheduleQuestion(getMissingScheduleFields(nextDraft))}${formatKnownDraftDetails(nextDraft)}`);
+      return true;
+    }
+
+    const updatedEvent = buildUpdatedScheduleEvent(currentEvent, completeDraft);
+    setPendingSchedule(null);
+    setPendingScheduleUpdate(null);
+    appendAssistantMessage(formatScheduleUpdateSummary(updatedEvent), {
+      scheduleUpdate: updatedEvent,
+      scheduleUpdateStatus: 'ready',
+    });
+    return true;
+  };
+
+  const handleScheduleUpdateMessage = (userMsg: string) => {
+    if (pendingScheduleUpdate) {
+      if (hasScheduleDeleteIntent(userMsg)) {
+        deleteMatchedSchedule(pendingScheduleUpdate);
+        return true;
+      }
+
+      if (hasScheduleDetailChange(userMsg)) return prepareScheduleUpdate(pendingScheduleUpdate, userMsg);
+
+      appendAssistantMessage(formatCalendarEventDetails(pendingScheduleUpdate));
+      return true;
+    }
+
+    if (!hasScheduleModifyIntent(userMsg)) return false;
+
+    const matchedEvent = findBestScheduleMatch(events, userMsg);
+    if (!matchedEvent) {
+      if (!hasScheduleReference(userMsg)) return false;
+      appendAssistantMessage('Please input the schedule title, date, time, or place so I can find the existing schedule you want to change or delete.');
+      return true;
+    }
+
+    setPendingSchedule(null);
+
+    if (hasScheduleDeleteIntent(userMsg)) {
+      deleteMatchedSchedule(matchedEvent);
+      return true;
+    }
+
+    const currentDraft = eventToScheduleDraft(matchedEvent);
+    const nextDraft = mergeScheduleDraft(currentDraft, userMsg);
+    if (hasScheduleDetailChange(userMsg) && scheduleDraftHasChanges(currentDraft, nextDraft)) {
+      return prepareScheduleUpdate(matchedEvent, userMsg);
+    }
+
+    setPendingScheduleUpdate(matchedEvent);
+    appendAssistantMessage(formatCalendarEventDetails(matchedEvent));
+    return true;
+  };
   const handleScheduleMessage = (userMsg: string) => {
     if (!pendingSchedule && !isScheduleIntent(userMsg)) return false;
+
+    if (!pendingSchedule) setPendingScheduleUpdate(null);
 
     const parsedDraft = mergeScheduleDraft(pendingSchedule, userMsg);
     const nextDraft = applySingleFieldFallback(pendingSchedule, parsedDraft, userMsg);
@@ -274,6 +521,9 @@ export default function Chatbot({ embedded = false, defaultOpen = false, classNa
     setInput('');
     setMessages((prev) => [...prev, { id: createMessageId('user'), role: 'user', content: userMsg }]);
 
+    if (pendingScheduleUpdate && handleScheduleUpdateMessage(userMsg)) return;
+    if (pendingSchedule && handleScheduleMessage(userMsg)) return;
+    if (handleScheduleUpdateMessage(userMsg)) return;
     if (handleScheduleMessage(userMsg)) return;
 
     setLoading(true);
@@ -408,9 +658,34 @@ export default function Chatbot({ embedded = false, defaultOpen = false, classNa
     speakAssistantText(confirmation);
   };
 
+  const handleUpdateSchedule = (messageId: string, event: CalendarEvent) => {
+    updateEvent(event);
+    setPendingScheduleUpdate(null);
+    setActiveWeek(event.date instanceof Date ? event.date : new Date(event.date));
+    addRecentAction({
+      icon: 'event',
+      title: 'Schedule Updated',
+      description: `${event.title} at ${event.time}`,
+      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    });
+
+    const confirmation = `Done. I updated **${event.title}** in your calendar for ${formatScheduleDate(getCalendarEventDateKey(event))} at ${event.endTime ? `${event.time} - ${event.endTime}` : event.time}.`;
+    setMessages((prev) => [
+      ...prev.map((message) => message.id === messageId ? { ...message, scheduleUpdateStatus: 'updated' as const } : message),
+      {
+        id: createMessageId('assistant'),
+        role: 'assistant',
+        content: confirmation,
+      },
+    ]);
+    speakAssistantText(confirmation);
+  };
   const lastReadyScheduleMessageId = [...messages]
     .reverse()
     .find((message) => message.role === 'assistant' && message.scheduleDraft && message.scheduleStatus === 'ready')?.id;
+  const lastReadyScheduleUpdateMessageId = [...messages]
+    .reverse()
+    .find((message) => message.role === 'assistant' && message.scheduleUpdate && message.scheduleUpdateStatus === 'ready')?.id;
 
   const chatPanel = (
     <motion.div
@@ -426,7 +701,7 @@ export default function Chatbot({ embedded = false, defaultOpen = false, classNa
       <div className="flex items-center justify-between border-b border-outline-variant/45 bg-surface-container-low px-5 py-4">
         <div className="flex items-center gap-3">
           <div className="flex h-9 w-9 items-center justify-center rounded-full border border-primary/25 bg-primary/10">
-            <BrainCircuit className="h-4 w-4 text-primary" />
+            <AiLogo className="h-6 w-6" />
           </div>
           <div>
             <h3 className="font-bold uppercase leading-tight tracking-wide text-on-surface">MB Sense Assistant</h3>
@@ -461,6 +736,22 @@ export default function Chatbot({ embedded = false, defaultOpen = false, classNa
                 <CalendarPlus className="h-4 w-4" />
                 Put in your calendar
               </button>
+            )}
+            {m.id === lastReadyScheduleUpdateMessageId && m.scheduleUpdate && m.scheduleUpdateStatus === 'ready' && (
+              <button
+                type="button"
+                onClick={() => handleUpdateSchedule(m.id, m.scheduleUpdate!)}
+                className="mt-2 inline-flex min-h-10 items-center gap-2 rounded-xl border border-primary/25 bg-primary px-4 text-xs font-black uppercase tracking-wider text-on-primary shadow-ambient transition active:scale-[0.98]"
+              >
+                <CalendarPlus className="h-4 w-4" />
+                Update schedule
+              </button>
+            )}
+            {m.scheduleUpdateStatus === 'updated' && (
+              <div className="mt-2 inline-flex items-center gap-2 rounded-xl border border-emerald-300/30 bg-emerald-500/10 px-3 py-2 text-xs font-black uppercase tracking-wider text-emerald-600">
+                <CheckCircle2 className="h-4 w-4" />
+                Updated schedule
+              </div>
             )}
             {m.scheduleStatus === 'added' && (
               <div className="mt-2 inline-flex items-center gap-2 rounded-xl border border-emerald-300/30 bg-emerald-500/10 px-3 py-2 text-xs font-black uppercase tracking-wider text-emerald-600">
@@ -556,7 +847,7 @@ export default function Chatbot({ embedded = false, defaultOpen = false, classNa
     <>
       {!isOpen && (
         <button onClick={() => setIsOpen(true)} className="fixed bottom-24 right-6 z-[60] sm:bottom-6 flex h-14 w-14 items-center justify-center rounded-2xl border border-primary/25 bg-primary text-on-primary shadow-ambient-lg transition-all hover:bg-primary-dim active:scale-95" aria-label="Open AI assistant">
-          <BrainCircuit className="h-6 w-6" />
+          <AiLogo className="h-11 w-11" inverted />
         </button>
       )}
 
@@ -568,4 +859,3 @@ export default function Chatbot({ embedded = false, defaultOpen = false, classNa
 function normalizeTranscript(value: string) {
   return value.replace(/\s+/g, ' ').trim();
 }
-

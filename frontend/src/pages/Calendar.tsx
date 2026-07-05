@@ -664,14 +664,13 @@ function DragSelectionBlock({ selection }: { selection: DragSelection }) {
   );
 }
 
-function DayColumn({ day, dayIndex, events, selection, selectedEventId, onEventClick, onSelectDay, onPointerDown, onPointerMove, onPointerUp }: {
+function DayColumn({ day, dayIndex, events, selection, selectedEventId, onEventClick, onPointerDown, onPointerMove, onPointerUp }: {
   day: Date;
   dayIndex: number;
   events: CalendarEvent[];
   selection: DragSelection | null;
   selectedEventId?: string;
   onEventClick: (event: CalendarEvent) => void;
-  onSelectDay: (date: Date) => void;
   onPointerDown: (event: ReactPointerEvent<HTMLElement>, dayIndex: number, date: Date) => void;
   onPointerMove: (event: ReactPointerEvent<HTMLElement>) => void;
   onPointerUp: (event: ReactPointerEvent<HTMLElement>) => void;
@@ -679,7 +678,7 @@ function DayColumn({ day, dayIndex, events, selection, selectedEventId, onEventC
   const laidOutEvents = buildEventHorizontalLayouts(events);
 
   return (
-    <div className="relative border-r border-outline-variant/30 bg-surface-container-lowest last:border-r-0" style={{ height: calendarHeight }} onClick={() => onSelectDay(day)} onPointerDown={(event) => onPointerDown(event, dayIndex, day)} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp}>
+    <div className="relative border-r border-outline-variant/30 bg-surface-container-lowest last:border-r-0" style={{ height: calendarHeight }} onPointerDown={(event) => onPointerDown(event, dayIndex, day)} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp}>
       {Array.from({ length: dayEndHour - dayStartHour + 1 }, (_, index) => <div key={index} className="absolute left-0 right-0 border-t border-outline-variant/30" style={{ top: index * hourHeight }} />)}
       {laidOutEvents.map(({ event, horizontalLayout }) => <EventBlock key={event.id} event={event} horizontalLayout={horizontalLayout} selected={event.id === selectedEventId} onClick={onEventClick} />)}
       {selection?.dayIndex === dayIndex && <DragSelectionBlock selection={selection} />}
@@ -733,7 +732,7 @@ function CalendarWeekView({ days, weekStart, events, selection, selectedEventId,
           <div className="grid" style={{ gridTemplateColumns }}>
             <TimeColumn />
             {days.map((day, index) => (
-              <DayColumn key={day.toISOString()} day={day} dayIndex={index} events={events.filter((event) => sameDay(getEventDate(event), day))} selection={selection} selectedEventId={selectedEventId} onEventClick={onEventClick} onSelectDay={onSelectDay} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} />
+              <DayColumn key={day.toISOString()} day={day} dayIndex={index} events={events.filter((event) => sameDay(getEventDate(event), day))} selection={selection} selectedEventId={selectedEventId} onEventClick={onEventClick} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} />
             ))}
           </div>
         </div>
@@ -884,21 +883,7 @@ function EventSidePanel({ mode, form, editingEvent, onChange, onClose, onDelete,
     onChange({ ...form, location: nextCoordinate ? formatCoordinateLocation(nextCoordinate.lat, nextCoordinate.lng) : '' });
   };
 
-  if (!mode) {
-    return (
-      <aside className="min-h-0 border-t border-outline-variant/45 bg-surface-container-low p-4 text-on-surface lg:border-l lg:border-t-0">
-        <div className="rounded-lg border border-outline-variant/45 bg-surface-container-lowest p-3">
-          <div className="flex items-start gap-3">
-            <BrainCircuit className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-            <div>
-              <h2 className="text-sm font-semibold">MB Sense</h2>
-              <p className="mt-1 text-xs font-medium leading-relaxed text-on-surface-variant">{productTagline}</p>
-            </div>
-          </div>
-        </div>
-      </aside>
-    );
-  }
+  if (!mode) return null;
 
   const chargingContext = editingEvent
     ? isChargingEvent(editingEvent) || isRiskEvent(editingEvent)
@@ -921,7 +906,7 @@ function EventSidePanel({ mode, form, editingEvent, onChange, onClose, onDelete,
   };
 
   return (
-    <aside className="min-h-0 overflow-hidden border-t border-outline-variant/45 bg-surface-container-low text-on-surface lg:border-l lg:border-t-0">
+    <aside className="h-full min-h-0 overflow-hidden border-t border-outline-variant/45 bg-surface-container-low text-on-surface shadow-ambient-lg lg:border-l lg:border-t-0">
       <form onSubmit={onSubmit} className="h-full overflow-y-auto p-4 pb-[calc(5rem+env(safe-area-inset-bottom))] lg:pb-4">
         <div className="mb-4 flex items-start justify-between gap-2">
           <div className="min-w-0">
@@ -1209,6 +1194,7 @@ export default function Calendar() {
   const location = useLocation();
   const initialDate = useMemo(() => selectedDate, []);
   const [dragSelection, setDragSelection] = useState<DragSelection | null>(null);
+  const [selectedEmptySlot, setSelectedEmptySlot] = useState<DragSelection | null>(null);
   const dragStartRef = useRef<DragStartState | null>(null);
   const [panelMode, setPanelMode] = useState<EventMode | null>(null);
   const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
@@ -1222,7 +1208,7 @@ export default function Calendar() {
       const date = getEventDate(event);
       return date >= timelineStart && date < timelineEnd;
     });
-  }, [calendarEvents, timelineDays]);
+  }, [calendarEvents, timelineDays, weekStart]);
 
   const draftEvent = useMemo<(CalendarEvent & { color: EventColor }) | null>(() => {
     if (!panelMode) return null;
@@ -1259,23 +1245,41 @@ export default function Calendar() {
   }, [draftEvent, editingEvent, timelineEvents, timelineDays, weekStart]);
 
   const selectedEventId = panelMode === 'create' ? draftEventId : editingEvent?.id;
+  const displayedSelection = panelMode ? dragSelection : dragSelection ?? selectedEmptySlot;
+  const hasPanel = panelMode !== null;
+
+  const focusDateWithoutHorizontalJump = (date: Date) => {
+    const nextDate = startOfDay(date);
+    const timelineStart = timelineDays[0] ? startOfDay(timelineDays[0]) : startOfDay(weekStart);
+    const timelineEnd = addDays(timelineDays[timelineDays.length - 1] ? startOfDay(timelineDays[timelineDays.length - 1]) : startOfDay(demoEnd), 1);
+
+    if (nextDate < timelineStart || nextDate >= timelineEnd) {
+      setActiveWeek(nextDate);
+      return;
+    }
+
+    setSelectedDate(nextDate);
+  };
 
   const openPanelForCreate = (date: Date, start = 9 * 60, end = 10 * 60) => {
+    setSelectedEmptySlot(null);
     setEditingEvent(null);
     setForm(buildEmptyForm(date, start, end));
     setPanelMode('create');
-    setActiveWeek(date);
+    focusDateWithoutHorizontalJump(date);
   };
 
   const openPanelForEvent = (event: CalendarEvent) => {
     const eventDate = getEventDate(event);
+    setSelectedEmptySlot(null);
     setEditingEvent(event);
     setForm(formFromEvent(event));
     setPanelMode('edit');
-    setActiveWeek(eventDate);
+    focusDateWithoutHorizontalJump(eventDate);
   };
 
   const closePanel = () => {
+    setSelectedEmptySlot(null);
     setPanelMode(null);
     setEditingEvent(null);
   };
@@ -1290,6 +1294,7 @@ export default function Calendar() {
     if (event.target instanceof Element && event.target.closest('[data-event-block="true"]')) return;
     if (event.pointerType === 'mouse' && event.button !== 0) return;
 
+    setSelectedEmptySlot(null);
     const start = getMinutesFromPointer(event, event.currentTarget);
     const initialEnd = Math.min(endMinutes, start + 30);
     dragStartRef.current = { pointerId: event.pointerId, dayIndex, date, startMinutes: start };
@@ -1318,7 +1323,19 @@ export default function Calendar() {
 
     if (!selection) return;
     const selectedEnd = selection.endMinutes <= selection.startMinutes ? selection.startMinutes + 30 : selection.endMinutes;
-    openPanelForCreate(selection.date, selection.startMinutes, Math.min(endMinutes, selectedEnd));
+    const nextSelection = { ...selection, endMinutes: Math.min(endMinutes, selectedEnd) };
+    setSelectedEmptySlot(nextSelection);
+    setPanelMode(null);
+    setEditingEvent(null);
+  };
+
+  const handleCreateFromSelectedSlot = () => {
+    if (selectedEmptySlot) {
+      openPanelForCreate(selectedEmptySlot.date, selectedEmptySlot.startMinutes, selectedEmptySlot.endMinutes);
+      return;
+    }
+
+    openPanelForCreate(selectedDate, 9 * 60, 10 * 60);
   };
 
   const handleSaveSchedule = (event: FormEvent<HTMLFormElement>) => {
@@ -1349,7 +1366,8 @@ export default function Calendar() {
     if (editingEvent) updateEvent(nextEvent);
     else addEvent(nextEvent);
 
-    setActiveWeek(date);
+    setSelectedEmptySlot(null);
+    focusDateWithoutHorizontalJump(date);
     setEditingEvent(nextEvent);
     setForm(formFromEvent(nextEvent));
     setPanelMode('edit');
@@ -1371,7 +1389,7 @@ export default function Calendar() {
     const existingEvent = calendarEvents.find((item) => item.id === confirmedEvent.id);
     if (existingEvent) updateEvent({ ...existingEvent, ...confirmedEvent });
     else addEvent(confirmedEvent);
-    setActiveWeek(getEventDate(confirmedEvent));
+    focusDateWithoutHorizontalJump(getEventDate(confirmedEvent));
     setEditingEvent(confirmedEvent);
     setForm(formFromEvent(confirmedEvent));
     setPanelMode('edit');
@@ -1400,13 +1418,13 @@ export default function Calendar() {
   };
 
   return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex h-full min-h-0 flex-col overflow-hidden bg-surface text-on-surface">
-      <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_minmax(240px,34vh)] overflow-hidden lg:grid-cols-[minmax(0,1fr)_300px] lg:grid-rows-1">
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="relative flex h-full min-h-0 flex-col overflow-hidden bg-surface text-on-surface">
+      <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)] overflow-hidden">
         <CalendarWeekView
           days={timelineDays}
           weekStart={weekStart}
           events={visibleWeekEvents}
-          selection={dragSelection}
+          selection={displayedSelection}
           selectedEventId={selectedEventId}
           onEventClick={openPanelForEvent}
           onSelectDay={(date) => setSelectedDate(startOfDay(date))}
@@ -1414,19 +1432,35 @@ export default function Calendar() {
           onPointerMove={handleGridPointerMove}
           onPointerUp={handleGridPointerUp}
         />
-
-        <EventSidePanel
-          mode={panelMode}
-          form={form}
-          editingEvent={editingEvent}
-          onChange={setForm}
-          onClose={closePanel}
-          onDelete={handleDeleteSchedule}
-          onSubmit={handleSaveSchedule}
-          onStationSelect={handleChargingStationSelect}
-          onAddChargingPlan={handleAddChargingPlan}
-        />
       </div>
+
+      {hasPanel && (
+        <div className="absolute inset-x-0 bottom-0 z-50 h-[min(520px,70dvh)] overflow-hidden lg:inset-y-0 lg:left-auto lg:right-0 lg:h-auto lg:w-[320px]">
+          <EventSidePanel
+            mode={panelMode}
+            form={form}
+            editingEvent={editingEvent}
+            onChange={setForm}
+            onClose={closePanel}
+            onDelete={handleDeleteSchedule}
+            onSubmit={handleSaveSchedule}
+            onStationSelect={handleChargingStationSelect}
+            onAddChargingPlan={handleAddChargingPlan}
+          />
+        </div>
+      )}
+
+      {!hasPanel && (
+        <button
+          type="button"
+          onClick={handleCreateFromSelectedSlot}
+          className="absolute bottom-[calc(6.25rem+env(safe-area-inset-bottom))] left-4 z-40 flex h-12 w-12 items-center justify-center rounded-full border border-primary/25 bg-primary text-on-primary shadow-ambient-lg transition hover:bg-primary-dim active:scale-95 sm:bottom-5"
+          aria-label={selectedEmptySlot ? 'Create schedule in selected time slot' : 'Create schedule'}
+          title={selectedEmptySlot ? 'Create schedule in selected time slot' : 'Create schedule'}
+        >
+          <span className="-mt-0.5 text-3xl font-black leading-none">+</span>
+        </button>
+      )}
 
       <span className="hidden">{selectedDate.toISOString()}</span>
       <Zap className="hidden" />

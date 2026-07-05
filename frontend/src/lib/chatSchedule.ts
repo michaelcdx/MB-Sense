@@ -161,7 +161,7 @@ function extractFieldValue(message: string, labels: string[]) {
   const colonMatch = message.match(new RegExp(String.raw`(?:^|[\n,;])\s*(?:${fieldPattern})\s*:\s*([\s\S]*?)(?=(?:[\n,;]\s*(?:${stopPattern})\s*:)|$)`, 'i'));
   if (colonMatch?.[1]) return cleanExtractedValue(colonMatch[1]);
 
-  const statementMatch = message.match(new RegExp(String.raw`\b(?:${fieldPattern})\s+(?:is|as|to be|at)\s+([\s\S]*?)(?=(?:\b(?:${stopPattern})\s+(?:is|as|to be|at)\b)|$)`, 'i'));
+  const statementMatch = message.match(new RegExp(String.raw`\b(?:${fieldPattern})\s+(?:is|as|to be|to|at)\s+([\s\S]*?)(?=(?:\b(?:${stopPattern})\s+(?:is|as|to be|to|at)\b)|$)`, 'i'));
   if (statementMatch?.[1]) return cleanExtractedValue(statementMatch[1]);
 
   return '';
@@ -200,14 +200,14 @@ function parseIsoDate(message: string) {
 
 function parseNamedMonthDate(message: string, now: Date) {
   const monthNames = Object.keys(monthIndexes).join('|');
-  const monthFirst = message.match(new RegExp(String.raw`\b(${monthNames})\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s*(20\d{2}|\d{2}))?\b`, 'i'));
-  const dayFirst = message.match(new RegExp(String.raw`\b(\d{1,2})(?:st|nd|rd|th)?\s+(${monthNames})(?:,?\s*(20\d{2}|\d{2}))?\b`, 'i'));
-  const match = monthFirst ?? dayFirst;
+  const dayFirst = message.match(new RegExp(String.raw`\b(\d{1,2})(?:st|nd|rd|th)?(?!\d)\s+(${monthNames})(?:,?\s*(20\d{2}|\d{2}))?\b`, 'i'));
+  const monthFirst = message.match(new RegExp(String.raw`\b(${monthNames})\s+(\d{1,2})(?:st|nd|rd|th)?(?!\d)(?:,?\s*(20\d{2}|\d{2}))?\b`, 'i'));
+  const match = dayFirst ?? monthFirst;
   if (!match) return null;
 
-  const isMonthFirst = match === monthFirst;
-  const month = isMonthFirst ? match[1] : match[2];
-  const day = Number(isMonthFirst ? match[2] : match[1]);
+  const isDayFirst = match === dayFirst;
+  const month = isDayFirst ? match[2] : match[1];
+  const day = Number(isDayFirst ? match[1] : match[2]);
   const year = normalizeYear(match[3], now);
   const date = fromDateParts(year, monthIndexes[month.toLowerCase()], day);
   if (!date) return null;
@@ -219,7 +219,6 @@ function parseNamedMonthDate(message: string, now: Date) {
 
   return toDateKey(date);
 }
-
 function parseNumericDate(message: string, now: Date) {
   const match = message.match(/\b(\d{1,2})[/.](\d{1,2})(?:[/.](20\d{2}|\d{2}))?\b/);
   if (!match) return null;
@@ -327,24 +326,38 @@ function parseTime(message: string) {
   return {};
 }
 
+function cleanPlaceCandidate(value?: string) {
+  const cleaned = cleanExtractedValue(value)
+    .replace(/^\d{1,2}(?::\d{2})?\s*(?:am|pm)\s+(?:at|in|towards)\s+/i, '')
+    .replace(/\s+\b(?:for|about)\s+(?:my|a|an|the)?\s*(?:meeting|discussion|appointment|class|lecture|seminar|workshop|exam|lunch|dinner|breakfast|coffee|event|sync)\b[\s\S]*$/i, '')
+    .replace(/\s+\b(?:because|since|so|as)\b[\s\S]*$/i, '')
+    .replace(/\s+\b(?:i|we)\s+(?:need|want|have|would\s+like|would\s+love)\s+to\b[\s\S]*$/i, '');
+
+  return cleanExtractedValue(cleaned);
+}
+function isInvalidPlaceCandidate(candidate: string) {
+  return !candidate
+    || /^\d{1,2}(?::\d{2})?\s*(am|pm)?$/i.test(candidate)
+    || /^my calendar$/i.test(candidate)
+    || /^(today|tomorrow|tonight|next\s+\w+)$/i.test(candidate)
+    || /^(at|in|on|from|to|for|about)$/i.test(candidate);
+}
+
 function extractPlace(message: string) {
-  const labeled = extractFieldValue(message, ['place', 'location', 'venue', 'destination']);
+  const labeled = cleanPlaceCandidate(extractFieldValue(message, ['place', 'location', 'venue', 'destination']));
   if (labeled) return labeled;
 
-  const placeMatches = Array.from(message.matchAll(/\b(?:at|in|towards)\s+(.+?)(?=\s+\b(?:on|at|from|by|tomorrow|today|tonight|next|date|time)\b|[,.;]|$)/gi));
-  const destinationMatches = Array.from(message.matchAll(/\b(?:go(?:ing)?|travel(?:ing)?|drive|head(?:ing)?|visit(?:ing)?|come)\s+to\s+(.+?)(?=\s+\b(?:on|at|from|by|tomorrow|today|tonight|next|date|time)\b|[,.;]|$)/gi));
+  const placeStopPattern = String.raw`(?=\s+\b(?:in|on|at|from|by|for|about|with|because|since|so|as|called|named|titled|tomorrow|today|tonight|next|date|time)\b|[,.;]|$)`;
+  const placeMatches = Array.from(message.matchAll(new RegExp(String.raw`\b(?:at|in|towards)\s+(.+?)${placeStopPattern}`, 'gi')));
+  const destinationMatches = Array.from(message.matchAll(new RegExp(String.raw`\b(?:go(?:ing)?|travel(?:ing)?|drive|head(?:ing)?|visit(?:ing)?|come)\s+to\s+(.+?)${placeStopPattern}`, 'gi')));
   const value = placeMatches
     .concat(destinationMatches)
-    .map((match) => cleanExtractedValue(match[1]))
-    .find((candidate) => candidate
-      && !/^\d{1,2}(?::\d{2})?\s*(am|pm)?$/i.test(candidate)
-      && !/^my calendar$/i.test(candidate)
-      && !/^(today|tomorrow|tonight|next\s+\w+)$/i.test(candidate));
+    .map((match) => cleanPlaceCandidate(match[1]))
+    .find((candidate) => !isInvalidPlaceCandidate(candidate));
 
   if (!value) return undefined;
   return value;
 }
-
 function stripDateAndTimePhrases(message: string) {
   return message
     .replace(/\b(today|tomorrow|next\s+\w+)\b/gi, ' ')
@@ -365,6 +378,27 @@ function normalizeTitleValue(value: string) {
   return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
 }
 
+function toEventTitleCase(value: string) {
+  const smallWords = new Set(['a', 'an', 'and', 'as', 'at', 'for', 'in', 'of', 'on', 'or', 'the', 'to']);
+  const words = normalizeSpaces(value).split(' ');
+
+  return words.map((word, index) => {
+    if (/^[A-Z0-9]{2,}$/.test(word)) return word;
+    const lower = word.toLowerCase();
+    if (index > 0 && index < words.length - 1 && smallWords.has(lower)) return lower;
+    return lower.replace(/^[a-z]/, (letter) => letter.toUpperCase());
+  }).join(' ');
+}
+
+function normalizeEventTitleValue(value: string) {
+  const cleaned = normalizeTitleValue(stripDateAndTimePhrases(value)
+    .replace(/^(?:for|about)\s+/i, '')
+    .replace(/^(?:me\s+)?(?:a|an|the)\s+/i, '')
+    .replace(/^(?:going|go|traveling|travel|driving|drive|heading|head|visiting|visit)\s+to\s+/i, ''));
+
+  return cleaned ? toEventTitleCase(cleaned) : '';
+}
+
 function isWeakTitle(value: string) {
   const lower = value.toLowerCase();
   return !lower
@@ -374,6 +408,10 @@ function isWeakTitle(value: string) {
     || /^\d{1,2}(?::\d{2})?\s*(am|pm)?$/i.test(value)
     || /^\d{4}-\d{1,2}-\d{1,2}$/.test(value)
     || /^\d{1,2}[/.]\d{1,2}(?:[/.](?:20\d{2}|\d{2}))?$/.test(value);
+}
+
+function looksLikeDestinationRequest(message: string) {
+  return /\b(?:go(?:ing)?|travel(?:ing)?|drive|driving|head(?:ing)?|visit(?:ing)?|come)\s+to\b/i.test(message);
 }
 
 function titleFromPlace(message: string, place: string) {
@@ -389,36 +427,84 @@ function titleFromPlace(message: string, place: string) {
   }
   if (/\b(pick up|pickup|collect)\b/.test(lower)) return `Pickup at ${cleanedPlace}`;
   if (/\b(drop off|dropoff)\b/.test(lower)) return `Drop-off at ${cleanedPlace}`;
-  if (/\b(visit|visiting|go to|going to|travel to|drive to|head to|come to)\b/.test(lower)) return `Visiting ${cleanedPlace}`;
+  if (looksLikeDestinationRequest(message)) return `Visiting ${cleanedPlace}`;
 
   return `Visiting ${cleanedPlace}`;
 }
-function extractPurposeTitle(message: string) {
-  const match = message.match(/\b(?:make|create|add|plan|book|block|reserve|put|schedule)?\s*(?:a\s+)?(?:schedule|calendar\s+event|event|appointment)\s+(?:for|about|called|named|titled)\s+(.+?)(?=\s+\b(?:at|in|on|from|until|till|through|today|tomorrow|next|place|location|venue|date|time)\b|[,.;]|$)/i);
-  if (!match?.[1]) return undefined;
 
-  const title = normalizeTitleValue(match[1]);
-  return title && !isWeakTitle(title) ? title : undefined;
+function isBadPurposeTitleCandidate(value: string) {
+  return /^(at|in|on|from|to|for|about|with)\b/i.test(value)
+    || /\b(?:place|location|venue|destination|date|time)\b/i.test(value);
 }
 
+function extractOwnedPurposeTitle(message: string) {
+  const lower = message.toLowerCase();
+  const markers = [' for my ', ' for a ', ' for an ', ' for the ', ' about my ', ' about a ', ' about an ', ' about the '];
+  const markerMatch = markers
+    .map((marker) => ({ marker, index: lower.lastIndexOf(marker) }))
+    .filter((match) => match.index >= 0)
+    .sort((a, b) => b.index - a.index)[0];
+
+  if (!markerMatch) return undefined;
+
+  const afterMarker = message.slice(markerMatch.index + markerMatch.marker.length);
+  const beforePunctuation = afterMarker.split(/[,.;]/)[0] ?? '';
+  const candidate = cleanExtractedValue(beforePunctuation.split(/\s+\b(?:at|in|on|from|until|till|through|today|tomorrow|next|place|location|venue|destination|date|time)\b/i)[0]);
+  if (!candidate || looksLikeDestinationRequest(candidate) || isBadPurposeTitleCandidate(candidate)) return undefined;
+
+  const title = normalizeEventTitleValue(candidate);
+  const explicitGenericTitle = /^(meeting|appointment|class|lecture|seminar|workshop|exam|lunch|dinner|breakfast|coffee|event|sync)$/i.test(title);
+  return title && (!isWeakTitle(title) || explicitGenericTitle) ? title : undefined;
+}
+
+function extractPurposeTitle(message: string) {
+  const ownedPurposeTitle = extractOwnedPurposeTitle(message);
+  if (ownedPurposeTitle) return ownedPurposeTitle;
+
+  const strippedMessage = stripDateAndTimePhrases(message);
+  const stopPattern = String.raw`(?=\s+\b(?:at|in|on|from|until|till|through|today|tomorrow|next|place|location|venue|destination|date|time)\b|[,.;]|$)`;
+  const patterns = [
+    new RegExp(String.raw`\b(?:for|about)\s+(?:my|a|an|the)\s+(.+?)${stopPattern}`, 'gi'),
+    new RegExp(String.raw`\b(?:schedule|calendar\s+event|event|appointment|meeting)\s+(?:for|about|called|named|titled)\s+(.+?)${stopPattern}`, 'gi'),
+    new RegExp(String.raw`\b(?:for|about)\s+(.+?)${stopPattern}`, 'gi'),
+  ];
+
+  for (const pattern of patterns) {
+    const matches = Array.from(strippedMessage.matchAll(pattern));
+    for (const match of matches.reverse()) {
+      const candidate = cleanExtractedValue(match[1]);
+      if (!candidate || looksLikeDestinationRequest(candidate) || isBadPurposeTitleCandidate(candidate)) continue;
+
+      const title = normalizeEventTitleValue(candidate);
+      if (title && !isWeakTitle(title)) return title;
+    }
+  }
+
+  return undefined;
+}
 function extractTitle(message: string) {
   const labeled = extractFieldValue(message, ['title', 'event', 'name']);
   if (labeled) {
-    const title = normalizeTitleValue(labeled);
+    const title = normalizeEventTitleValue(labeled);
     if (title && !isWeakTitle(title)) return title;
+  }
+
+  const inferredPlace = extractPlace(message);
+  if (inferredPlace && looksLikeDestinationRequest(message)) {
+    const inferredTitle = titleFromPlace(message, inferredPlace);
+    if (inferredTitle && !isWeakTitle(inferredTitle)) return inferredTitle;
   }
 
   const purposeTitle = extractPurposeTitle(message);
   if (purposeTitle) return purposeTitle;
 
-  const inferredPlace = extractPlace(message);
   if (inferredPlace) {
     const inferredTitle = titleFromPlace(message, inferredPlace);
     if (inferredTitle && !isWeakTitle(inferredTitle)) return inferredTitle;
   }
 
   let working = normalizeSpaces(message)
-    .replace(/^(please|can you|could you|help me|i want to|i need to|i would like to)\s+/i, '')
+    .replace(/^(please|can you|could you|help me|i want to|i need to|i would like to|make me)\s+/i, '')
     .replace(/\b(add|create|make|schedule|plan|book|block|reserve|put)\b/gi, '')
     .replace(/\b(a|an|the|my)\s+(schedule|calendar|event|appointment|meeting|block)\b/i, '')
     .replace(/\b(to|in)\s+my\s+calendar\b/i, '')
@@ -426,12 +512,11 @@ function extractTitle(message: string) {
 
   working = stripDateAndTimePhrases(working);
   working = working.split(/\s+\b(?:at|in|on|from|until|till|through)\b\s+/i)[0];
-  working = normalizeTitleValue(working);
+  working = normalizeEventTitleValue(working);
 
   if (!working || isWeakTitle(working)) return undefined;
   return working;
 }
-
 export function isScheduleIntent(message: string) {
   const lower = message.toLowerCase();
   return /\b(schedule|calendar|appointment|meeting|event|book|block|reserve)\b/i.test(lower)
@@ -440,15 +525,51 @@ export function isScheduleIntent(message: string) {
     || /add\s+.+\s+calendar/i.test(message);
 }
 
+const scheduleFieldLabels: Record<ScheduleField, string[]> = {
+  title: ['title', 'event', 'name'],
+  place: ['place', 'location', 'venue', 'destination'],
+  date: ['date', 'day', 'time and date', 'date and time'],
+  time: ['time', 'time and date', 'date and time'],
+};
+
+function getDraftFieldValue(draft: ScheduleDraft | null, field: ScheduleField) {
+  if (!draft) return undefined;
+  return field === 'time' ? draft.startTime : draft[field];
+}
+
+function hasScheduleRevisionIntent(message: string) {
+  return /\b(revise|change|update|edit|correct|replace|modify|set|move|reschedule)\b/i.test(message);
+}
+
+function hasExplicitFieldValue(message: string, field: ScheduleField) {
+  return Boolean(extractFieldValue(message, scheduleFieldLabels[field]));
+}
+
+function hasFieldRevisionIntent(message: string, field: ScheduleField) {
+  const fieldPattern = labelPattern(scheduleFieldLabels[field]);
+  return new RegExp(String.raw`\b(?:revise|change|update|edit|correct|replace|modify|set|move|reschedule)\s+(?:the\s+)?(?:${fieldPattern})\b`, 'i').test(message)
+    || new RegExp(String.raw`\b(?:${fieldPattern})\s+(?:is|as|to be|to|at)\b`, 'i').test(message);
+}
+
+function canUpdateScheduleField(current: ScheduleDraft | null, message: string, field: ScheduleField, hasParsedValue: boolean) {
+  if (!getDraftFieldValue(current, field)) return true;
+  if (!hasParsedValue) return false;
+  if (hasExplicitFieldValue(message, field) || hasFieldRevisionIntent(message, field)) return true;
+  return field !== 'title' && hasScheduleRevisionIntent(message);
+}
 export function mergeScheduleDraft(current: ScheduleDraft | null, message: string, now = new Date()): ScheduleDraft {
   const time = parseTime(message);
+  const parsedTitle = extractTitle(message);
+  const parsedPlace = extractPlace(message);
+  const parsedDate = parseDate(message, now);
+
   return {
     ...current,
-    title: extractTitle(message) ?? current?.title,
-    place: extractPlace(message) ?? current?.place,
-    date: parseDate(message, now) ?? current?.date,
-    startTime: time.startTime ?? current?.startTime,
-    endTime: time.endTime ?? current?.endTime,
+    title: canUpdateScheduleField(current, message, 'title', Boolean(parsedTitle)) ? parsedTitle ?? current?.title : current?.title,
+    place: canUpdateScheduleField(current, message, 'place', Boolean(parsedPlace)) ? parsedPlace ?? current?.place : current?.place,
+    date: canUpdateScheduleField(current, message, 'date', Boolean(parsedDate)) ? parsedDate ?? current?.date : current?.date,
+    startTime: canUpdateScheduleField(current, message, 'time', Boolean(time.startTime)) ? time.startTime ?? current?.startTime : current?.startTime,
+    endTime: canUpdateScheduleField(current, message, 'time', Boolean(time.endTime)) ? time.endTime ?? current?.endTime : current?.endTime,
   };
 }
 
@@ -500,21 +621,8 @@ export function formatScheduleTimeRange(draft: Pick<CompleteScheduleDraft, 'star
   return `${formatScheduleTime(draft.startTime)} - ${formatScheduleTime(draft.endTime)}`;
 }
 
-export function formatMissingScheduleQuestion(missing: ScheduleField[]) {
-  if (!missing.length) return 'I have all the schedule details.';
-
-  const labels: Record<ScheduleField, string> = {
-    title: 'title',
-    place: 'place',
-    date: 'date',
-    time: 'start time',
-  };
-  const missingLabels = missing.map((field) => labels[field]);
-  const joined = missingLabels.length === 1
-    ? missingLabels[0]
-    : `${missingLabels.slice(0, -1).join(', ')} and ${missingLabels[missingLabels.length - 1]}`;
-
-  return `I can put that in your calendar once I have the ${joined}. Please send only the missing schedule details; I will not guess them.`;
+export function formatMissingScheduleQuestion(_missing: ScheduleField[]) {
+  return 'Please input the full schedule information so I can proceed to the calendar.';
 }
 
 function getEventType(startTime: string): CalendarEvent['type'] {
@@ -635,4 +743,3 @@ export function buildCalendarEventFromDraft(draft: CompleteScheduleDraft, existi
     notes: travelContext.notes,
   };
 }
-

@@ -858,3 +858,23 @@ textarea {
     filter: grayscale(0.12);
   }
 }
+
+/* Mobile keyboard and focus handling: keep focused fields readable without browser zoom. */
+@media (max-width: 640px) {
+  input:not([type="checkbox"]):not([type="radio"]),
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+
+  input,
+  select,
+  textarea,
+  [contenteditable="true"] {
+    scroll-margin-block-end: max(12rem, 38dvh);
+  }
+
+  :where(.overflow-y-auto, .overflow-auto) {
+    scroll-padding-block-end: max(12rem, 38dvh);
+  }
+}
