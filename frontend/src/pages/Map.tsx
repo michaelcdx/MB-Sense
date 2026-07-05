@@ -69,6 +69,8 @@ function buildMapTilerStyleUrl(apiKey: string) {
   return `https://api.maptiler.com/maps/streets-v2/style.json?key=${apiKey}`;
 }
 
+const comingSoonToastDurationMs = 1000;
+
 const toolChips: Array<{
   key: MapMode;
   label: string;
@@ -3899,7 +3901,7 @@ export default function MapView() {
     }
   }, []);
 
-  const showTransientToast = useCallback((title: string, detail: string, tone: MapTone = 'blue') => {
+  const showTransientToast = useCallback((title: string, detail: string, tone: MapTone = 'blue', durationMs = 1400) => {
     if (transientToastTimerRef.current) {
       window.clearTimeout(transientToastTimerRef.current);
     }
@@ -3908,7 +3910,7 @@ export default function MapView() {
     transientToastTimerRef.current = window.setTimeout(() => {
       setTransientToast(null);
       transientToastTimerRef.current = null;
-    }, 1400);
+    }, durationMs);
   }, []);
 
   const markProgrammaticCamera = useCallback(() => {
@@ -4234,13 +4236,21 @@ export default function MapView() {
     };
   }, [clearDestinationPreviewTimer, clearPinchRefocusTimer]);
 
-  const handleModeChange = (nextMode: MapMode) => {
+  const handleComingSoonFeature = useCallback((featureLabel: string, tone: MapTone = 'blue') => {
     setDriveExperienceMode('driveNow');
-    setMapMode(nextMode);
+    setMapMode('aiRoute');
     setSheetState('collapsed');
     setLastAction(null);
     setActivePanel(null);
+    setSelectedFavoriteStop(null);
+    setSelectedEvStop(null);
     setSearchPanelOpen(false);
+    showTransientToast('Coming soon', `${featureLabel} is coming soon.`, tone, comingSoonToastDurationMs);
+  }, [showTransientToast]);
+
+  const handleModeChange = (nextMode: MapMode) => {
+    const feature = toolChips.find((tool) => tool.key === nextMode);
+    handleComingSoonFeature(feature?.label ?? 'This feature', modeVisuals[nextMode].tone);
   };
 
   const handleDriveExperienceChange = (nextMode: DriveExperienceMode) => {
@@ -4615,43 +4625,23 @@ export default function MapView() {
       return;
     }
 
-    if (label === 'View Cost Breakdown') {
-      setActivePanel('costBreakdown');
-      setMapMode('cost');
-      setSheetState('expanded');
+    if (label === 'View Cost Breakdown' || label === 'Optimize Cost') {
+      handleComingSoonFeature('Cost', 'amber');
       return;
     }
 
     if (label === 'Compare Routes' || label === 'Optimize Route') {
-      setActivePanel('routeCompare');
-      setMapMode('aiRoute');
-      setSheetState('expanded');
-      return;
-    }
-
-    if (label === 'Optimize Cost') {
-      setActivePanel('costBreakdown');
-      setMapMode('cost');
-      setSheetState('expanded');
+      handleComingSoonFeature('Routes', 'blue');
       return;
     }
 
     if (label === 'Add Charging Stop' || label === 'Navigate Directly') {
-      setActivePanel('evStops');
-      setMapMode('evStations');
-      setSheetState('expanded');
+      handleComingSoonFeature('Charge', 'cyan');
       return;
     }
 
-    if (label === 'Add Favorite Stop') {
-      handleFavoriteStopSelect(favoriteStops[0]);
-      return;
-    }
-
-    if (label === 'View Stops') {
-      setActivePanel('favoriteStops');
-      setMapMode('parking');
-      setSheetState('expanded');
+    if (label === 'Add Favorite Stop' || label === 'View Stops') {
+      handleComingSoonFeature('Stops', 'emerald');
       return;
     }
 
@@ -5469,3 +5459,4 @@ export default function MapView() {
     </div>
   );
 }
+

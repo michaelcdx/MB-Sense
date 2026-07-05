@@ -1,13 +1,29 @@
-import { useState, useRef, useEffect } from 'react';
-import { MessageSquare, X, Send, BrainCircuit, Loader2 } from 'lucide-react';
+import { useState, useRef, useEffect, type FormEvent } from 'react';
+import { MessageSquare, X, Send, BrainCircuit, Loader2, Mic, CalendarPlus, CheckCircle2, Volume2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
 import Markdown from 'react-markdown';
+import { useAppStore } from '../store/useAppStore';
+import { useCalendarViewStore } from '../store/useCalendarViewStore';
+import {
+  buildCalendarEventFromDraft,
+  completeScheduleDraft,
+  formatMissingScheduleQuestion,
+  formatScheduleDate,
+  formatScheduleTimeRange,
+  getMissingScheduleFields,
+  isScheduleIntent,
+  mergeScheduleDraft,
+  type CompleteScheduleDraft,
+  type ScheduleDraft,
+} from '../lib/chatSchedule';
 
 interface Message {
   id: string;
   role: 'user' | 'assistant';
   content: string;
+  scheduleDraft?: CompleteScheduleDraft;
+  scheduleStatus?: 'ready' | 'added';
 }
 
 interface ChatbotProps {
@@ -16,7 +32,106 @@ interface ChatbotProps {
   className?: string;
 }
 
+type SpeechRecognitionResultLike = {
+  isFinal: boolean;
+  0?: { transcript?: string };
+};
+
+type SpeechRecognitionResultEventLike = {
+  resultIndex: number;
+  results: ArrayLike<SpeechRecognitionResultLike>;
+};
+
+type SpeechRecognitionErrorEventLike = {
+  error?: string;
+  message?: string;
+};
+
+type SpeechRecognitionLike = {
+  lang: string;
+  continuous: boolean;
+  interimResults: boolean;
+  maxAlternatives: number;
+  start: () => void;
+  stop: () => void;
+  abort: () => void;
+  onstart: (() => void) | null;
+  onresult: ((event: SpeechRecognitionResultEventLike) => void) | null;
+  onerror: ((event: SpeechRecognitionErrorEventLike) => void) | null;
+  onend: (() => void) | null;
+};
+
+type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
+
+function getSpeechRecognitionConstructor() {
+  if (typeof window === 'undefined') return undefined;
+  const speechWindow = window as Window & {
+    SpeechRecognition?: SpeechRecognitionConstructor;
+    webkitSpeechRecognition?: SpeechRecognitionConstructor;
+  };
+  return speechWindow.SpeechRecognition ?? speechWindow.webkitSpeechRecognition;
+}
+
+function createMessageId(prefix: string) {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function getSpeechAnswerSupported() {
+  return typeof window !== 'undefined' && 'speechSynthesis' in window && 'SpeechSynthesisUtterance' in window;
+}
+
+function formatVoiceAnswerText(content: string) {
+  return content
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/\*([^*]+)\*/g, '$1')
+    .replace(/^\s*[-*]\s+/gm, '')
+    .replace(/\[(.*?)\]\((.*?)\)/g, '$1')
+    .replace(/[#>_]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function formatScheduleSummary(draft: CompleteScheduleDraft) {
+  return [
+    'I have the schedule ready:',
+    '',
+    `- Title: ${draft.title}`,
+    `- Place: ${draft.place}`,
+    `- Date: ${formatScheduleDate(draft.date)}`,
+    `- Time: ${formatScheduleTimeRange(draft)}`,
+    '',
+    'Use the button below when you want me to block it in your calendar.',
+  ].join('\n');
+}
+
+function formatKnownDraftDetails(draft: ScheduleDraft) {
+  const rows = [
+    draft.title ? `- Title: ${draft.title}` : null,
+    draft.place ? `- Place: ${draft.place}` : null,
+    draft.date ? `- Date: ${formatScheduleDate(draft.date)}` : null,
+    draft.startTime && draft.endTime ? `- Time: ${formatScheduleTimeRange({ startTime: draft.startTime, endTime: draft.endTime })}` : null,
+  ].filter(Boolean);
+
+  return rows.length ? `\n\nCurrent details:\n${rows.join('\n')}` : '';
+}
+
+function applySingleFieldFallback(previousDraft: ScheduleDraft | null, nextDraft: ScheduleDraft, message: string): ScheduleDraft {
+  const missingBefore = getMissingScheduleFields(previousDraft ?? {});
+  const directAnswer = message.trim().replace(/[.;]+$/g, '');
+  if (!directAnswer || missingBefore.length !== 1) return nextDraft;
+
+  const [field] = missingBefore;
+  if (field === 'title' && !nextDraft.title) return { ...nextDraft, title: directAnswer };
+  if (field === 'place' && !nextDraft.place) return { ...nextDraft, place: directAnswer };
+  return nextDraft;
+}
+
 export default function Chatbot({ embedded = false, defaultOpen = false, className }: ChatbotProps) {
+  const addEvent = useAppStore((state) => state.addEvent);
+  const addRecentAction = useAppStore((state) => state.addRecentAction);
+  const setActiveWeek = useCalendarViewStore((state) => state.setActiveWeek);
   const [isOpen, setIsOpen] = useState(embedded || defaultOpen);
   const [messages, setMessages] = useState<Message[]>([
     { id: '1', role: 'assistant', content: 'Hello Michael. I can help with MB Sense battery predictions, charging windows, and schedule-aware mobility planning.' }
@@ -24,7 +139,26 @@ export default function Chatbot({ embedded = false, defaultOpen = false, classNa
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [highThinking, setHighThinking] = useState(false);
+  const [voiceAnswers, setVoiceAnswers] = useState(false);
+  const [voiceAnswerSupported, setVoiceAnswerSupported] = useState(() => getSpeechAnswerSupported());
+  const [pendingSchedule, setPendingSchedule] = useState<ScheduleDraft | null>(null);
+  const [voiceListening, setVoiceListening] = useState(false);
+  const [voiceSupported, setVoiceSupported] = useState(() => Boolean(getSpeechRecognitionConstructor()));
   const scrollRef = useRef<HTMLDivElement>(null);
+  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const finalVoiceTranscriptRef = useRef('');
+  const latestVoiceTranscriptRef = useRef('');
+  const loadingRef = useRef(false);
+  const voiceAnswersRef = useRef(false);
+
+  useEffect(() => {
+    loadingRef.current = loading;
+  }, [loading]);
+
+  useEffect(() => {
+    voiceAnswersRef.current = voiceAnswers;
+    if (!voiceAnswers && getSpeechAnswerSupported()) window.speechSynthesis.cancel();
+  }, [voiceAnswers]);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -41,13 +175,77 @@ export default function Chatbot({ embedded = false, defaultOpen = false, classNa
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isOpen]);
 
-  const handleSend = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!input.trim() || loading) return;
+  useEffect(() => {
+    setVoiceSupported(Boolean(getSpeechRecognitionConstructor()));
+    setVoiceAnswerSupported(getSpeechAnswerSupported());
+    return () => {
+      recognitionRef.current?.abort();
+      recognitionRef.current = null;
+      if (getSpeechAnswerSupported()) window.speechSynthesis.cancel();
+    };
+  }, []);
 
-    const userMsg = input;
+  const speakAssistantText = (content: string) => {
+    if (!voiceAnswersRef.current || !getSpeechAnswerSupported()) return;
+
+    const text = formatVoiceAnswerText(content);
+    if (!text) return;
+
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = 'en-US';
+    utterance.rate = 0.95;
+    utterance.pitch = 1;
+    utterance.volume = 1;
+    window.speechSynthesis.speak(utterance);
+  };
+
+  const appendAssistantMessage = (content: string, options: Pick<Message, 'scheduleDraft' | 'scheduleStatus'> = {}) => {
+    const message: Message = {
+      id: createMessageId('assistant'),
+      role: 'assistant',
+      content,
+      ...options,
+    };
+
+    setMessages((prev) => [...prev, message]);
+    speakAssistantText(content);
+    return message;
+  };
+
+  const handleScheduleMessage = (userMsg: string) => {
+    if (!pendingSchedule && !isScheduleIntent(userMsg)) return false;
+
+    const parsedDraft = mergeScheduleDraft(pendingSchedule, userMsg);
+    const nextDraft = applySingleFieldFallback(pendingSchedule, parsedDraft, userMsg);
+    const missing = getMissingScheduleFields(nextDraft);
+
+    if (missing.length) {
+      setPendingSchedule(nextDraft);
+      appendAssistantMessage(`${formatMissingScheduleQuestion(missing)}${formatKnownDraftDetails(nextDraft)}`);
+      return true;
+    }
+
+    const completeDraft = completeScheduleDraft(nextDraft);
+    if (!completeDraft) return false;
+
+    setPendingSchedule(null);
+    appendAssistantMessage(formatScheduleSummary(completeDraft), {
+      scheduleDraft: completeDraft,
+      scheduleStatus: 'ready',
+    });
+    return true;
+  };
+
+  const sendMessage = async (rawMessage: string) => {
+    const userMsg = rawMessage.trim();
+    if (!userMsg || loadingRef.current) return;
+
     setInput('');
-    setMessages((prev) => [...prev, { id: Date.now().toString(), role: 'user', content: userMsg }]);
+    setMessages((prev) => [...prev, { id: createMessageId('user'), role: 'user', content: userMsg }]);
+
+    if (handleScheduleMessage(userMsg)) return;
+
     setLoading(true);
 
     try {
@@ -63,15 +261,110 @@ export default function Chatbot({ embedded = false, defaultOpen = false, classNa
 
       const data = await res.json();
       if (data.text) {
-        setMessages((prev) => [...prev, { id: Date.now().toString(), role: 'assistant', content: data.text }]);
+        appendAssistantMessage(data.text);
       }
     } catch (err) {
       console.error(err);
-      setMessages((prev) => [...prev, { id: Date.now().toString(), role: 'assistant', content: "I'm having trouble connecting to the MB Sense AI service right now." }]);
+      appendAssistantMessage("I'm having trouble connecting to the MB Sense AI service right now.");
     } finally {
       setLoading(false);
     }
   };
+
+  const handleSend = (e: FormEvent) => {
+    e.preventDefault();
+    void sendMessage(input);
+  };
+
+  const startVoiceInput = () => {
+    if (voiceListening) {
+      recognitionRef.current?.stop();
+      return;
+    }
+
+    if (loadingRef.current) return;
+
+    const Recognition = getSpeechRecognitionConstructor();
+    if (!Recognition) {
+      setVoiceSupported(false);
+      appendAssistantMessage('Voice typing is not supported in this browser. You can still type your message normally.');
+      return;
+    }
+
+    try {
+      const recognition = new Recognition();
+      recognition.lang = 'en-US';
+      recognition.continuous = false;
+      recognition.interimResults = true;
+      recognition.maxAlternatives = 1;
+      finalVoiceTranscriptRef.current = '';
+      latestVoiceTranscriptRef.current = '';
+
+      recognition.onstart = () => {
+        setVoiceListening(true);
+      };
+
+      recognition.onresult = (event) => {
+        let interimTranscript = '';
+        for (let index = event.resultIndex; index < event.results.length; index += 1) {
+          const result = event.results[index];
+          const transcript = result[0]?.transcript ?? '';
+          if (result.isFinal) finalVoiceTranscriptRef.current = normalizeTranscript(`${finalVoiceTranscriptRef.current} ${transcript}`);
+          else interimTranscript = normalizeTranscript(`${interimTranscript} ${transcript}`);
+        }
+
+        const visibleTranscript = normalizeTranscript(`${finalVoiceTranscriptRef.current} ${interimTranscript}`);
+        latestVoiceTranscriptRef.current = visibleTranscript;
+        if (visibleTranscript) setInput(visibleTranscript);
+      };
+
+      recognition.onerror = (event) => {
+        console.error('Speech recognition error', event.error ?? event.message ?? event);
+      };
+
+      recognition.onend = () => {
+        const spokenMessage = normalizeTranscript(finalVoiceTranscriptRef.current || latestVoiceTranscriptRef.current);
+        finalVoiceTranscriptRef.current = '';
+        latestVoiceTranscriptRef.current = '';
+        recognitionRef.current = null;
+        setVoiceListening(false);
+        if (spokenMessage) void sendMessage(spokenMessage);
+      };
+
+      recognitionRef.current = recognition;
+      recognition.start();
+    } catch (error) {
+      console.error('Unable to start speech recognition', error);
+      setVoiceListening(false);
+    }
+  };
+
+  const handlePutInCalendar = (messageId: string, draft: CompleteScheduleDraft) => {
+    const event = buildCalendarEventFromDraft(draft);
+    addEvent(event);
+    setActiveWeek(event.date);
+    addRecentAction({
+      icon: 'event',
+      title: 'Schedule Added',
+      description: `${event.title} at ${event.time}`,
+      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    });
+
+    const confirmation = `Done. I put **${event.title}** in your calendar for ${formatScheduleDate(draft.date)} at ${formatScheduleTimeRange(draft)}.`;
+    setMessages((prev) => [
+      ...prev.map((message) => message.id === messageId ? { ...message, scheduleStatus: 'added' as const } : message),
+      {
+        id: createMessageId('assistant'),
+        role: 'assistant',
+        content: confirmation,
+      },
+    ]);
+    speakAssistantText(confirmation);
+  };
+
+  const lastReadyScheduleMessageId = [...messages]
+    .reverse()
+    .find((message) => message.role === 'assistant' && message.scheduleDraft && message.scheduleStatus === 'ready')?.id;
 
   const chatPanel = (
     <motion.div
@@ -80,7 +373,7 @@ export default function Chatbot({ embedded = false, defaultOpen = false, classNa
       exit={{ opacity: 0, y: embedded ? 12 : 100 }}
       className={cn(
         'flex flex-col overflow-hidden border border-outline-variant/45 bg-surface-container-lowest shadow-ambient-lg',
-        embedded ? 'h-full min-h-[520px] rounded-3xl' : 'fixed inset-x-0 bottom-0 z-50 h-[80vh] rounded-t-3xl sm:inset-x-auto sm:bottom-24 sm:right-6 sm:h-[600px] sm:w-[400px] sm:rounded-3xl',
+        embedded ? 'h-full min-h-[520px] rounded-3xl' : 'fixed bottom-24 right-4 z-[70] h-[min(560px,calc(100dvh-7rem))] w-[calc(100vw-2rem)] max-w-[400px] rounded-3xl sm:bottom-24 sm:right-6',
         className
       )}
     >
@@ -104,7 +397,7 @@ export default function Chatbot({ embedded = false, defaultOpen = false, classNa
 
       <div ref={scrollRef} className="flex-1 space-y-4 overflow-y-auto p-5 pb-20">
         {messages.map((m) => (
-          <div key={m.id} className={cn('flex w-full', m.role === 'user' ? 'justify-end' : 'justify-start')}>
+          <div key={m.id} className={cn('flex w-full flex-col', m.role === 'user' ? 'items-end' : 'items-start')}>
             <div
               className={cn(
                 'max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-relaxed',
@@ -113,6 +406,22 @@ export default function Chatbot({ embedded = false, defaultOpen = false, classNa
             >
               {m.role === 'user' ? m.content : <Markdown>{m.content}</Markdown>}
             </div>
+            {m.id === lastReadyScheduleMessageId && m.scheduleDraft && m.scheduleStatus === 'ready' && (
+              <button
+                type="button"
+                onClick={() => handlePutInCalendar(m.id, m.scheduleDraft!)}
+                className="mt-2 inline-flex min-h-10 items-center gap-2 rounded-xl border border-primary/25 bg-primary px-4 text-xs font-black uppercase tracking-wider text-on-primary shadow-ambient transition active:scale-[0.98]"
+              >
+                <CalendarPlus className="h-4 w-4" />
+                Put in your calendar
+              </button>
+            )}
+            {m.scheduleStatus === 'added' && (
+              <div className="mt-2 inline-flex items-center gap-2 rounded-xl border border-emerald-300/30 bg-emerald-500/10 px-3 py-2 text-xs font-black uppercase tracking-wider text-emerald-600">
+                <CheckCircle2 className="h-4 w-4" />
+                Added to calendar
+              </div>
+            )}
           </div>
         ))}
         {loading && (
@@ -127,7 +436,7 @@ export default function Chatbot({ embedded = false, defaultOpen = false, classNa
 
       <div className="border-t border-outline-variant/45 bg-surface-container-low p-4">
         <form onSubmit={handleSend} className="relative">
-          <div className="mb-3 flex items-center gap-2">
+          <div className="mb-3 flex flex-wrap items-center gap-3">
             <label className="flex cursor-pointer items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-slate-400 transition-colors hover:text-amber-500">
               <input type="checkbox" className="sr-only" checked={highThinking} onChange={(e) => setHighThinking(e.target.checked)} />
               <div className={cn('flex h-3 w-3 items-center justify-center rounded border transition-all', highThinking ? 'border-amber-500 bg-amber-500' : 'border-outline-variant bg-surface-container-lowest')}>
@@ -135,17 +444,42 @@ export default function Chatbot({ embedded = false, defaultOpen = false, classNa
               </div>
               High Thinking
             </label>
+            <label className={cn('flex cursor-pointer items-center gap-2 text-[10px] font-bold uppercase tracking-widest transition-colors', voiceAnswerSupported ? 'text-slate-400 hover:text-primary' : 'cursor-not-allowed text-slate-500 opacity-60')}>
+              <input type="checkbox" className="sr-only" checked={voiceAnswers} disabled={!voiceAnswerSupported} onChange={(e) => setVoiceAnswers(e.target.checked)} />
+              <div className={cn('flex h-3 w-3 items-center justify-center rounded border transition-all', voiceAnswers ? 'border-primary bg-primary' : 'border-outline-variant bg-surface-container-lowest')}>
+                {voiceAnswers && <div className="h-1.5 w-1.5 rounded-sm bg-on-primary" />}
+              </div>
+              <Volume2 className="h-3.5 w-3.5" />
+              Prefer voice answer
+            </label>
           </div>
-          <input
-            type="text"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder="Ask about charging predictions..."
-            className="w-full rounded-xl border border-outline-variant/55 bg-surface-container-lowest py-3 pl-4 pr-12 text-sm text-on-surface transition-colors focus:border-primary/50 focus:outline-none"
-          />
-          <button type="submit" disabled={!input.trim() || loading} className="absolute bottom-2 right-2 flex h-8 w-8 items-center justify-center text-primary hover:text-primary-dim disabled:opacity-50" aria-label="Send message">
-            <Send className="h-4 w-4" />
-          </button>
+          <div className="relative">
+            <input
+              type="text"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder={voiceListening ? 'Listening...' : 'Ask about charging predictions or schedule something...'}
+              className="w-full rounded-xl border border-outline-variant/55 bg-surface-container-lowest py-3 pl-4 pr-24 text-sm text-on-surface transition-colors placeholder:text-slate-500 focus:border-primary/50 focus:outline-none"
+            />
+            <div className="absolute bottom-2 right-2 flex items-center gap-1">
+              <button
+                type="button"
+                onClick={startVoiceInput}
+                disabled={!voiceSupported || loading}
+                className={cn(
+                  'flex h-8 w-8 items-center justify-center rounded-lg text-primary hover:text-primary-dim disabled:opacity-40',
+                  voiceListening && 'bg-primary text-on-primary hover:text-on-primary'
+                )}
+                aria-label={voiceListening ? 'Stop voice input' : 'Start voice input'}
+                title={voiceSupported ? 'Voice input' : 'Voice input is not supported in this browser'}
+              >
+                <Mic className="h-4 w-4" />
+              </button>
+              <button type="submit" disabled={!input.trim() || loading} className="flex h-8 w-8 items-center justify-center rounded-lg text-primary hover:text-primary-dim disabled:opacity-50" aria-label="Send message">
+                <Send className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
         </form>
       </div>
     </motion.div>
@@ -175,8 +509,8 @@ export default function Chatbot({ embedded = false, defaultOpen = false, classNa
   return (
     <>
       {!isOpen && (
-        <button onClick={() => setIsOpen(true)} className="fixed bottom-24 left-6 z-40 flex h-14 w-14 items-center justify-center rounded-2xl border border-outline-variant/45 bg-surface-container-lowest shadow-ambient-lg transition-all hover:bg-surface-container-low active:scale-95" aria-label="Open chatbot">
-          <MessageSquare className="h-6 w-6 text-primary" />
+        <button onClick={() => setIsOpen(true)} className="fixed bottom-24 right-6 z-[60] sm:bottom-6 flex h-14 w-14 items-center justify-center rounded-2xl border border-primary/25 bg-primary text-on-primary shadow-ambient-lg transition-all hover:bg-primary-dim active:scale-95" aria-label="Open AI assistant">
+          <BrainCircuit className="h-6 w-6" />
         </button>
       )}
 
@@ -184,3 +518,8 @@ export default function Chatbot({ embedded = false, defaultOpen = false, classNa
     </>
   );
 }
+
+function normalizeTranscript(value: string) {
+  return value.replace(/\s+/g, ' ').trim();
+}
+

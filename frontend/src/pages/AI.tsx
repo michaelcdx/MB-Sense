@@ -2,14 +2,12 @@ import { useEffect, useMemo, useState } from 'react';
 import { motion } from 'motion/react';
 import {
   BatteryCharging,
-  BrainCircuit,
   CheckCircle2,
   Minus,
   PlugZap,
-  Plus
+  Plus,
+  Settings
 } from 'lucide-react';
-import Chatbot from '../components/Chatbot';
-import VoiceAssistant from '../components/VoiceAssistant';
 import { resolveLocationCoordinates } from '../constants/realWorldRouteData';
 import { buildChargingPlan, buildGeminiChargingPredictionPayload, formatPlanTimeRange, type ChargingModePreference, type ChargingOptionPlan, type GeminiChargingDecision } from '../lib/chargingAgents';
 import { fetchOpenChargeMapStations } from '../lib/chargingPlanner';
@@ -142,11 +140,11 @@ export default function AI() {
       <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <div className="flex items-center gap-2 text-[11px] font-black uppercase tracking-[0.24em] text-primary">
-            <BrainCircuit className="h-4 w-4" />
-            AI
+            <Settings className="h-4 w-4" />
+            Setting
           </div>
-          <h1 className="mt-2 text-3xl font-black tracking-tight text-on-surface sm:text-4xl">MB Sense AI</h1>
-          <p className="mt-2 max-w-2xl text-sm font-semibold leading-relaxed text-slate-500">Charging calculation, minimum battery policy, and MB Sense assistance.</p>
+          <h1 className="mt-2 text-3xl font-black tracking-tight text-on-surface sm:text-4xl">Setting</h1>
+          <p className="mt-2 max-w-2xl text-sm font-semibold leading-relaxed text-slate-500">Charging calculation and minimum battery policy.</p>
         </div>
         <div className="inline-flex w-fit items-center gap-2 rounded-2xl border border-emerald-300/25 bg-emerald-400/10 px-4 py-3 text-sm font-black text-emerald-500">
           <BatteryCharging className="h-4 w-4" />
@@ -322,17 +320,7 @@ export default function AI() {
             </div>
         </div>
       </section>
-
-      <section>
-        <div className="mb-4">
-          <p className="text-[10px] font-black uppercase tracking-widest text-primary">MB Sense AI Assistance and Voice AI</p>
-          <h2 className="mt-1 text-xl font-black text-on-surface">Ask or speak to MB Sense</h2>
-        </div>
-        <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1.12fr)_minmax(360px,0.88fr)]">
-          <Chatbot embedded />
-          <VoiceAssistant embedded />
-        </div>
-      </section>
     </motion.div>
   );
 }
+

@@ -10,6 +10,7 @@ import AI from './pages/AI';
 import Profile from './pages/Profile';
 import SignIn from './pages/SignIn';
 import CreateAccount from './pages/CreateAccount';
+import Chatbot from './components/Chatbot';
 import { cn } from './lib/utils';
 import { buildChargingPlanInput, buildChargingPlanInputSignature, requestChargingPlan } from './lib/chargingPlanner';
 import { useAppStore, type CalendarEvent } from './store/useAppStore';
@@ -135,6 +136,7 @@ function AppShell() {
           <AppRoutes />
         </main>
         <BottomNav />
+        <Chatbot />
       </div>
     </div>
   );
@@ -148,3 +150,4 @@ export default function App() {
     </BrowserRouter>
   );
 }
+

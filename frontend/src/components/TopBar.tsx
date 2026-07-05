@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Home, Calendar, Map as MapIcon, Car, BrainCircuit, BatteryCharging } from 'lucide-react';
+import { Home, Calendar, Map as MapIcon, Car, Settings, BatteryCharging } from 'lucide-react';
 import { useAppStore } from '../store/useAppStore';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { cn } from '../lib/utils';
@@ -45,7 +45,7 @@ export default function TopBar() {
     { name: 'Calendar', path: '/calendar', icon: Calendar },
     { name: 'Map', path: '/map', icon: MapIcon },
     { name: 'Vehicle', path: '/vehicle', icon: Car },
-    { name: 'AI', path: '/ai', icon: BrainCircuit }
+    { name: 'Setting', path: '/ai', icon: Settings }
   ];
 
   const initials = user.name
@@ -148,3 +148,4 @@ export default function TopBar() {
     </header>
   );
 }
+
