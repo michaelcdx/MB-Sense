@@ -1,14 +1,15 @@
-﻿services:
+services:
   backend:
     build:
       context: ./backend
+    restart: unless-stopped
     env_file:
-      - ./backend/.env
+      - ./.env
     environment:
       PORT: 8000
       NODE_ENV: production
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8000/api/health"]
       interval: 10s
@@ -23,10 +24,11 @@
         GOOGLE_MAPS_PLATFORM_KEY: ${GOOGLE_MAPS_PLATFORM_KEY:-}
         VITE_GOOGLE_MAPS_PLATFORM_KEY: ${VITE_GOOGLE_MAPS_PLATFORM_KEY:-}
         VITE_GOOGLE_MAPS_KEY: ${VITE_GOOGLE_MAPS_KEY:-}
-        VITE_API_PROXY_TARGET: ${VITE_API_PROXY_TARGET:-http://localhost:8000}
+        VITE_API_PROXY_TARGET: ${VITE_API_PROXY_TARGET:-http://backend:8000}
         VITE_MAPTILER_API_KEY: ${VITE_MAPTILER_API_KEY:-}
+    restart: unless-stopped
     depends_on:
       backend:
         condition: service_healthy
     ports:
-      - "8080:80"
+      - "127.0.0.1:8080:80"
