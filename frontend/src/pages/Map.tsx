@@ -7,7 +7,6 @@ import {
   AlertTriangle,
   ArrowUp,
   Banknote,
-  BatteryCharging,
   Check,
   Coffee,
   LocateFixed,
@@ -71,19 +70,6 @@ function buildMapTilerStyleUrl(apiKey: string) {
 
 const comingSoonToastDurationMs = 1000;
 
-const toolChips: Array<{
-  key: MapMode;
-  label: string;
-  shortLabel: string;
-  value: string;
-  icon: LucideIcon;
-}> = [
-  { key: 'aiRoute', label: 'Route', shortLabel: 'Route', value: '3 min saved', icon: Sparkles },
-  { key: 'parking', label: 'Stops', shortLabel: 'Stops', value: '5 saved', icon: Coffee },
-  { key: 'evStations', label: 'Charge', shortLabel: 'Charge', value: '4 fast', icon: Plug },
-  { key: 'cost', label: 'Cost', shortLabel: 'Cost', value: '$12.80', icon: Banknote },
-];
-
 const modeVisuals: Record<MapMode, { routeColor: string; glow: string; tone: MapTone }> = {
   aiRoute: { routeColor: '#4647d3', glow: 'rgba(70, 71, 211, 0.14)', tone: 'blue' },
   parking: { routeColor: '#10a86c', glow: 'rgba(16, 168, 108, 0.12)', tone: 'emerald' },
@@ -93,7 +79,6 @@ const modeVisuals: Record<MapMode, { routeColor: string; glow: string; tone: Map
 
 type ActivePanel = null | 'routeCompare' | 'favoriteStops' | 'evStops' | 'costBreakdown';
 type DriveExperienceMode = 'driveNow' | 'futureDrivePreview';
-type FutureDriveAction = 'Optimize Selected Plan' | 'Compare Rescue Routes' | 'Set Charging Reminder';
 type FutureDrivePlanId = 'planA' | 'planB' | 'planC';
 type FutureDriveRiskTone = 'safe' | 'watch' | 'high' | 'critical';
 type BatteryStatusColor = 'green' | 'yellow' | 'red';
@@ -2100,13 +2085,13 @@ function MapControlButton({
       className={cn(
         'flex h-10 items-center justify-center gap-2 px-3 text-[9.5px] font-semibold uppercase tracking-[0.08em] transition duration-200 ease-out active:scale-[0.97]',
         'text-slate-200 hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/35 focus-visible:ring-inset',
-        label ? 'min-w-[6.75rem]' : 'w-10',
+        label ? 'min-w-10 sm:min-w-[6.75rem]' : 'w-10',
         active && 'border-primary/20 bg-primary/10 text-primary shadow-ambient hover:bg-primary/15',
         className
       )}
     >
       <Icon className={cn('h-4 w-4 shrink-0', active ? 'text-primary' : 'text-slate-400')} />
-      {label && <span className="truncate">{label}</span>}
+      {label && <span className="hidden truncate sm:inline">{label}</span>}
     </button>
   );
 }
@@ -2188,7 +2173,7 @@ function ActiveNavigationPanel({
   return (
     <section
       aria-label="Active navigation guidance"
-      className="relative overflow-hidden rounded-[22px] border border-[#dbe7ff]/35 bg-[#1745d8] text-[#f8fbff] shadow-ambient-lg ring-2 ring-[#dbe7ff]/18"
+      className="relative overflow-hidden rounded-[18px] border border-[#dbe7ff]/35 bg-[#1745d8] text-[#f8fbff] shadow-ambient-lg ring-2 ring-[#dbe7ff]/18 sm:rounded-[22px]"
     >
       <button
         type="button"
@@ -2197,9 +2182,9 @@ function ActiveNavigationPanel({
           event.stopPropagation();
           onStopNavigation();
         }}
-        className="absolute right-2.5 top-2.5 z-20 flex h-12 w-12 items-center justify-center rounded-full border-2 border-[#f8fbff] bg-[#f8fbff] text-[#1745d8] shadow-[0_14px_30px_rgba(0,0,0,0.42)] ring-2 ring-black/10 transition hover:bg-[#edf4ff] active:scale-[0.95]"
+        className="absolute right-2 top-2 z-20 flex h-9 w-9 items-center justify-center rounded-full border-2 border-[#f8fbff] bg-[#f8fbff] text-[#1745d8] shadow-[0_10px_22px_rgba(0,0,0,0.34)] ring-2 ring-black/10 transition hover:bg-[#edf4ff] active:scale-[0.95] sm:right-2.5 sm:top-2.5 sm:h-12 sm:w-12 sm:shadow-[0_14px_30px_rgba(0,0,0,0.42)]"
       >
-        <X className="h-6 w-6 stroke-[3]" />
+        <X className="h-[18px] w-[18px] stroke-[3] sm:h-6 sm:w-6" />
       </button>
 
       <button
@@ -2210,37 +2195,37 @@ function ActiveNavigationPanel({
         onPointerCancel={() => {
           swipeStartYRef.current = null;
         }}
-        className="flex w-full touch-pan-y items-start gap-3 bg-[#1745d8] px-4 pb-4 pt-4 pr-[4.25rem] text-left transition hover:bg-[#123fc6] active:bg-[#123fc6]"
+        className="flex w-full touch-pan-y items-start gap-2.5 bg-[#1745d8] px-3 pb-2.5 pt-2.5 pr-12 text-left transition hover:bg-[#123fc6] active:bg-[#123fc6] sm:gap-3 sm:px-4 sm:pb-4 sm:pt-4 sm:pr-[4.25rem]"
       >
-        <span className="flex h-[3.25rem] w-[3.25rem] shrink-0 items-center justify-center rounded-full bg-[#f8fbff] text-[#1745d8] shadow-[0_12px_28px_rgba(0,0,0,0.30)]">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#f8fbff] text-[#1745d8] shadow-[0_10px_22px_rgba(0,0,0,0.26)] sm:h-[3.25rem] sm:w-[3.25rem] sm:shadow-[0_12px_28px_rgba(0,0,0,0.30)]">
           <ArrowUp
-            className="h-7 w-7 transition-transform duration-300"
+            className="h-5 w-5 transition-transform duration-300 sm:h-7 sm:w-7"
             style={{ transform: `rotate(${currentStep?.directionDegrees ?? directionDegrees}deg)` }}
           />
         </span>
         <div className="min-w-0 flex-1">
-          <p className="text-[9.5px] font-black uppercase tracking-[0.14em] text-[#dbe7ff]">Direction</p>
-          <h2 className="mt-0.5 break-words text-[26px] font-black leading-tight text-[#f8fbff] drop-shadow-[0_2px_6px_rgba(0,0,0,0.35)]">
+          <p className="text-[8px] font-black uppercase tracking-[0.12em] text-[#dbe7ff] sm:text-[9.5px] sm:tracking-[0.14em]">Direction</p>
+          <h2 className="mt-0.5 break-words text-[18px] font-black leading-tight text-[#f8fbff] drop-shadow-[0_2px_6px_rgba(0,0,0,0.35)] sm:text-[26px]">
             {currentInstruction}
           </h2>
-          <p className="mt-1 truncate text-[13.5px] font-black text-[#eef4ff] drop-shadow-[0_1px_4px_rgba(0,0,0,0.28)]">
-            {currentDistance} · Toward {destinationName}
+          <p className="mt-0.5 truncate text-[11px] font-black text-[#eef4ff] drop-shadow-[0_1px_4px_rgba(0,0,0,0.28)] sm:mt-1 sm:text-[13.5px]">
+            {currentDistance} - Toward {destinationName}
           </p>
         </div>
       </button>
 
       <div className="grid grid-cols-3 border-t border-[#dbe7ff]/28 bg-[#0e2f95]">
-        <div className="px-3 py-3">
+        <div className="px-2.5 py-2 sm:px-3 sm:py-3">
           <p className="text-[8px] font-black uppercase tracking-[0.13em] text-[#c9d8ff]">Time</p>
-          <p className="mt-0.5 truncate text-[16px] font-black text-[#f8fbff]">{timeLabel}</p>
+          <p className="mt-0.5 truncate text-[12.5px] font-black text-[#f8fbff] sm:text-[16px]">{timeLabel}</p>
         </div>
-        <div className="border-l border-[#dbe7ff]/28 px-3 py-3">
+        <div className="border-l border-[#dbe7ff]/28 px-2.5 py-2 sm:px-3 sm:py-3">
           <p className="text-[8px] font-black uppercase tracking-[0.13em] text-[#c9d8ff]">Range</p>
-          <p className="mt-0.5 truncate text-[16px] font-black text-[#f8fbff]">{rangeLabel}</p>
+          <p className="mt-0.5 truncate text-[12.5px] font-black text-[#f8fbff] sm:text-[16px]">{rangeLabel}</p>
         </div>
-        <div className="border-l border-[#dbe7ff]/28 px-3 py-3">
+        <div className="border-l border-[#dbe7ff]/28 px-2.5 py-2 sm:px-3 sm:py-3">
           <p className="text-[8px] font-black uppercase tracking-[0.13em] text-[#c9d8ff]">Direction</p>
-          <p className="mt-0.5 truncate text-[16px] font-black text-[#f8fbff]">{directionLabel}</p>
+          <p className="mt-0.5 truncate text-[12.5px] font-black text-[#f8fbff] sm:text-[16px]">{directionLabel}</p>
         </div>
       </div>
 
@@ -2252,14 +2237,14 @@ function ActiveNavigationPanel({
         onPointerCancel={() => {
           swipeStartYRef.current = null;
         }}
-        className="flex min-h-12 w-full touch-pan-y items-center justify-center gap-2 border-t border-[#dbe7ff]/30 bg-[#f8fbff] px-3 text-[11px] font-black uppercase tracking-[0.11em] text-[#1745d8] shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] transition hover:bg-[#edf4ff] active:bg-[#dce9ff]"
+        className="flex min-h-9 w-full touch-pan-y items-center justify-center gap-2 border-t border-[#dbe7ff]/30 bg-[#f8fbff] px-3 text-[9.5px] font-black uppercase tracking-[0.09em] text-[#1745d8] shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] transition hover:bg-[#edf4ff] active:bg-[#dce9ff] sm:min-h-12 sm:text-[11px] sm:tracking-[0.11em]"
       >
-        <span className="h-1.5 w-10 rounded-full bg-[#1745d8]/70" />
+        <span className="h-1 w-8 rounded-full bg-[#1745d8]/70 sm:h-1.5 sm:w-10" />
         <span>{steps.length === 1 ? '1 step' : `${steps.length || 1} steps`}</span>
       </button>
 
       {directionsOpen && (
-        <div className="max-h-[min(48dvh,24rem)] overflow-y-auto border-t border-blue-100 bg-[#f8fbff] p-2 text-[#123fc6] shadow-[inset_0_1px_0_rgba(255,255,255,0.95)] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <div className="max-h-[min(34dvh,18rem)] overflow-y-auto border-t border-blue-100 bg-[#f8fbff] p-1.5 text-[#123fc6] shadow-[inset_0_1px_0_rgba(255,255,255,0.95)] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:max-h-[min(48dvh,24rem)] sm:p-2">
           <ol className="space-y-1">
             {(steps.length ? steps : [{
               id: 'navigation-step-fallback',
@@ -2272,7 +2257,7 @@ function ActiveNavigationPanel({
               <li
                 key={step.id}
                 className={cn(
-                  'flex min-h-14 items-center gap-2.5 rounded-[16px] border px-2.5 py-2 shadow-[0_10px_24px_rgba(23,69,216,0.08)]',
+                  'flex min-h-12 items-center gap-2.5 rounded-[14px] border px-2.5 py-1.5 shadow-[0_10px_24px_rgba(23,69,216,0.08)] sm:min-h-14 sm:rounded-[16px] sm:py-2',
                   index === 0 ? 'border-[#1745d8]/25 bg-[#eaf1ff]' : 'border-blue-100 bg-white'
                 )}
               >
@@ -2320,7 +2305,6 @@ function FutureDrivePreviewSheet({
   onRouteStopSelect,
   onPlanSelect,
   onEmptyAction,
-  onAction,
 }: {
   preview: FutureDrivePreviewData | null;
   emptyMessage: string;
@@ -2336,7 +2320,6 @@ function FutureDrivePreviewSheet({
   onRouteStopSelect: (stopId: string) => void;
   onPlanSelect: (planId: FutureDrivePlanId) => void;
   onEmptyAction?: () => void;
-  onAction: (action: FutureDriveAction) => void;
 }) {
   const riskVisual = futureDriveRiskVisuals[prediction.riskTone];
   const [showActivityList, setShowActivityList] = useState(false);
@@ -2360,8 +2343,8 @@ function FutureDrivePreviewSheet({
   };
 
   const renderDaySelector = () => (
-    <div className="overflow-x-auto px-4 py-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-      <div className="flex min-w-max items-start gap-2">
+    <div className="px-3 py-2 sm:px-4 sm:py-3">
+      <div className="grid min-w-0 grid-cols-7 items-start gap-1 sm:gap-1.5">
         {dayOptions.map((day) => {
           const isSelected = day.dateKey === selectedDayKey;
           const visual = day.status === 'gray'
@@ -2374,13 +2357,13 @@ function FutureDrivePreviewSheet({
               type="button"
               onClick={() => onDaySelect(day.dateKey)}
               className={cn(
-                'flex w-12 shrink-0 flex-col items-center gap-1 rounded-[16px] px-1.5 py-1.5 text-center transition duration-200 ease-out active:scale-[0.97]',
+                'flex min-w-0 flex-col items-center gap-0.5 rounded-[14px] px-1 py-1 text-center transition duration-200 ease-out active:scale-[0.97] sm:gap-1 sm:rounded-[16px] sm:px-1.5 sm:py-1.5',
                 isSelected ? 'bg-white/[0.07]' : 'hover:bg-white/[0.045]'
               )}
-              aria-label={`Show FutureDrive forecast for ${day.weekdayLabel}`}
+              aria-label={`Show Schedule Preview forecast for ${day.weekdayLabel}`}
             >
               <span
-                className="flex h-10 w-10 items-center justify-center rounded-full border text-[10px] font-black uppercase tracking-[0.02em] shadow-ambient"
+                className="flex h-8 w-8 items-center justify-center rounded-full border text-[9px] font-black uppercase tracking-[0.02em] shadow-ambient sm:h-10 sm:w-10 sm:text-[10px]"
                 style={{
                   borderColor: isSelected ? `${visual.color}66` : `${visual.color}34`,
                   backgroundColor: day.status === 'gray' ? 'rgba(148, 163, 184, 0.10)' : `${visual.color}18`,
@@ -2390,8 +2373,8 @@ function FutureDrivePreviewSheet({
               >
                 {day.weekdayLabel}
               </span>
-              <span className="text-[8px] font-bold uppercase tracking-[0.06em] text-slate-400">{day.dayLabel}</span>
-              <span className="max-w-12 truncate text-[8px] font-bold uppercase tracking-[0.05em]" style={{ color: visual.color }}>
+              <span className="text-[7.5px] font-bold uppercase tracking-[0.05em] text-slate-400 sm:text-[8px] sm:tracking-[0.06em]">{day.dayLabel}</span>
+              <span className="max-w-full truncate text-[7.5px] font-bold uppercase tracking-[0.04em] sm:text-[8px] sm:tracking-[0.05em]" style={{ color: visual.color }}>
                 {day.drivingActivityCount > 0
                   ? day.lowestBattery !== null
                     ? `${day.lowestBattery}%`
@@ -2408,16 +2391,16 @@ function FutureDrivePreviewSheet({
   if (!preview) {
     return (
       <section
-        aria-label="FutureDrive Preview details"
-        className="flex h-full min-h-0 flex-col overflow-hidden rounded-[20px] border border-outline-variant/45 bg-surface-container-lowest/92 shadow-ambient-lg backdrop-blur-2xl"
+        aria-label="Schedule Preview details"
+        className="flex max-h-[min(40dvh,22rem)] min-h-0 flex-col overflow-hidden rounded-[18px] border border-outline-variant/45 bg-surface-container-lowest/92 shadow-ambient-lg backdrop-blur-2xl sm:max-h-full sm:h-full sm:rounded-[20px]"
       >
         <div className="border-b border-white/[0.065]">
-          <div className="px-4 pt-3.5">
+          <div className="px-3 pt-2.5 sm:px-4 sm:pt-3.5">
             <div className="flex items-center gap-2">
-              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-primary/25 bg-primary/10 text-primary">
-                <Sparkles className="h-3.5 w-3.5" />
+              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-primary/25 bg-primary/10 text-primary sm:h-7 sm:w-7">
+                <Sparkles className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
               </span>
-              <p className="text-[8.5px] font-semibold uppercase tracking-[0.15em] text-primary">FUTUREDRIVE PREVIEW</p>
+              <p className="text-[8px] font-semibold uppercase tracking-[0.13em] text-primary sm:text-[8.5px] sm:tracking-[0.15em]">SCHEDULE PREVIEW</p>
             </div>
           </div>
           {renderDaySelector()}
@@ -2462,7 +2445,7 @@ function FutureDrivePreviewSheet({
     })),
   ];
   const timelineIsScrollable = timelineNodes.length > 5;
-  const timelineMinWidth = timelineIsScrollable ? `${Math.max(timelineNodes.length * 92, 440)}px` : undefined;
+  const timelineMinWidth = timelineIsScrollable ? `${Math.max(timelineNodes.length * 72, 360)}px` : undefined;
   const highestEnergyStop =
     timelineActivities.reduce<FutureDriveStop | null>((current, stop) => {
       if (typeof stop.batteryUsePercent !== 'number') return current;
@@ -2486,37 +2469,37 @@ function FutureDrivePreviewSheet({
 
   return (
     <section
-      aria-label="FutureDrive Preview details"
-      className="flex h-full min-h-0 flex-col overflow-hidden rounded-[20px] border border-outline-variant/45 bg-surface-container-lowest/92 shadow-ambient-lg backdrop-blur-2xl"
+      aria-label="Schedule Preview details"
+      className="flex max-h-[min(40dvh,22rem)] min-h-0 flex-col overflow-hidden rounded-[18px] border border-outline-variant/45 bg-surface-container-lowest/92 shadow-ambient-lg backdrop-blur-2xl sm:max-h-full sm:h-full sm:rounded-[20px]"
       style={{ boxShadow: `var(--shadow-ambient-lg), 0 0 0 1px ${riskVisual.color}18` }}
     >
-      <div className="border-b border-white/[0.065] px-4 pb-3 pt-3.5">
+      <div className="border-b border-white/[0.065] px-3 pb-2 pt-2.5 sm:px-4 sm:pb-3 sm:pt-3.5">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-primary/25 bg-primary/10 text-primary">
-                <Sparkles className="h-3.5 w-3.5" />
+              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-primary/25 bg-primary/10 text-primary sm:h-7 sm:w-7">
+                <Sparkles className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
               </span>
-              <p className="text-[8.5px] font-semibold uppercase tracking-[0.15em] text-primary">FUTUREDRIVE PREVIEW</p>
+              <p className="text-[8px] font-semibold uppercase tracking-[0.13em] text-primary sm:text-[8.5px] sm:tracking-[0.15em]">SCHEDULE PREVIEW</p>
             </div>
-            <h2 className="mt-1.5 text-[17px] font-semibold leading-tight text-white">{preview.title}</h2>
-            <p className="mt-1 text-[11.5px] font-medium leading-relaxed text-slate-300">{preview.subtitle}</p>
+            <h2 className="mt-1 text-[14px] font-semibold leading-tight text-white sm:mt-1.5 sm:text-[17px]">{preview.title}</h2>
+            <p className="mt-1 hidden text-[11.5px] font-medium leading-relaxed text-slate-300 sm:block">{preview.subtitle}</p>
           </div>
           <span
-            className="shrink-0 rounded-full border px-2.5 py-1 text-[8.5px] font-semibold uppercase tracking-[0.08em]"
+            className="shrink-0 rounded-full border px-2 py-0.5 text-[8px] font-semibold uppercase tracking-[0.06em] sm:px-2.5 sm:py-1 sm:text-[8.5px] sm:tracking-[0.08em]"
             style={{ borderColor: `${riskVisual.color}30`, backgroundColor: `${riskVisual.color}14`, color: riskVisual.color }}
           >
             {prediction.riskLabel}
           </span>
         </div>
-        <div className="-mx-4 mt-2 border-t border-white/[0.055]">
+        <div className="-mx-3 mt-2 border-t border-white/[0.055] sm:-mx-4">
           {renderDaySelector()}
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-        <div className="rounded-[18px] border border-white/[0.08] bg-white/[0.04] px-3.5 py-3">
-          <div className="mb-2.5 flex items-center justify-between gap-3">
+      <div className="min-h-0 max-h-[min(24dvh,13rem)] overflow-y-auto overscroll-contain px-3 py-2.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:max-h-none sm:flex-1 sm:px-4 sm:py-3.5">
+        <div className="rounded-[16px] border border-white/[0.08] bg-white/[0.04] px-3 py-2.5 sm:rounded-[18px] sm:px-3.5 sm:py-3">
+          <div className="mb-2 flex items-center justify-between gap-3 sm:mb-2.5">
             <p className="text-[8.5px] font-semibold uppercase tracking-[0.14em] text-slate-200">Timeline Prediction</p>
             <span className="rounded-full border px-2 py-0.5 text-[8.5px] font-semibold uppercase tracking-[0.08em]" style={{ borderColor: `${riskVisual.color}32`, backgroundColor: `${riskVisual.color}12`, color: riskVisual.color }}>
               Reserve {preview.reserveLimit}%
@@ -2524,7 +2507,7 @@ function FutureDrivePreviewSheet({
           </div>
 
           <div className="overflow-x-auto pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-            <div className="flex min-h-[3.85rem] items-start" style={{ minWidth: timelineMinWidth }}>
+            <div className="flex min-h-[3.25rem] items-start sm:min-h-[3.85rem]" style={{ minWidth: timelineMinWidth }}>
               {timelineNodes.map((node, index) => {
                 const visual = batteryStatusVisuals[node.batteryStatus];
                 const nextNode = timelineNodes[index + 1];
@@ -2532,13 +2515,13 @@ function FutureDrivePreviewSheet({
 
                 return (
                   <div key={`timeline-flow-${node.id}`} className="contents">
-                    <div className="flex w-16 shrink-0 flex-col items-center text-center">
+                    <div className="flex w-14 shrink-0 flex-col items-center text-center sm:w-16">
                       <button
                         type="button"
                         disabled={index === 0}
                         onClick={() => index > 0 && onRouteStopSelect(node.id)}
                         className={cn(
-                          'flex h-9 w-9 items-center justify-center rounded-full border text-[8.5px] font-black uppercase tracking-[0.03em] shadow-ambient transition duration-200 ease-out',
+                          'flex h-8 w-8 items-center justify-center rounded-full border text-[8px] font-black uppercase tracking-[0.03em] shadow-ambient transition duration-200 ease-out sm:h-9 sm:w-9 sm:text-[8.5px]',
                           index > 0 && 'active:scale-[0.96]',
                           selectedRouteStop?.id === node.id && 'scale-105'
                         )}
@@ -2553,13 +2536,13 @@ function FutureDrivePreviewSheet({
                       >
                         {node.label}
                       </button>
-                      <p className="mt-1.5 text-[11px] font-semibold leading-none" style={{ color: visual.color }}>
+                      <p className="mt-1 text-[10px] font-semibold leading-none sm:mt-1.5 sm:text-[11px]" style={{ color: visual.color }}>
                         {node.batteryPercent}%
                       </p>
                     </div>
                     {nextNode && (
                       <div
-                        className="mt-[1.05rem] h-1.5 min-w-8 flex-1 rounded-full"
+                        className="mt-[0.95rem] h-1 min-w-6 flex-1 rounded-full sm:mt-[1.05rem] sm:h-1.5 sm:min-w-8"
                         style={{ backgroundColor: segmentVisual.color, boxShadow: `0 0 10px ${segmentVisual.glow}` }}
                       />
                     )}
@@ -2567,7 +2550,7 @@ function FutureDrivePreviewSheet({
                 );
               })}
               {timelineNodes.length === 1 && (
-                <div className="mt-[1.05rem] h-1.5 flex-1 rounded-full bg-slate-500/45" />
+                <div className="mt-[0.95rem] h-1 flex-1 rounded-full bg-slate-500/45 sm:mt-[1.05rem] sm:h-1.5" />
               )}
             </div>
             {timelineIsScrollable && (
@@ -2578,7 +2561,7 @@ function FutureDrivePreviewSheet({
           </div>
 
           {selectedRouteStop && (
-            <div className="mt-2 rounded-[14px] border border-primary/18 bg-primary/8 px-3 py-2">
+            <div className={cn("mt-2 rounded-[14px] border border-primary/18 bg-primary/8 px-3 py-2", !showActivityList && "hidden sm:block")}>
               <p className="text-[8px] font-bold uppercase tracking-[0.12em] text-primary">Route shown on map</p>
               <p className="mt-0.5 truncate text-[11px] font-semibold text-slate-100">
                 {selectedRouteStop.timelineLabel} - {selectedRouteStop.name}
@@ -2586,13 +2569,13 @@ function FutureDrivePreviewSheet({
             </div>
           )}
 
-          <div className="mt-1.5 border-t border-white/[0.07] pt-2">
+          <div className="mt-1 border-t border-white/[0.07] pt-1.5 sm:mt-1.5 sm:pt-2">
             <button
               type="button"
               onClick={handleActivityListToggle}
-              className="flex min-h-10 w-full items-center justify-center rounded-[14px] border border-primary/20 bg-primary/10 px-3 text-[10px] font-semibold uppercase tracking-[0.08em] text-primary transition duration-200 ease-out hover:bg-primary/15 active:scale-[0.99]"
+              className="flex min-h-8 w-full items-center justify-center rounded-[12px] border border-primary/20 bg-primary/10 px-3 text-[9px] font-semibold uppercase tracking-[0.06em] text-primary transition duration-200 ease-out hover:bg-primary/15 active:scale-[0.99] sm:min-h-10 sm:rounded-[14px] sm:text-[10px] sm:tracking-[0.08em]"
             >
-              {showActivityList ? 'Hide activities' : 'Click to expand activities'}
+              {showActivityList ? 'Hide details' : 'Expand details'}
             </button>
 
             {showActivityList && (
@@ -2711,7 +2694,7 @@ function FutureDrivePreviewSheet({
           </div>
         </div>
 
-        <div className="mt-3 grid grid-cols-2 gap-2.5">
+        <div className={cn("mt-3 grid grid-cols-2 gap-2.5", !showActivityList && "hidden sm:grid")}>
           <div className="rounded-[16px] border border-white/[0.08] bg-white/[0.04] px-3.5 py-3">
             <p className="text-[8.5px] font-bold uppercase tracking-[0.12em] text-slate-300">Current Battery</p>
             <p className="mt-1 text-[18px] font-semibold text-white">{preview.currentBattery}%</p>
@@ -2736,7 +2719,7 @@ function FutureDrivePreviewSheet({
           </div>
         </div>
 
-        <div className="mt-3 rounded-[18px] border border-amber-300 bg-amber-50 px-3.5 py-3 shadow-ambient">
+        <div className={cn("mt-3 rounded-[18px] border border-amber-300 bg-amber-50 px-3.5 py-3 shadow-ambient", !showActivityList && "hidden sm:block")}>
           <div className="flex items-start gap-3">
             <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-amber-400 bg-amber-100 text-amber-700">
               <AlertTriangle className="h-4 w-4" />
@@ -2760,7 +2743,7 @@ function FutureDrivePreviewSheet({
         </div>
 
         {preview.criticalStop && (
-          <div className="mt-3 rounded-[18px] border border-red-200/22 bg-red-500/12 px-3.5 py-3">
+          <div className={cn("mt-3 rounded-[18px] border border-red-200/22 bg-red-500/12 px-3.5 py-3", !showActivityList && "hidden sm:block")}>
             <div className="flex items-start gap-3">
               <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-red-100/20 bg-red-300/10 text-red-100">
                 <AlertTriangle className="h-4 w-4" />
@@ -2776,7 +2759,7 @@ function FutureDrivePreviewSheet({
         )}
 
         <div
-          className="mt-3 rounded-[18px] border px-3.5 py-3"
+          className={cn("mt-3 rounded-[18px] border px-3.5 py-3", !showActivityList && "hidden sm:block")}
           style={{ borderColor: `${riskVisual.color}22`, backgroundColor: `${riskVisual.color}0c` }}
         >
           <p className="text-[8.5px] font-semibold uppercase tracking-[0.14em]" style={{ color: riskVisual.color }}>
@@ -2832,34 +2815,7 @@ function FutureDrivePreviewSheet({
         </div>
 
       </div>
-
-      <div className="grid shrink-0 grid-cols-3 gap-1.5 border-t border-outline-variant/45 bg-surface-container-low p-2.5">
-        <button
-          type="button"
-          onClick={() => onAction('Optimize Selected Plan')}
-          className="flex min-h-10 min-w-0 items-center justify-center gap-1.5 rounded-[14px] bg-primary px-2 text-center text-[9.5px] font-semibold uppercase leading-tight tracking-[0.02em] text-on-primary shadow-ambient transition duration-200 ease-out active:scale-[0.98]"
-        >
-          <Check className="h-3.5 w-3.5 shrink-0" />
-          Optimize
-        </button>
-        <button
-          type="button"
-          onClick={() => onAction('Compare Rescue Routes')}
-          className="flex min-h-10 min-w-0 items-center justify-center gap-1.5 rounded-[14px] border border-red-100/22 bg-surface-container-lowest px-2 text-center text-[9.5px] font-semibold uppercase leading-tight tracking-[0.02em] text-slate-100 shadow-ambient transition duration-200 ease-out active:scale-[0.98]"
-        >
-          <Route className="h-3.5 w-3.5 shrink-0 text-primary" />
-          Compare
-        </button>
-        <button
-          type="button"
-          onClick={() => onAction('Set Charging Reminder')}
-          className="flex min-h-10 min-w-0 items-center justify-center gap-1.5 rounded-[14px] border border-primary/24 bg-surface-container-lowest px-2 text-center text-[9.5px] font-semibold uppercase leading-tight tracking-[0.02em] text-slate-100 shadow-ambient transition duration-200 ease-out active:scale-[0.98]"
-        >
-          <BatteryCharging className="h-3.5 w-3.5 shrink-0 text-primary" />
-          Reminder
-        </button>
-      </div>
-    </section>
+</section>
   );
 }
 
@@ -3560,8 +3516,7 @@ export default function MapView() {
   const visual = isFutureDrivePreview
     ? { routeColor: modeVisuals.aiRoute.routeColor, glow: modeVisuals.aiRoute.glow, tone: 'blue' as const }
     : modeVisuals[mapMode];
-  const activeTool = toolChips.find((tool) => tool.key === mapMode) ?? toolChips[0];
-  const ActiveModeIcon = activeTool.icon;
+  const ActiveModeIcon = mapMode === 'parking' ? Coffee : mapMode === 'evStations' ? Plug : mapMode === 'cost' ? Banknote : Sparkles;
   const { activeNavigation, cameraMode, currentZoom, followCar, userInteractingWithMap } = cameraState;
   const displayEvStations = openChargeMapEvStations.length ? openChargeMapEvStations : fallbackMapEvStations;
   const primaryEvStation = displayEvStations[0] ?? fallbackMapEvStations[0];
@@ -4248,11 +4203,6 @@ export default function MapView() {
     showTransientToast('Coming soon', `${featureLabel} is coming soon.`, tone, comingSoonToastDurationMs);
   }, [showTransientToast]);
 
-  const handleModeChange = (nextMode: MapMode) => {
-    const feature = toolChips.find((tool) => tool.key === nextMode);
-    handleComingSoonFeature(feature?.label ?? 'This feature', modeVisuals[nextMode].tone);
-  };
-
   const handleDriveExperienceChange = (nextMode: DriveExperienceMode) => {
     if (nextMode === driveExperienceMode) return;
 
@@ -4574,7 +4524,7 @@ export default function MapView() {
     setFutureDriveRoutePath([]);
     const stop = futureDrivePreview?.activityStops.find((item) => item.id === stopId);
     if (stop) {
-      showTransientToast('FutureDrive route selected', `${stop.timelineLabel} - ${stop.name}`, stop.markerTone === 'critical' ? 'amber' : 'blue');
+      showTransientToast('Schedule route selected', `${stop.timelineLabel} - ${stop.name}`, stop.markerTone === 'critical' ? 'amber' : 'blue');
     }
   };
 
@@ -4654,19 +4604,6 @@ export default function MapView() {
       time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     });
   };
-
-  const handleFutureDriveAction = (action: FutureDriveAction) => {
-    const detail =
-      action === 'Optimize Selected Plan'
-        ? `${selectedFuturePlan.title} applied - expected ${futureDrivePrediction.finalBattery}% after planned travel.`
-        : action === 'Compare Rescue Routes'
-          ? `${futureDriveRescuePlans.length} charging options compared. ${selectedFuturePlan.title} is selected.`
-          : `Reminder preview for ${selectedFuturePlan.action}.`;
-
-    setLastAction(action);
-    showTransientToast(action, detail, action === 'Set Charging Reminder' ? 'cyan' : action === 'Compare Rescue Routes' ? 'amber' : 'blue');
-  };
-
   const collapsedActionLabel =
     activeNavigation && mapMode === 'aiRoute' && sheet.collapsedAction === 'Start Navigation'
       ? 'Stop Navigation'
@@ -4705,11 +4642,12 @@ export default function MapView() {
       : 'Overview';
   const MapStateIcon = activeNavigation ? Navigation : isManualExplore ? LocateFixed : Route;
   const showLocationSearchResults = !isFutureDrivePreview && searchQuery.trim().length >= 2;
-  const controlBottomClass = isFutureDrivePreview
-    ? 'bottom-[calc(12.5rem+env(safe-area-inset-bottom))] sm:bottom-[calc(11rem+env(safe-area-inset-bottom))] md:bottom-8'
-    : sheetState === 'expanded'
-      ? 'bottom-[calc(62dvh+env(safe-area-inset-bottom))] sm:bottom-[calc(59dvh+env(safe-area-inset-bottom))] lg:bottom-8'
-      : 'bottom-[calc(12.5rem+env(safe-area-inset-bottom))] sm:bottom-[calc(11rem+env(safe-area-inset-bottom))] lg:bottom-8';
+  const mapStatePositionClass = activeNavigation
+    ? 'bottom-[calc(17.25rem+env(safe-area-inset-bottom))]'
+    : 'bottom-[calc(18.25rem+env(safe-area-inset-bottom))]';
+  const controlPositionClass = isFutureDrivePreview
+    ? 'top-[8.25rem] sm:top-[8.75rem] md:top-auto md:bottom-8'
+    : 'top-[8.25rem] sm:top-[8.75rem] lg:top-auto lg:bottom-8';
 
   return (
     <div
@@ -4758,7 +4696,7 @@ export default function MapView() {
           if (nextFocus instanceof Node && event.currentTarget.contains(nextFocus)) return;
           setSearchPanelOpen(false);
         }}
-        className="absolute left-3 top-[88px] z-30 w-[min(calc(100vw-1.5rem),410px)] transition-all duration-300 ease-out sm:left-5 md:left-8 lg:left-10"
+        className="absolute left-3 top-[68px] z-30 w-[min(calc(100vw-1.5rem),410px)] transition-all duration-300 ease-out sm:left-5 sm:top-[76px] md:left-8 lg:left-10"
       >
         <div className="w-full">
           <div className="flex items-center gap-1">
@@ -4786,7 +4724,7 @@ export default function MapView() {
                   }
                 }}
                 placeholder={isFutureDrivePreview ? 'Where to tomorrow?' : 'Where to?'}
-                className="h-11 w-full rounded-full border border-outline-variant/45 bg-surface-container-lowest/88 pl-12 pr-11 text-[13px] font-medium text-on-surface shadow-ambient backdrop-blur-2xl outline-none transition placeholder:text-slate-500 focus:border-primary/35 focus:bg-surface-container-lowest"
+                className="h-11 w-full rounded-full border border-outline-variant/45 bg-surface-container-lowest/88 pl-12 pr-11 text-[16px] font-medium text-on-surface shadow-ambient backdrop-blur-2xl outline-none transition placeholder:text-slate-500 focus:border-primary/35 focus:bg-surface-container-lowest sm:text-[13px]"
               />
               {searchQuery && (
                 <button
@@ -4807,8 +4745,8 @@ export default function MapView() {
             <button
               type="button"
               onClick={() => handleDriveExperienceChange(isFutureDrivePreview ? 'driveNow' : 'futureDrivePreview')}
-              aria-label={isFutureDrivePreview ? 'Switch to Drive Now' : 'Switch to FutureDrive Preview'}
-              title={isFutureDrivePreview ? 'Drive Now' : 'FutureDrive Preview'}
+              aria-label={isFutureDrivePreview ? 'Switch to Drive Now' : 'Switch to Schedule Preview'}
+              title={isFutureDrivePreview ? 'Drive Now' : 'Schedule Preview'}
               className={cn(
                 'flex h-11 shrink-0 items-center justify-center gap-1.5 rounded-full border px-3 text-[9px] font-semibold uppercase tracking-[0.08em] shadow-ambient backdrop-blur-2xl transition duration-200 ease-out active:scale-[0.97]',
                 'border-primary/25 bg-primary text-on-primary hover:bg-primary/90'
@@ -4816,7 +4754,7 @@ export default function MapView() {
             >
               {isFutureDrivePreview ? <Navigation className="h-3.5 w-3.5 shrink-0" /> : <Sparkles className="h-3.5 w-3.5 shrink-0" />}
               <span className={cn('hidden sm:inline', !isFutureDrivePreview && 'md:hidden lg:inline')}>
-                {isFutureDrivePreview ? 'Drive Now' : 'Future'}
+                {isFutureDrivePreview ? 'Drive Now' : 'Schedule Preview'}
               </span>
             </button>
           </div>
@@ -4946,55 +4884,10 @@ export default function MapView() {
         </div>
       </div>
 
-      {!isFutureDrivePreview && (
-        <div
-          className={cn(
-            'pointer-events-none absolute right-3 z-20 transition-all duration-300 ease-out sm:right-5',
-            isManualExplore || activeNavigation ? 'top-[9.25rem] sm:top-[9.5rem]' : 'top-[8.35rem] sm:top-[8.65rem]'
-          )}
-        >
-          <div
-            data-map-ui="true"
-            className="pointer-events-auto grid w-13 gap-1 rounded-[22px] border border-outline-variant/45 bg-surface-container-lowest/88 p-1 shadow-ambient backdrop-blur-2xl"
-          >
-            {toolChips.map((tool) => {
-              const Icon = tool.icon;
-              const isActive = mapMode === tool.key;
-
-              return (
-                <button
-                  key={tool.key}
-                  type="button"
-                  aria-label={tool.label}
-                  title={tool.label}
-                  onClick={() => handleModeChange(tool.key)}
-                  className={cn(
-                    'flex h-11 w-11 min-w-0 items-center justify-center rounded-[17px] border text-center transition duration-200 ease-out active:scale-[0.98]',
-                    isActive
-                      ? 'border-primary/25 bg-primary/10 text-primary shadow-ambient'
-                      : 'border-transparent bg-transparent text-slate-300 hover:bg-primary/10'
-                  )}
-                >
-                  <span
-                    className={cn(
-                      'flex h-6 w-6 items-center justify-center rounded-full border',
-                      isActive ? 'border-slate-300/55 bg-white text-blue-600' : 'border-white/[0.08] bg-white/[0.04] text-slate-400'
-                    )}
-                  >
-                    <Icon className="h-3.5 w-3.5" />
-                  </span>
-                  <span className="sr-only">{tool.label}</span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
       {(isManualExplore || activeNavigation) && (
         <div
           data-map-ui="true"
-          className="pointer-events-auto absolute right-3 top-[4.45rem] z-40 transition-all duration-300 ease-out sm:right-5 sm:top-[4.8rem]"
+          className={cn('pointer-events-auto absolute left-3 z-40 transition-all duration-300 ease-out sm:left-5 md:left-auto md:right-5 md:top-[4.8rem] md:bottom-auto', mapStatePositionClass)}
         >
           <MapStatePill icon={MapStateIcon} label={mapStateLabel} active={isManualExplore || activeNavigation} />
         </div>
@@ -5002,7 +4895,7 @@ export default function MapView() {
 
       <div
         data-map-ui="true"
-        className={cn('absolute right-3 z-30 flex flex-col items-end gap-2 transition-all duration-300 ease-out sm:right-5', controlBottomClass)}
+        className={cn('absolute right-3 z-20 flex flex-col items-end gap-2 transition-all duration-300 ease-out sm:right-5', controlPositionClass)}
       >
         <MapControlGroup className={cn(sheetState === 'expanded' && 'hidden sm:block')}>
           <MapControlButton icon={Plus} ariaLabel="Zoom in" onClick={handleZoomIn} />
@@ -5044,7 +4937,7 @@ export default function MapView() {
         className={cn(
           'absolute z-[60] transition-all duration-300 ease-out',
           isFutureDrivePreview
-            ? 'left-3 right-auto bottom-[calc(5.75rem+env(safe-area-inset-bottom))] h-[min(72dvh,43rem)] w-[min(calc(100vw-1.5rem),410px)] sm:left-5 md:left-8 md:bottom-8 lg:left-10'
+            ? 'left-3 right-auto bottom-[calc(5.75rem+env(safe-area-inset-bottom))] max-h-[min(40dvh,22rem)] w-[min(calc(100vw-1.5rem),410px)] sm:left-5 sm:max-h-none sm:h-[min(72dvh,43rem)] md:left-8 md:bottom-8 lg:left-10'
             : cn(
                 'left-3 right-auto w-[min(calc(100vw-1.5rem),410px)]',
                 'sm:left-5 md:left-8 lg:left-10',
@@ -5069,7 +4962,6 @@ export default function MapView() {
             onDaySelect={handleFutureDaySelect}
             onRouteStopSelect={handleFutureRouteStopSelect}
             onPlanSelect={handleFuturePlanSelect}
-            onAction={handleFutureDriveAction}
           />
         ) : activeNavigation ? (
           <ActiveNavigationPanel
@@ -5377,7 +5269,7 @@ export default function MapView() {
                         onClick={() => handleRouteVariantApply('eco')}
                         className="flex min-h-10 w-full items-center justify-center gap-2 rounded-[16px] border border-emerald-100/16 bg-emerald-300/8 px-3 text-[9.5px] font-semibold uppercase tracking-[0.08em] text-emerald-100 transition active:scale-[0.98]"
                       >
-                        <Sparkles className="h-3.5 w-3.5" />
+                        <Sparkles className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
                         Apply Eco Route
                       </button>
                     </div>
