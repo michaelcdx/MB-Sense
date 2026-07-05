@@ -50,6 +50,7 @@
       background: #000;
       opacity: 0;
       z-index: 1;
+      transition: opacity 950ms cubic-bezier(0.22, 1, 0.36, 1);
     }
 
     .deck.is-active {
@@ -57,16 +58,672 @@
       z-index: 2;
     }
 
+    body.is-demo-priming .deck {
+      transition: opacity 0s;
+    }
+
+    .presenter-slate {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+      background:
+        radial-gradient(circle at 50% 48%, rgba(255, 255, 255, 0.08), transparent 34%),
+        #020409;
+      opacity: 0;
+      pointer-events: none;
+      visibility: hidden;
+      z-index: 6;
+      transition: opacity 900ms cubic-bezier(0.22, 1, 0.36, 1), visibility 0s linear 900ms;
+    }
+
+    body.is-presenter-slate .presenter-slate {
+      opacity: 1;
+      visibility: visible;
+      transition: opacity 320ms cubic-bezier(0.22, 1, 0.36, 1), visibility 0s;
+    }
+
+    .presenter-copy {
+      display: grid;
+      justify-items: center;
+      gap: clamp(0.8rem, 2vw, 1.4rem);
+      width: min(68rem, 86vw);
+      text-align: center;
+      transform: translateY(-1vh);
+    }
+
+    .presenter-title,
+    .presenter-subtitle {
+      opacity: 0;
+      text-shadow:
+        0 0 28px rgba(255, 255, 255, 0.12),
+        0 14px 48px rgba(125, 211, 252, 0.14);
+    }
+
+    .presenter-title {
+      color: #f6fbff;
+      font-size: 2.4rem;
+      font-weight: 750;
+      line-height: 0.98;
+      transform: translateY(16px);
+    }
+
+    .presenter-subtitle {
+      color: #b9e9ff;
+      font-size: 1rem;
+      font-weight: 700;
+      line-height: 1;
+      transform: translateY(10px);
+    }
+
+    body.is-presenter-slate .presenter-title {
+      animation: presenterTitle 2600ms cubic-bezier(0.16, 1, 0.3, 1) 180ms forwards;
+    }
+
+    body.is-presenter-slate .presenter-subtitle {
+      animation: presenterSubtitle 1980ms cubic-bezier(0.16, 1, 0.3, 1) 820ms forwards;
+    }
+
+    body.is-presenter-exiting .presenter-slate {
+      opacity: 0;
+      visibility: visible;
+      transition: opacity 900ms cubic-bezier(0.22, 1, 0.36, 1), visibility 0s linear 900ms;
+    }
+
+    body.is-presenter-exiting .presenter-title,
+    body.is-presenter-exiting .presenter-subtitle {
+      animation: presenterExit 760ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+    }
+
+    .stinger-gate {
+      position: absolute;
+      inset: 0;
+      background: #000;
+      opacity: 0;
+      pointer-events: none;
+      visibility: hidden;
+      z-index: 4;
+      transition: opacity 1200ms cubic-bezier(0.22, 1, 0.36, 1), visibility 0s linear 1200ms;
+    }
+
+    body.is-feature-gate .stinger-gate,
+    body.is-intro-gate .stinger-gate,
+    body.is-summary-exiting .stinger-gate,
+    body.is-summary-slate .stinger-gate,
+    body.is-start-gate .stinger-gate {
+      opacity: 1;
+      visibility: visible;
+      transition: opacity 0s, visibility 0s;
+    }
+
+    body.is-stinger-gate .stinger-gate {
+      opacity: 1;
+      visibility: visible;
+      transition: opacity 1200ms cubic-bezier(0.22, 1, 0.36, 1), visibility 0s;
+    }
+
+    .brand-intro {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+      background: #020409;
+      opacity: 0;
+      pointer-events: none;
+      visibility: hidden;
+      z-index: 5;
+      transition: opacity 1100ms cubic-bezier(0.22, 1, 0.36, 1), visibility 0s linear 1100ms;
+    }
+
+    .brand-intro::before,
+    .brand-intro::after {
+      position: absolute;
+      inset: 0;
+      content: "";
+      pointer-events: none;
+    }
+
+    .brand-intro::before {
+      background:
+        radial-gradient(circle at 50% 48%, rgba(120, 215, 255, 0.18), transparent 36%),
+        linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.1) 46%, transparent 62%);
+      opacity: 0;
+    }
+
+    .brand-intro::after {
+      background: radial-gradient(circle at 50% 48%, rgba(255, 255, 255, 0.42), rgba(129, 221, 255, 0.16) 18%, transparent 44%);
+      opacity: 0;
+    }
+
+    .brand-intro.is-complete {
+      opacity: 0;
+      visibility: hidden;
+    }
+
+    body.is-brand-stinger .brand-intro {
+      opacity: 1;
+      visibility: visible;
+      transition: opacity 260ms cubic-bezier(0.22, 1, 0.36, 1), visibility 0s;
+    }
+
+    .brand-core {
+      position: relative;
+      display: grid;
+      justify-items: center;
+      width: min(72rem, 86vw);
+      transform: translateY(-2vh);
+    }
+
+    .brand-word {
+      position: relative;
+      display: inline-block;
+      color: transparent;
+      background: linear-gradient(180deg, #ffffff 0%, #d6f5ff 28%, #f8fdff 54%, #87dfff 76%, #ffffff 100%);
+      background-clip: text;
+      -webkit-background-clip: text;
+      -webkit-text-stroke: 0.8px rgba(214, 246, 255, 0.28);
+      font-size: 3.25rem;
+      font-weight: 800;
+      line-height: 0.9;
+      opacity: 0;
+      text-shadow:
+        0 0 14px rgba(255, 255, 255, 0.22),
+        0 0 36px rgba(125, 211, 252, 0.24),
+        0 18px 70px rgba(255, 255, 255, 0.14);
+      transform: translateY(16px) scale(0.96);
+    }
+
+    .brand-word::after {
+      position: absolute;
+      inset: -0.03em -0.09em;
+      content: attr(data-text);
+      color: transparent;
+      background: linear-gradient(
+        104deg,
+        transparent 18%,
+        rgba(255, 255, 255, 0.2) 34%,
+        rgba(255, 255, 255, 1) 44%,
+        rgba(132, 222, 255, 1) 52%,
+        rgba(255, 255, 255, 0.98) 61%,
+        rgba(184, 255, 243, 0.44) 70%,
+        transparent 84%
+      );
+      background-clip: text;
+      background-size: 320% 100%;
+      background-position: 130% 50%;
+      -webkit-background-clip: text;
+      filter:
+        drop-shadow(0 0 10px rgba(255, 255, 255, 0.48))
+        drop-shadow(0 0 22px rgba(132, 222, 255, 0.42));
+      opacity: 0;
+    }
+
+    .brand-loader {
+      position: relative;
+      width: min(420px, 62vw);
+      height: 6px;
+      margin-top: 34px;
+      overflow: hidden;
+      background: rgba(255, 255, 255, 0.14);
+      border-radius: 999px;
+      box-shadow: 0 0 24px rgba(125, 211, 252, 0.09);
+      opacity: 0;
+      transform: scaleX(0.88);
+    }
+
+    .brand-loader::before {
+      position: absolute;
+      inset: 0;
+      content: "";
+      background: linear-gradient(90deg, #e6f8ff, #8fd6ff 46%, #ffffff 70%, #b8fff3);
+      box-shadow: 0 0 22px rgba(143, 214, 255, 0.55);
+      transform: scaleX(0);
+      transform-origin: left center;
+    }
+
+    body.is-brand-stinger .brand-intro::before {
+      animation: stageGlow 5000ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+
+    body.is-brand-stinger .brand-intro::after {
+      animation: impactFlash 640ms cubic-bezier(0.16, 1, 0.3, 1) 1120ms forwards;
+    }
+
+    body.is-brand-stinger .brand-word {
+      animation: brandStingerWord 5000ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+
+    body.is-brand-stinger .brand-word::after {
+      animation: brandShine 1450ms cubic-bezier(0.16, 1, 0.3, 1) 520ms forwards;
+    }
+
+    body.is-brand-stinger .brand-loader {
+      animation: loaderStinger 5000ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+
+    body.is-brand-stinger .brand-loader::before {
+      animation: loadBar 2800ms cubic-bezier(0.58, 0, 0.12, 1) 360ms forwards;
+    }
+
+    .summary-slate {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+      background:
+        radial-gradient(circle at 50% 42%, rgba(125, 211, 252, 0.13), transparent 36%),
+        linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent 38%),
+        #020409;
+      opacity: 0;
+      pointer-events: none;
+      visibility: hidden;
+      z-index: 6;
+      transition: opacity 700ms cubic-bezier(0.22, 1, 0.36, 1), visibility 0s linear 700ms;
+    }
+
+    body.is-summary-slate .summary-slate {
+      opacity: 1;
+      visibility: visible;
+      transition: opacity 520ms cubic-bezier(0.22, 1, 0.36, 1), visibility 0s;
+    }
+
+    body.is-summary-exiting .summary-slate {
+      opacity: 0;
+      visibility: visible;
+      transition: opacity 900ms cubic-bezier(0.22, 1, 0.36, 1), visibility 0s linear 900ms;
+    }
+
+    .summary-copy {
+      display: grid;
+      justify-items: center;
+      gap: clamp(1.1rem, 2vw, 1.55rem);
+      width: min(64rem, 82vw);
+      text-align: center;
+      transform: translateY(-1vh);
+    }
+
+    .summary-kicker {
+      color: #8bdfff;
+      font-size: 0.86rem;
+      font-weight: 800;
+      line-height: 1;
+      opacity: 0;
+    }
+
+    .summary-text {
+      position: relative;
+      min-height: 5.2em;
+      width: min(62rem, 100%);
+      color: #f6fbff;
+      font-size: 1.55rem;
+      font-weight: 720;
+      line-height: 1.22;
+      text-align: justify;
+      text-align-last: left;
+      white-space: pre-wrap;
+      overflow-wrap: break-word;
+      text-shadow:
+        0 0 24px rgba(255, 255, 255, 0.1),
+        0 18px 70px rgba(125, 211, 252, 0.16);
+      opacity: 0;
+    }
+
+    body.is-summary-slate .summary-kicker {
+      animation: summaryReveal 900ms cubic-bezier(0.16, 1, 0.3, 1) 180ms forwards;
+    }
+
+    body.is-summary-slate .summary-text {
+      animation: summaryReveal 900ms cubic-bezier(0.16, 1, 0.3, 1) 420ms forwards;
+    }
+
+    body.is-summary-typing .summary-text::after {
+      display: inline-block;
+      width: 0.08em;
+      height: 0.92em;
+      margin-left: 0.12em;
+      content: "";
+      background: #8bdfff;
+      transform: translateY(0.12em);
+      box-shadow: 0 0 16px rgba(139, 223, 255, 0.46);
+      animation: caretBlink 720ms steps(1) infinite;
+    }
+
+    .demo-slate {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      background: #000;
+      opacity: 0;
+      pointer-events: none;
+      visibility: hidden;
+      z-index: 7;
+      transition: opacity 420ms cubic-bezier(0.22, 1, 0.36, 1), visibility 0s linear 420ms;
+    }
+
+    body.is-demo-slate .demo-slate {
+      opacity: 1;
+      visibility: visible;
+      transition: opacity 360ms cubic-bezier(0.22, 1, 0.36, 1), visibility 0s;
+    }
+
+    body.is-demo-exiting .demo-slate {
+      opacity: 0;
+      visibility: visible;
+      transition: opacity 520ms cubic-bezier(0.22, 1, 0.36, 1), visibility 0s linear 520ms;
+    }
+
+    body.is-feature-gate.is-demo-exiting .stinger-gate {
+      opacity: 0;
+      visibility: hidden;
+      transition: opacity 2020ms cubic-bezier(0.22, 1, 0.36, 1), visibility 0s linear 2020ms;
+    }
+
+    .demo-word {
+      color: #f8fbff;
+      font-size: 4rem;
+      font-weight: 850;
+      line-height: 0.9;
+      opacity: 0;
+      text-shadow:
+        0 0 24px rgba(255, 255, 255, 0.16),
+        0 0 70px rgba(125, 211, 252, 0.16);
+      transform: translateY(14px) scale(0.98);
+    }
+
+    body.is-demo-slate .demo-word {
+      animation: demoReveal 580ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+
+    @media (min-width: 720px) {
+      .presenter-title {
+        font-size: 4.2rem;
+      }
+
+      .presenter-subtitle {
+        font-size: 1.5rem;
+      }
+
+      .brand-word {
+        font-size: 7rem;
+      }
+
+      .summary-kicker {
+        font-size: 1rem;
+      }
+
+      .summary-text {
+        font-size: 2.35rem;
+      }
+
+      .demo-word {
+        font-size: 7.5rem;
+      }
+    }
+
+    @media (min-width: 1200px) {
+      .presenter-title {
+        font-size: 6rem;
+      }
+
+      .presenter-subtitle {
+        font-size: 2rem;
+      }
+
+      .brand-word {
+        font-size: 12rem;
+      }
+
+      .summary-kicker {
+        font-size: 1.18rem;
+      }
+
+      .summary-text {
+        font-size: 3.25rem;
+      }
+
+      .demo-word {
+        font-size: 11rem;
+      }
+    }
+
+    @keyframes presenterTitle {
+      0% {
+        opacity: 0;
+        transform: translateY(16px);
+      }
+
+      100% {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    @keyframes presenterSubtitle {
+      0% {
+        opacity: 0;
+        transform: translateY(10px);
+      }
+
+      100% {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    @keyframes presenterExit {
+      0% {
+        opacity: 1;
+        transform: translateY(0);
+      }
+
+      100% {
+        opacity: 0;
+        transform: translateY(-8px);
+      }
+    }
+
+    @keyframes brandStingerWord {
+      0% {
+        opacity: 0;
+        filter: brightness(0.82);
+        transform: translateY(16px) scale(0.96);
+      }
+
+      11% {
+        opacity: 1;
+        filter: brightness(1);
+        transform: translateY(0) scale(1);
+      }
+
+      18% {
+        opacity: 1;
+        filter: brightness(1.28);
+        transform: translateY(0) scale(1.025);
+      }
+
+      25% {
+        opacity: 1;
+        filter: brightness(1.02);
+        transform: translateY(0) scale(1);
+      }
+
+      86% {
+        opacity: 1;
+        filter: brightness(1);
+        transform: translateY(0) scale(1);
+      }
+
+      100% {
+        opacity: 0;
+        filter: brightness(0.9);
+        transform: translateY(-4px) scale(0.995);
+      }
+    }
+
+    @keyframes brandShine {
+      0% {
+        opacity: 0;
+        background-position: 130% 50%;
+      }
+
+      20%,
+      72% {
+        opacity: 1;
+      }
+
+      100% {
+        opacity: 0;
+        background-position: -70% 50%;
+      }
+    }
+
+    @keyframes stageGlow {
+      0% {
+        opacity: 0;
+      }
+
+      14% {
+        opacity: 0.82;
+      }
+
+      72% {
+        opacity: 1;
+      }
+
+      100% {
+        opacity: 0;
+      }
+    }
+
+    @keyframes impactFlash {
+      0% {
+        opacity: 0;
+        transform: scale(0.72);
+      }
+
+      18% {
+        opacity: 0.52;
+      }
+
+      100% {
+        opacity: 0;
+        transform: scale(1.18);
+      }
+    }
+
+    @keyframes loaderStinger {
+      0% {
+        opacity: 0;
+        transform: scaleX(0.94);
+      }
+
+      9% {
+        opacity: 1;
+        transform: scaleX(1);
+      }
+
+      72% {
+        opacity: 1;
+        transform: scaleX(1);
+      }
+
+      100% {
+        opacity: 0;
+        transform: scaleX(1);
+      }
+    }
+
+    @keyframes loadBar {
+      0% {
+        transform: scaleX(0);
+      }
+
+      68% {
+        transform: scaleX(0.82);
+      }
+
+      100% {
+        transform: scaleX(1);
+      }
+    }
+
+    @keyframes summaryReveal {
+      0% {
+        opacity: 0;
+        transform: translateY(14px);
+      }
+
+      100% {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    @keyframes caretBlink {
+      0%,
+      48% {
+        opacity: 1;
+      }
+
+      49%,
+      100% {
+        opacity: 0;
+      }
+    }
+
+    @keyframes demoReveal {
+      0% {
+        opacity: 0;
+        transform: translateY(14px) scale(0.98);
+      }
+
+      100% {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+      }
+    }
+
   </style>
 </head>
-<body>
+<body class="is-start-gate">
   <main class="stage" aria-label="Pitch video queue">
+    <section id="presenterSlate" class="presenter-slate" aria-hidden="true">
+      <div class="presenter-copy">
+        <div class="presenter-title">Too Good To Be True</div>
+        <div class="presenter-subtitle">PRESENTS</div>
+      </div>
+    </section>
+    <div id="stingerGate" class="stinger-gate" aria-hidden="true"></div>
+    <section id="brandIntro" class="brand-intro" aria-hidden="true">
+      <div class="brand-core">
+        <div class="brand-word" data-text="MB SENSE">MB SENSE</div>
+        <div class="brand-loader"></div>
+      </div>
+    </section>
+    <section id="summarySlate" class="summary-slate" aria-hidden="true">
+      <div class="summary-copy">
+        <div class="summary-kicker">MB SENSE</div>
+        <div id="summaryText" class="summary-text"></div>
+      </div>
+    </section>
+    <section id="demoSlate" class="demo-slate" aria-hidden="true">
+      <div class="demo-word">DEMO</div>
+    </section>
     <video id="playerA" class="deck is-active" playsinline preload="auto"></video>
     <video id="playerB" class="deck" playsinline preload="auto"></video>
+    <audio id="presenterSfx" src="mr_tinystark-iron-man-repulsor-157371.mp3" preload="auto"></audio>
+    <audio id="brandSfx" src="whoosh-boom-dramatic-powerful-jam-fx-cinematic-whoosh-boom-1-0m08s.mp3" preload="auto"></audio>
+    <audio id="featureWhooshSfx" src="dragon-studio-whoosh-cinematic-376875.mp3" preload="auto"></audio>
+    <audio id="typingSfx" src="Writing.mp3" preload="auto"></audio>
   </main>
 
   <script>
     const queue = [
+      'Intro MB Sense.mov',
       'F1.mp4',
       'F2.mp4',
       'F3.mp4',
@@ -84,9 +741,42 @@
       document.getElementById('playerA'),
       document.getElementById('playerB'),
     ];
+    const presenterSfx = document.getElementById('presenterSfx');
+    const brandIntro = document.getElementById('brandIntro');
+    const brandSfx = document.getElementById('brandSfx');
+    const featureWhooshSfx = document.getElementById('featureWhooshSfx');
+    const summaryTextElement = document.getElementById('summaryText');
+    const typingSfx = document.getElementById('typingSfx');
+    const summaryText = 'MB SENSE predicts future battery risk before it happens.\nIt combines schedule, routes, traffic, weather, battery state,\nand charging options to recommend the right charge at the right time.';
+    const presenterDuration = 3000;
+    const presenterExitDuration = 900;
+    const stingerDuration = 5000;
+    const typingAudioStart = 2;
+    const typingAudioEnd = 10;
+    const summaryTypingDuration = (typingAudioEnd - typingAudioStart) * 1000;
+    const summaryStartDelay = 260;
+    const summaryExitDuration = 900;
+    const demoDuration = 2000;
+    const demoExitDuration = 2020;
     let index = 0;
     let activeSlot = 0;
     let hasStarted = false;
+    let isWaitingForPresenter = true;
+    let isWaitingForIntro = false;
+    let hasPlayedPresenter = false;
+    let isPresenterExiting = false;
+    let presenterPromise = null;
+    let hasPlayedStinger = false;
+    let isWaitingForStinger = false;
+    let hasPlayedSummary = false;
+    let isWaitingForSummary = false;
+    let isSummaryExiting = false;
+    let summaryPromise = null;
+    let brandAudioTimer = null;
+    let typingAudioTimer = null;
+    let isWaitingForFeature = false;
+    let isDemoRunning = false;
+    let stingerPromise = null;
     let isSwitching = false;
 
     function clampIndex(nextIndex) {
@@ -144,6 +834,322 @@
       setVideoSource(standby, queue[preloadIndex]);
     }
 
+    function playPresenterSfx() {
+      try {
+        presenterSfx.currentTime = 0;
+        presenterSfx.volume = 0.82;
+        return presenterSfx.play() ?? Promise.resolve();
+      } catch {
+        return Promise.resolve();
+      }
+    }
+
+    function runPresenterSlate() {
+      if (hasPlayedPresenter) {
+        return Promise.resolve();
+      }
+
+      if (presenterPromise) {
+        return presenterPromise;
+      }
+
+      document.body.classList.add('is-presenter-slate');
+      void playPresenterSfx().catch(() => {});
+
+      presenterPromise = new Promise((resolve) => {
+        window.setTimeout(() => {
+          hasPlayedPresenter = true;
+          resolve();
+        }, presenterDuration);
+      });
+
+      return presenterPromise;
+    }
+
+    function exitPresenterThenPlayIntro() {
+      if (!hasPlayedPresenter || isPresenterExiting) {
+        return Promise.resolve();
+      }
+
+      isPresenterExiting = true;
+      showIntroGate();
+      document.body.classList.add('is-presenter-exiting');
+      document.body.classList.remove('is-presenter-slate');
+
+      return new Promise((resolve) => {
+        window.setTimeout(async () => {
+          document.body.classList.remove('is-presenter-exiting');
+          isPresenterExiting = false;
+          await playIntroFromGate();
+          resolve();
+        }, presenterExitDuration);
+      });
+    }
+
+    function showIntroGate() {
+      if (hasStarted || isWaitingForIntro) {
+        return;
+      }
+
+      document.body.classList.add('is-intro-gate');
+      isWaitingForIntro = true;
+    }
+
+    async function playIntroFromGate() {
+      if (!isWaitingForIntro) {
+        return;
+      }
+
+      const played = await playVisibleCurrent();
+
+      if (played) {
+        isWaitingForIntro = false;
+        hasStarted = true;
+        document.body.classList.remove('is-start-gate');
+        document.body.classList.remove('is-intro-gate');
+      }
+    }
+
+    function showStingerGate() {
+      if (hasPlayedStinger || isWaitingForStinger) {
+        return;
+      }
+
+      players[activeSlot].pause();
+      document.body.classList.remove('is-playing');
+      document.body.classList.add('is-stinger-gate');
+      isWaitingForStinger = true;
+    }
+
+    function showFeatureGate() {
+      if (isWaitingForFeature || index !== 0) {
+        return;
+      }
+
+      document.body.classList.add('is-feature-gate');
+      isWaitingForFeature = true;
+    }
+
+    function primeFeatureFrame() {
+      const standby = players[1 - activeSlot];
+
+      setVideoSource(standby, queue[1]);
+      restart(standby);
+      void waitForFrame(standby).catch(() => {});
+    }
+
+    async function playFeatureFromGate() {
+      if (!isWaitingForFeature || isDemoRunning) {
+        return;
+      }
+
+      isDemoRunning = true;
+      document.body.classList.add('is-demo-slate');
+      void playFeatureWhooshSfx().catch(() => {});
+      primeFeatureFrame();
+      await wait(demoDuration);
+
+      document.body.classList.add('is-demo-priming');
+      const switched = await switchTo(1, 1);
+      document.body.classList.remove('is-demo-priming');
+
+      if (!switched) {
+        isDemoRunning = false;
+        return;
+      }
+
+      document.body.classList.add('is-demo-exiting');
+      document.body.classList.remove('is-demo-slate');
+      await wait(demoExitDuration);
+      isWaitingForFeature = false;
+      document.body.classList.remove('is-feature-gate');
+      document.body.classList.remove('is-demo-exiting');
+
+      isDemoRunning = false;
+    }
+
+    function wait(duration) {
+      return new Promise((resolve) => {
+        window.setTimeout(resolve, duration);
+      });
+    }
+
+    function stopTypingSfx() {
+      if (typingAudioTimer) {
+        window.clearTimeout(typingAudioTimer);
+        typingAudioTimer = null;
+      }
+
+      try {
+        typingSfx.pause();
+        typingSfx.currentTime = typingAudioStart;
+      } catch {
+        // The typing audio is optional polish; the visual cue still carries the beat.
+      }
+    }
+
+    function playTypingSfx() {
+      stopTypingSfx();
+
+      try {
+        typingSfx.currentTime = typingAudioStart;
+        typingSfx.volume = 0.55;
+        const playPromise = typingSfx.play() ?? Promise.resolve();
+        typingAudioTimer = window.setTimeout(stopTypingSfx, summaryTypingDuration);
+        return playPromise;
+      } catch {
+        return Promise.resolve();
+      }
+    }
+
+    function runSummaryCue() {
+      if (hasPlayedSummary) {
+        return Promise.resolve();
+      }
+
+      if (summaryPromise) {
+        return summaryPromise;
+      }
+
+      summaryTextElement.textContent = "";
+      document.body.classList.add('is-summary-slate', 'is-summary-typing');
+      void playTypingSfx().catch(() => {});
+
+      summaryPromise = new Promise((resolve) => {
+        let nextLength = 0;
+        const timedCharacters = [...summaryText.slice(0, -1)];
+        const pauseBudget = timedCharacters.reduce((total, character) => {
+          const punctuationPause = /[.,]/.test(character) ? 120 : 0;
+          const linePause = character === "\n" ? 260 : 0;
+          const spaceEase = character === " " ? -12 : 0;
+
+          return total + punctuationPause + linePause + spaceEase;
+        }, 0);
+        const baseDelay = (summaryTypingDuration - summaryStartDelay - pauseBudget) / timedCharacters.length;
+
+        const typeNext = () => {
+          const nextCharacter = summaryText[nextLength];
+          nextLength += 1;
+          nextLength = Math.min(nextLength, summaryText.length);
+          summaryTextElement.textContent = summaryText.slice(0, nextLength);
+
+          if (nextLength < summaryText.length) {
+            const punctuationPause = /[.,]/.test(nextCharacter) ? 120 : 0;
+            const linePause = nextCharacter === "\n" ? 260 : 0;
+            const spaceEase = nextCharacter === " " ? -12 : 0;
+            const delay = Math.max(24, baseDelay + punctuationPause + linePause + spaceEase);
+            window.setTimeout(typeNext, delay);
+            return;
+          }
+
+          summaryTextElement.textContent = summaryText;
+          stopTypingSfx();
+          hasPlayedSummary = true;
+          isWaitingForSummary = true;
+          document.body.classList.remove('is-summary-typing');
+          resolve();
+        };
+
+        window.setTimeout(typeNext, summaryStartDelay);
+      });
+
+      return summaryPromise;
+    }
+
+    function exitSummaryThenPlayFeature() {
+      if (!isWaitingForSummary || isSummaryExiting) {
+        return Promise.resolve();
+      }
+
+      isSummaryExiting = true;
+      isWaitingForSummary = false;
+      showFeatureGate();
+      document.body.classList.add('is-summary-exiting');
+      document.body.classList.remove('is-summary-slate', 'is-summary-typing');
+
+      return new Promise((resolve) => {
+        window.setTimeout(async () => {
+          document.body.classList.remove('is-summary-exiting');
+          isSummaryExiting = false;
+          await playFeatureFromGate();
+          resolve();
+        }, summaryExitDuration);
+      });
+    }
+
+    function playBrandSfx() {
+      if (brandAudioTimer) {
+        window.clearTimeout(brandAudioTimer);
+        brandAudioTimer = null;
+      }
+
+      try {
+        brandSfx.currentTime = 0;
+        brandSfx.volume = 0.95;
+        const playPromise = brandSfx.play() ?? Promise.resolve();
+        brandAudioTimer = window.setTimeout(() => {
+          brandSfx.pause();
+          brandSfx.currentTime = 0;
+          brandAudioTimer = null;
+        }, stingerDuration);
+        return playPromise;
+      } catch {
+        return Promise.resolve();
+      }
+    }
+
+    function playFeatureWhooshSfx() {
+      try {
+        featureWhooshSfx.currentTime = 0;
+        featureWhooshSfx.volume = 0.82;
+        return featureWhooshSfx.play() ?? Promise.resolve();
+      } catch {
+        return Promise.resolve();
+      }
+    }
+
+    function runBrandStinger() {
+      if (hasPlayedStinger) {
+        return Promise.resolve();
+      }
+
+      if (stingerPromise) {
+        return stingerPromise;
+      }
+
+      brandIntro.classList.remove('is-complete');
+      document.body.classList.remove('is-stinger-gate');
+      document.body.classList.add('is-brand-stinger');
+      isWaitingForStinger = false;
+      void playBrandSfx().catch(() => {});
+
+      stingerPromise = new Promise((resolve) => {
+        window.setTimeout(() => {
+          hasPlayedStinger = true;
+          if (brandAudioTimer) {
+            window.clearTimeout(brandAudioTimer);
+            brandAudioTimer = null;
+          }
+          brandSfx.pause();
+          brandSfx.currentTime = 0;
+          document.body.classList.remove('is-brand-stinger');
+          brandIntro.classList.add('is-complete');
+          void runSummaryCue();
+          resolve();
+        }, stingerDuration);
+      });
+
+      return stingerPromise;
+    }
+
+    async function playStingerThenFirstFeature() {
+      if (stingerPromise && !hasPlayedStinger) {
+        return;
+      }
+
+      await runBrandStinger();
+    }
+
     async function playVisibleCurrent() {
       const player = players[activeSlot];
       setVideoSource(player, queue[index]);
@@ -153,14 +1159,16 @@
         await Promise.all([waitForFrame(player), playPromise ?? Promise.resolve()]);
         document.body.classList.add('is-playing');
         preloadNext(1);
+        return true;
       } catch {
         document.body.classList.remove('is-playing');
+        return false;
       }
     }
 
     async function switchTo(nextIndex, direction) {
       if (isSwitching) {
-        return;
+        return false;
       }
 
       isSwitching = true;
@@ -187,19 +1195,84 @@
         index = nextIndex;
         document.body.classList.add('is-playing');
         preloadNext(direction);
+        return true;
       } catch {
         next.pause();
         next.muted = wasMuted;
         document.body.classList.toggle('is-playing', !current.paused);
+        return false;
       } finally {
         isSwitching = false;
       }
     }
 
-    function startOrMove(direction = 1) {
+    async function startOrMove(direction = 1) {
+      if (presenterPromise && !hasPlayedPresenter) {
+        return;
+      }
+
+      if (isPresenterExiting) {
+        return;
+      }
+
+      if (stingerPromise && !hasPlayedStinger) {
+        return;
+      }
+
+      if (summaryPromise && !hasPlayedSummary) {
+        return;
+      }
+
+      if (isDemoRunning) {
+        return;
+      }
+
+      if (isSummaryExiting) {
+        return;
+      }
+
+      if (isWaitingForIntro) {
+        await playIntroFromGate();
+        return;
+      }
+
+      if (isWaitingForStinger) {
+        await playStingerThenFirstFeature();
+        return;
+      }
+
+      if (isWaitingForSummary) {
+        await exitSummaryThenPlayFeature();
+        return;
+      }
+
+      if (isWaitingForFeature) {
+        await playFeatureFromGate();
+        return;
+      }
+
+      if (isWaitingForPresenter) {
+        isWaitingForPresenter = false;
+        await runPresenterSlate();
+        return;
+      }
+
+      if (hasPlayedPresenter && !hasStarted) {
+        if (direction > 0) {
+          await exitPresenterThenPlayIntro();
+        }
+        return;
+      }
+
       if (!hasStarted) {
-        hasStarted = true;
-        void playVisibleCurrent();
+        if (!hasPlayedPresenter) {
+          await runPresenterSlate();
+        }
+        return;
+      }
+
+      if (index === 0 && direction > 0 && !hasPlayedStinger) {
+        showStingerGate();
         return;
       }
 
@@ -207,7 +1280,7 @@
 
       if (nextIndex === index) {
         restart(players[activeSlot]);
-        void playVisibleCurrent();
+        hasStarted = await playVisibleCurrent();
         return;
       }
 
@@ -234,6 +1307,10 @@
     players.forEach((player) => {
       player.addEventListener('ended', () => {
         document.body.classList.remove('is-playing');
+
+        if (player === players[activeSlot] && index === 0 && !hasPlayedStinger) {
+          showStingerGate();
+        }
       });
     });
 
