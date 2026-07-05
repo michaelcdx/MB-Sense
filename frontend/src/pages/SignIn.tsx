@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Eye, EyeOff, LockKeyhole } from 'lucide-react';
+import { Eye, EyeOff, LockKeyhole, PlayCircle } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAppStore } from '../store/useAppStore';
 
@@ -9,23 +9,39 @@ export default function SignIn() {
   const [email, setEmail] = useState(demoEmail);
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
   const login = useAppStore((state) => state.login);
+  const loginDemo = useAppStore((state) => state.loginDemo);
   const navigate = useNavigate();
   const location = useLocation();
   const from = typeof location.state === 'object' && location.state && 'from' in location.state
     ? String((location.state as { from?: string }).from || '/')
     : '/';
 
-  const handleSignIn = (event: React.FormEvent) => {
+  const navigateAfterAuth = () => {
+    navigate(from === '/signin' || from === '/register' ? '/' : from, { replace: true });
+  };
+
+  const handleSignIn = async (event: React.FormEvent) => {
     event.preventDefault();
-    const isValid = login(email, password);
-    if (!isValid) {
-      setError('Use employee@example.com and password mercedesbenz.');
+    setIsSubmitting(true);
+    const result = await login(email, password);
+    setIsSubmitting(false);
+
+    if (!result.ok) {
+      setError(result.message ?? 'Use employee@example.com and password mercedesbenz.');
       return;
     }
+
     setError('');
-    navigate(from === '/signin' || from === '/register' ? '/' : from, { replace: true });
+    navigateAfterAuth();
+  };
+
+  const handleDemoSignIn = () => {
+    setError('');
+    loginDemo();
+    navigateAfterAuth();
   };
 
   return (
@@ -64,7 +80,7 @@ export default function SignIn() {
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
                 className="h-12 w-full rounded-xl border border-outline-variant/55 bg-surface-container-lowest px-4 pr-12 text-sm font-semibold text-on-surface outline-none transition focus:border-primary/45 focus:ring-2 focus:ring-primary/20"
-                placeholder="mercedesbenz"
+                placeholder="enter your password here"
                 autoComplete="current-password"
               />
               <button
@@ -86,9 +102,19 @@ export default function SignIn() {
 
           <button
             type="submit"
-            className="h-12 w-full rounded-xl bg-primary text-sm font-black uppercase tracking-widest text-on-primary shadow-ambient transition hover:bg-primary-dim active:scale-[0.98]"
+            disabled={isSubmitting}
+            className="h-12 w-full rounded-xl bg-primary text-sm font-black uppercase tracking-widest text-on-primary shadow-ambient transition hover:bg-primary-dim active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-65"
           >
-            Sign In
+            {isSubmitting ? 'Signing In' : 'Sign In'}
+          </button>
+
+          <button
+            type="button"
+            onClick={handleDemoSignIn}
+            className="flex h-12 w-full items-center justify-center gap-2 rounded-xl border border-primary/25 bg-primary/10 text-sm font-black uppercase tracking-widest text-primary transition hover:bg-primary/15 active:scale-[0.98]"
+          >
+            <PlayCircle className="h-4 w-4" />
+            Demo Account
           </button>
         </form>
       </div>

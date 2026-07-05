@@ -1,7 +1,7 @@
 import { motion } from 'motion/react';
 import { useAppStore, type ChargingStationCalendarOption } from '../store/useAppStore';
 import { AnimatePresence } from 'motion/react';
-import { BatteryCharging, Battery, CalendarClock, MapPin, Navigation, PlugZap, ShieldCheck, Timer, Zap } from 'lucide-react';
+import { BatteryCharging, Battery, CalendarClock, Clock, MapPin, Navigation, PlugZap, ShieldCheck, Thermometer, Timer, Zap } from 'lucide-react';
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { cn } from '../lib/utils';
@@ -157,6 +157,7 @@ function toCalendarStationOption(station: ChargingStationRecommendation, index: 
     reason: displayText(station.reason),
   };
 }
+
 export default function Home() {
   const {
     user,
@@ -384,9 +385,24 @@ export default function Home() {
     >
       <section className="px-1">
         <h1 className="text-3xl font-bold text-slate-100">Hello, {user.name.split(' ')[0]}</h1>
-        <p className="mt-1 text-sm font-semibold leading-relaxed text-slate-400">
-          {time} � {dateLabel} � {weatherTemperatureLabel} � {location}
-        </p>
+        <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm font-semibold leading-relaxed text-slate-400">
+          <span className="inline-flex items-center gap-1.5">
+            <Clock className="h-3.5 w-3.5 text-primary" />
+            {time}
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <CalendarClock className="h-3.5 w-3.5 text-primary" />
+            {dateLabel}
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <Thermometer className="h-3.5 w-3.5 text-primary" />
+            {weatherTemperatureLabel}
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <MapPin className="h-3.5 w-3.5 text-primary" />
+            {location}
+          </span>
+        </div>
       </section>
 
       <section>
@@ -401,11 +417,6 @@ export default function Home() {
                 </p>
               </div>
 
-              <div className="shrink-0 rounded-2xl bg-primary/10 border border-primary/20 px-4 py-3 text-center">
-                <Battery className="w-5 h-5 text-primary mx-auto mb-1" />
-                <p className="font-mono text-3xl font-black text-primary leading-none">{currentBattery}%</p>
-                <p className="mt-1 text-[9px] font-black text-slate-500 uppercase tracking-widest">Battery</p>
-              </div>
             </div>
 
             <div className="overflow-hidden rounded-2xl border border-primary/30 bg-primary/15 shadow-ambient">
@@ -594,10 +605,6 @@ export default function Home() {
                 <h2 className="mt-2 text-2xl font-extrabold leading-tight text-slate-100">Upcoming driving energy</h2>
                 <p className="mt-1 text-xs font-semibold leading-relaxed text-slate-400">Predicted battery use from calendar activities that require the car.</p>
               </div>
-              <div className="rounded-2xl border border-primary/20 bg-primary/10 px-4 py-3 text-right">
-                <p className="text-[9px] font-black uppercase tracking-widest text-primary">Current battery</p>
-                <p className="mt-1 font-mono text-2xl font-black leading-none text-primary">{currentBattery}%</p>
-              </div>
             </div>
 
             <div className="mt-5 grid gap-3 xl:grid-cols-[minmax(0,1fr)_260px]">
@@ -610,7 +617,10 @@ export default function Home() {
                   <div className="grid grid-cols-3 gap-2 sm:min-w-[300px]">
                     <div className={cn('rounded-xl border px-3 py-2', todayForecast.totalUsePercent > 25 ? 'border-amber-400/30 bg-amber-500/10' : todayForecast.totalUsePercent > 0 ? 'border-emerald-400/25 bg-emerald-500/10' : 'border-outline-variant/45 bg-surface-container-lowest')}>
                       <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">Use</p>
-                      <p className={cn('mt-1 text-sm font-black leading-none', todayForecast.totalUsePercent > 25 ? 'text-amber-400' : todayForecast.totalUsePercent > 0 ? 'text-emerald-400' : 'text-slate-300')}>{todayForecast.totalUsePercent}%</p>
+                      <div className="mt-1 flex items-center gap-1.5">
+                        <Battery className={cn('h-3.5 w-3.5', todayForecast.totalUsePercent > 25 ? 'text-amber-400' : todayForecast.totalUsePercent > 0 ? 'text-emerald-400' : 'text-slate-300')} />
+                        <p className={cn('text-sm font-black leading-none', todayForecast.totalUsePercent > 25 ? 'text-amber-400' : todayForecast.totalUsePercent > 0 ? 'text-emerald-400' : 'text-slate-300')}>{todayForecast.totalUsePercent}%</p>
+                      </div>
                     </div>
                     <div className="rounded-xl border border-outline-variant/45 bg-surface-container-lowest px-3 py-2">
                       <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">Driving</p>
@@ -618,7 +628,10 @@ export default function Home() {
                     </div>
                     <div className="rounded-xl border border-outline-variant/45 bg-surface-container-lowest px-3 py-2">
                       <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">After</p>
-                      <p className="mt-1 text-sm font-black text-slate-100">{todayForecast.afterSchedulePercent}%</p>
+                      <div className="mt-1 flex items-center gap-1.5">
+                        <Battery className="h-3.5 w-3.5 text-primary" />
+                        <p className="text-sm font-black text-slate-100">{todayForecast.afterSchedulePercent}%</p>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -645,11 +658,14 @@ export default function Home() {
                                     <MapPin className="h-3.5 w-3.5 shrink-0 text-primary" />
                                     <span className="truncate">{trip.location}</span>
                                   </p>
-                                  <p className="mt-1 text-[10px] font-bold uppercase tracking-widest text-slate-500">{trip.eventTime} � {trip.distanceKm} km</p>
+                                  <p className="mt-1 text-[10px] font-bold uppercase tracking-widest text-slate-500">{trip.eventTime} - {trip.distanceKm} km</p>
                                 </div>
                                 <div className="shrink-0 rounded-xl border border-primary/20 bg-primary/10 px-2.5 py-2 text-right">
                                   <p className="text-[9px] font-black uppercase tracking-widest text-primary">Battery</p>
-                                  <p className="mt-1 text-sm font-black leading-none text-primary">-{trip.batteryUsePercent}%</p>
+                                  <div className="mt-1 flex items-center justify-end gap-1.5">
+                                    <Battery className="h-3.5 w-3.5 text-primary" />
+                                    <p className="text-sm font-black leading-none text-primary">-{trip.batteryUsePercent}%</p>
+                                  </div>
                                 </div>
                               </div>
                             </motion.div>
@@ -684,7 +700,10 @@ export default function Home() {
                       </div>
                       <div className={cn('shrink-0 rounded-lg border px-2.5 py-1.5 text-right', bucket.totalUsePercent > 25 ? 'border-amber-400/30 bg-amber-500/10' : bucket.totalUsePercent > 0 ? 'border-emerald-400/25 bg-emerald-500/10' : 'border-outline-variant/45 bg-surface-container-lowest')}>
                         <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">Use</p>
-                        <p className={cn('mt-1 text-sm font-black leading-none', bucket.totalUsePercent > 25 ? 'text-amber-400' : bucket.totalUsePercent > 0 ? 'text-emerald-400' : 'text-slate-300')}>{bucket.totalUsePercent}%</p>
+                        <div className="mt-1 flex items-center justify-end gap-1.5">
+                          <Battery className={cn('h-3.5 w-3.5', bucket.totalUsePercent > 25 ? 'text-amber-400' : bucket.totalUsePercent > 0 ? 'text-emerald-400' : 'text-slate-300')} />
+                          <p className={cn('text-sm font-black leading-none', bucket.totalUsePercent > 25 ? 'text-amber-400' : bucket.totalUsePercent > 0 ? 'text-emerald-400' : 'text-slate-300')}>{bucket.totalUsePercent}%</p>
+                        </div>
                       </div>
                     </div>
                     <div className="mt-2 grid grid-cols-2 gap-2">
@@ -694,7 +713,10 @@ export default function Home() {
                       </div>
                       <div className="rounded-lg border border-outline-variant/45 bg-surface-container-lowest px-2.5 py-1.5">
                         <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">After</p>
-                        <p className="mt-1 text-sm font-black text-slate-100">{bucket.afterSchedulePercent}%</p>
+                        <div className="mt-1 flex items-center gap-1.5">
+                          <Battery className="h-3.5 w-3.5 text-primary" />
+                          <p className="text-sm font-black text-slate-100">{bucket.afterSchedulePercent}%</p>
+                        </div>
                       </div>
                     </div>
                   </div>

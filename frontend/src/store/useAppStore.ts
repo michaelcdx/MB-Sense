@@ -70,6 +70,18 @@ export interface VehicleState {
   preCooling: boolean;
 }
 
+type AuthMode = 'signed-out' | 'database' | 'demo';
+
+export type UserProfile = {
+  name: string;
+  email: string;
+  avatarUrl?: string | null;
+  notifications: {
+    preferences: boolean;
+    photos: boolean;
+  };
+};
+
 export type AiChargingPlanHistoryEntry = {
   id: string;
   plan: ChargingPlanResult;
@@ -99,14 +111,9 @@ function clampChargingMinimum(value: number, targetPercent: number) {
 
 interface AppStore {
   isAuthenticated: boolean;
-  user: {
-    name: string;
-    email: string;
-    notifications: {
-      preferences: boolean;
-      photos: boolean;
-    };
-  };
+  authMode: AuthMode;
+  accountEmail: string | null;
+  user: UserProfile;
   location: string;
   weather: {
     temp: number;
@@ -123,10 +130,11 @@ interface AppStore {
   calendarRevision: number;
   recentActions: {icon: string, title: string, time: string, description: string}[];
   // Actions
-  login: (email: string, password: string) => boolean;
+  login: (email: string, password: string) => Promise<{ ok: boolean; message?: string }>;
+  loginDemo: () => void;
   logout: () => void;
-  register: () => void;
-  updateUser: (data: Partial<AppStore['user']>) => void;
+  register: (email: string, password: string) => Promise<{ ok: boolean; message?: string }>;
+  updateUser: (data: Partial<UserProfile>) => void;
   toggleLock: () => void;
   toggleEngine: () => void;
   togglePreCool: () => void;
@@ -361,16 +369,138 @@ function buildBusinessCalendarEvents(): CalendarEvent[] {
     }));
 }
 
-export const useAppStore = create<AppStore>((set) => ({
-  isAuthenticated: false,
-  user: {
-    name: 'Michael Tan',
-    email: 'michael.tan@example.com',
+const defaultAccountEmail = 'employee@example.com';
+const defaultUser: UserProfile = {
+  name: 'Michael Tan',
+  email: defaultAccountEmail,
+  avatarUrl: null,
+  notifications: {
+    preferences: true,
+    photos: false
+  }
+};
+const demoUser: UserProfile = {
+  name: 'Demo Driver',
+  email: 'demo@mbsense.local',
+  avatarUrl: null,
+  notifications: {
+    preferences: true,
+    photos: false
+  }
+};
+const defaultRecentActions = [
+  { icon: 'battery_charging_full', title: 'Charging Window Planned', description: 'Tonight 8:30 PM-10:00 PM', time: '18:45' },
+  { icon: 'warning', title: 'Battery Risk Predicted', description: 'Thursday travel may drop below reserve', time: '16:20' },
+  { icon: 'event', title: 'Schedule Synced', description: 'Business calendar loaded through July 30', time: '08:30' }
+];
+
+function normalizeUserProfile(value: unknown, fallbackEmail = defaultAccountEmail): UserProfile {
+  const source = value && typeof value === 'object' ? value as Partial<UserProfile> : {};
+  const notifications = source.notifications ?? defaultUser.notifications;
+
+  return {
+    name: typeof source.name === 'string' && source.name.trim() ? source.name.trim() : defaultUser.name,
+    email: typeof source.email === 'string' && source.email.trim() ? source.email.trim() : fallbackEmail,
+    avatarUrl: typeof source.avatarUrl === 'string' && source.avatarUrl.trim() ? source.avatarUrl : null,
     notifications: {
-      preferences: true,
-      photos: false
-    }
-  },
+      preferences: typeof notifications.preferences === 'boolean' ? notifications.preferences : defaultUser.notifications.preferences,
+      photos: typeof notifications.photos === 'boolean' ? notifications.photos : defaultUser.notifications.photos,
+    },
+  };
+}
+
+function isCalendarCategory(value: unknown): value is CalendarEvent['category'] {
+  return value === 'work'
+    || value === 'study'
+    || value === 'assignment'
+    || value === 'important'
+    || value === 'charging'
+    || value === 'risk'
+    || value === 'personal'
+    || value === 'fitness'
+    || value === 'other';
+}
+
+function isCalendarType(value: unknown): value is CalendarEvent['type'] {
+  return value === 'Morning' || value === 'Afternoon' || value === 'Evening';
+}
+
+function hydrateCalendarEvent(value: unknown): CalendarEvent | null {
+  if (!value || typeof value !== 'object') return null;
+
+  const source = value as Record<string, any>;
+  const id = typeof source.id === 'string' && source.id.trim() ? source.id.trim() : '';
+  const title = typeof source.title === 'string' && source.title.trim() ? source.title.trim() : '';
+  const location = typeof source.location === 'string' && source.location.trim() ? source.location.trim() : '';
+  const time = typeof source.time === 'string' && source.time.trim() ? source.time.trim() : '09:00 AM';
+  const parsedDate = source.date instanceof Date ? source.date : new Date(String(source.date ?? ''));
+
+  if (!id || !title || !location || Number.isNaN(parsedDate.getTime())) return null;
+
+  return {
+    ...source,
+    id,
+    title,
+    location,
+    time,
+    date: parsedDate,
+    carNeeded: typeof source.carNeeded === 'boolean' ? source.carNeeded : true,
+    type: isCalendarType(source.type) ? source.type : getEventType(time),
+    category: isCalendarCategory(source.category) ? source.category : 'work',
+  };
+}
+
+function hydrateCalendarEvents(value: unknown) {
+  if (!Array.isArray(value)) return buildBusinessCalendarEvents();
+
+  const events = value
+    .map(hydrateCalendarEvent)
+    .filter((event): event is CalendarEvent => Boolean(event));
+
+  return events.length ? sortCalendarEvents(events) : buildBusinessCalendarEvents();
+}
+
+function serializeCalendarEvents(events: CalendarEvent[]) {
+  return events.map((event) => {
+    const date = event.date instanceof Date ? event.date : new Date(event.date);
+    return {
+      ...event,
+      date: Number.isNaN(date.getTime()) ? new Date().toISOString() : date.toISOString(),
+    };
+  });
+}
+
+async function readJsonResponse(response: Response) {
+  try {
+    return await response.json();
+  } catch {
+    return {};
+  }
+}
+
+async function saveDatabaseState(state: AppStore) {
+  if (!state.isAuthenticated || state.authMode !== 'database' || !state.accountEmail) return;
+
+  try {
+    await fetch('/api/user-state', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        accountEmail: state.accountEmail,
+        user: state.user,
+        events: serializeCalendarEvents(state.events),
+      }),
+    });
+  } catch (error) {
+    console.warn('Unable to save MB Sense user state.', error);
+  }
+}
+
+export const useAppStore = create<AppStore>((set, get) => ({
+  isAuthenticated: false,
+  authMode: 'signed-out',
+  accountEmail: null,
+  user: defaultUser,
   location: 'Kuala Lumpur',
   weather: {
     temp: 29,
@@ -392,11 +522,7 @@ export const useAppStore = create<AppStore>((set) => ({
   aiChargingPlanInputSignature: null,
   aiChargingPlanHistory: [],
   calendarRevision: 0,
-  recentActions: [
-    { icon: 'battery_charging_full', title: 'Charging Window Planned', description: 'Tonight 8:30 PM-10:00 PM', time: '18:45' },
-    { icon: 'warning', title: 'Battery Risk Predicted', description: 'Thursday travel may drop below reserve', time: '16:20' },
-    { icon: 'event', title: 'Schedule Synced', description: 'Business calendar loaded through July 30', time: '08:30' }
-  ],
+  recentActions: defaultRecentActions,
 
   toggleLock: () => set((state) => ({
     vehicle: { ...state.vehicle, locked: !state.vehicle.locked },
@@ -467,28 +593,147 @@ export const useAppStore = create<AppStore>((set) => ({
     };
   }),
 
-  addEvent: (event) => set((state) => ({
-    events: sortCalendarEvents([...state.events, event]),
-    aiChargingPlanInputSignature: null,
-    calendarRevision: state.calendarRevision + 1
-  })),
-  updateEvent: (event) => set((state) => ({
-    events: sortCalendarEvents(state.events.map((item) => item.id === event.id ? event : item)),
-    aiChargingPlanInputSignature: null,
-    calendarRevision: state.calendarRevision + 1
-  })),
-  deleteEvent: (eventId) => set((state) => ({
-    events: state.events.filter((event) => event.id !== eventId),
-    aiChargingPlanInputSignature: null,
-    calendarRevision: state.calendarRevision + 1
-  })),
-  addRecentAction: (action) => set((state) => ({ recentActions: [action, ...state.recentActions].slice(0, 5) })),
-  login: (email, password) => {
-    const isValid = email.trim().toLowerCase() === 'employee@example.com' && password === 'mercedesbenz';
-    if (isValid) set({ isAuthenticated: true });
-    return isValid;
+  addEvent: (event) => {
+    set((state) => ({
+      events: sortCalendarEvents([...state.events, event]),
+      aiChargingPlanInputSignature: null,
+      calendarRevision: state.calendarRevision + 1
+    }));
+    void saveDatabaseState(get());
   },
-  logout: () => set({ isAuthenticated: false }),
-  register: () => set({ isAuthenticated: true }),
-  updateUser: (data) => set((state) => ({ user: { ...state.user, ...data } }))
+  updateEvent: (event) => {
+    set((state) => ({
+      events: sortCalendarEvents(state.events.map((item) => item.id === event.id ? event : item)),
+      aiChargingPlanInputSignature: null,
+      calendarRevision: state.calendarRevision + 1
+    }));
+    void saveDatabaseState(get());
+  },
+  deleteEvent: (eventId) => {
+    set((state) => ({
+      events: state.events.filter((event) => event.id !== eventId),
+      aiChargingPlanInputSignature: null,
+      calendarRevision: state.calendarRevision + 1
+    }));
+    void saveDatabaseState(get());
+  },
+  addRecentAction: (action) => set((state) => ({ recentActions: [action, ...state.recentActions].slice(0, 5) })),
+  login: async (email, password) => {
+    const accountEmail = email.trim().toLowerCase();
+    if (!accountEmail || !password) return { ok: false, message: 'Email and password are required.' };
+
+    try {
+      const response = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: accountEmail,
+          password,
+          seed: {
+            user: { ...defaultUser, email: accountEmail },
+            events: serializeCalendarEvents(buildBusinessCalendarEvents()),
+          },
+        }),
+      });
+      const data = await readJsonResponse(response);
+
+      if (!response.ok) {
+        return {
+          ok: false,
+          message: typeof data.error === 'string' ? data.error : 'Invalid email or password.',
+        };
+      }
+
+      set((state) => ({
+        isAuthenticated: true,
+        authMode: 'database',
+        accountEmail: typeof data.accountEmail === 'string' ? data.accountEmail : accountEmail,
+        user: normalizeUserProfile(data.user, accountEmail),
+        events: hydrateCalendarEvents(data.events),
+        aiChargingPlan: null,
+        aiChargingPlanStatus: 'idle',
+        aiChargingPlanInputSignature: null,
+        aiChargingPlanHistory: [],
+        calendarRevision: state.calendarRevision + 1,
+        recentActions: defaultRecentActions,
+      }));
+
+      return { ok: true };
+    } catch {
+      return { ok: false, message: 'Unable to reach the MB Sense database. Make sure the backend is running.' };
+    }
+  },
+  loginDemo: () => {
+    set((state) => ({
+      isAuthenticated: true,
+      authMode: 'demo',
+      accountEmail: null,
+      user: demoUser,
+      events: buildBusinessCalendarEvents(),
+      aiChargingPlan: null,
+      aiChargingPlanStatus: 'idle',
+      aiChargingPlanInputSignature: null,
+      aiChargingPlanHistory: [],
+      calendarRevision: state.calendarRevision + 1,
+      recentActions: defaultRecentActions,
+    }));
+  },
+  logout: () => set({
+    isAuthenticated: false,
+    authMode: 'signed-out',
+    accountEmail: null,
+    aiChargingPlan: null,
+    aiChargingPlanStatus: 'idle',
+    aiChargingPlanInputSignature: null,
+    aiChargingPlanHistory: [],
+  }),
+  register: async (email, password) => {
+    const accountEmail = email.trim().toLowerCase();
+    if (!accountEmail || !password) return { ok: false, message: 'Email and password are required.' };
+
+    try {
+      const response = await fetch('/api/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: accountEmail,
+          password,
+          seed: {
+            user: { ...defaultUser, email: accountEmail },
+            events: serializeCalendarEvents(buildBusinessCalendarEvents()),
+          },
+        }),
+      });
+      const data = await readJsonResponse(response);
+
+      if (!response.ok) {
+        return {
+          ok: false,
+          message: typeof data.error === 'string' ? data.error : 'Unable to create account.',
+        };
+      }
+
+      set((state) => ({
+        isAuthenticated: true,
+        authMode: 'database',
+        accountEmail: typeof data.accountEmail === 'string' ? data.accountEmail : accountEmail,
+        user: normalizeUserProfile(data.user, accountEmail),
+        events: hydrateCalendarEvents(data.events),
+        aiChargingPlan: null,
+        aiChargingPlanStatus: 'idle',
+        aiChargingPlanInputSignature: null,
+        aiChargingPlanHistory: [],
+        calendarRevision: state.calendarRevision + 1,
+        recentActions: defaultRecentActions,
+      }));
+
+      return { ok: true };
+    } catch {
+      return { ok: false, message: 'Unable to reach the MB Sense database. Make sure the backend is running.' };
+    }
+  },
+  updateUser: (data) => {
+    set((state) => ({ user: { ...state.user, ...data } }));
+    void saveDatabaseState(get());
+  }
 }));

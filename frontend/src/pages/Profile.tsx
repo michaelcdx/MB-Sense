@@ -1,8 +1,20 @@
 import { useAppStore } from '../store/useAppStore';
 import { motion } from 'motion/react';
-import { Shield, Zap, TrendingUp, History, Eye, EyeOff, LogOut } from 'lucide-react';
+import { Camera, Shield, Zap, TrendingUp, History, Eye, EyeOff, LogOut, Upload, UserRound } from 'lucide-react';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+
+function AvatarPreview({ avatarUrl, name, className, iconClassName }: { avatarUrl?: string | null; name: string; className: string; iconClassName: string }) {
+  return (
+    <div className={className}>
+      {avatarUrl ? (
+        <img src={avatarUrl} alt={name} className="h-full w-full object-cover" />
+      ) : (
+        <UserRound className={iconClassName} />
+      )}
+    </div>
+  );
+}
 
 export default function Profile() {
   const { user, updateUser, logout } = useAppStore();
@@ -16,6 +28,8 @@ export default function Profile() {
   const [newPassword, setNewPassword] = useState('password123');
   const [showCurrentPassword, setShowCurrentPassword] = useState(false);
   const [showNewPassword, setShowNewPassword] = useState(false);
+  const [avatarUrl, setAvatarUrl] = useState(user.avatarUrl ?? null);
+  const [photoError, setPhotoError] = useState('');
   
   const [notifyPrefs, setNotifyPrefs] = useState(user.notifications.preferences);
   const [notifyPhotos, setNotifyPhotos] = useState(user.notifications.photos);
@@ -24,12 +38,49 @@ export default function Profile() {
     updateUser({
       name,
       email,
+      avatarUrl,
       notifications: {
         preferences: notifyPrefs,
         photos: notifyPhotos
       }
     });
     // Normally you'd also handle password change here
+  };
+
+  const handlePhotoUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+      setPhotoError('Choose an image file.');
+      return;
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      setPhotoError('Choose an image under 5 MB.');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result !== 'string') {
+        setPhotoError('Unable to read this image.');
+        return;
+      }
+
+      setAvatarUrl(reader.result);
+      setPhotoError('');
+      updateUser({ avatarUrl: reader.result });
+    };
+    reader.onerror = () => setPhotoError('Unable to read this image.');
+    reader.readAsDataURL(file);
+  };
+
+  const handleRemovePhoto = () => {
+    setAvatarUrl(null);
+    setPhotoError('');
+    updateUser({ avatarUrl: null });
   };
 
   const handleLogout = () => {
@@ -48,7 +99,12 @@ export default function Profile() {
       <section className="flex flex-col items-center mt-4">
         <div className="relative mb-4">
            <div className="w-24 h-24 rounded-full border-2 border-primary p-1 bg-surface-container-lowest shadow-ambient">
-             <img src="https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&h=150&fit=crop" alt={user.name} className="w-full h-full rounded-full object-cover" />
+             <AvatarPreview
+               avatarUrl={avatarUrl}
+               name={user.name}
+               className="flex h-full w-full items-center justify-center overflow-hidden rounded-full bg-surface-container-low text-primary"
+               iconClassName="h-11 w-11"
+             />
            </div>
            <div className="absolute bottom-0 right-[-4px] bg-emerald-500 rounded-full border-4 border-surface p-1">
              <Shield className="w-3 h-3 text-emerald-950" fill="currentColor" />
@@ -139,11 +195,27 @@ export default function Profile() {
          <div className="space-y-6">
            <section className="flex flex-col items-center sm:flex-row sm:items-center sm:justify-start gap-4 mb-8">
              <div className="w-16 h-16 rounded-full border-2 border-outline-variant overflow-hidden">
-               <img src="https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&h=150&fit=crop" alt={user.name} className="w-full h-full object-cover" />
+               <AvatarPreview
+                 avatarUrl={avatarUrl}
+                 name={user.name}
+                 className="flex h-full w-full items-center justify-center bg-surface-container-low text-primary"
+                 iconClassName="h-8 w-8"
+               />
              </div>
-             <button className="text-sm font-bold text-primary bg-primary/10 hover:bg-primary/15 border border-primary/20 px-4 py-2 rounded-lg transition-colors">
-               Upload New Photo
-             </button>
+             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+               <input id="profile-photo-upload" type="file" accept="image/*" onChange={handlePhotoUpload} className="hidden" />
+               <label htmlFor="profile-photo-upload" className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-primary/20 bg-primary/10 px-4 py-2 text-sm font-bold text-primary transition-colors hover:bg-primary/15">
+                 <Upload className="h-4 w-4" />
+                 Upload New Photo
+               </label>
+               {avatarUrl && (
+                 <button type="button" onClick={handleRemovePhoto} className="inline-flex items-center justify-center gap-2 rounded-lg border border-outline-variant/45 bg-surface-container-low px-4 py-2 text-sm font-bold text-slate-300 transition-colors hover:border-primary/35 hover:text-primary">
+                   <Camera className="h-4 w-4" />
+                   Use Person Icon
+                 </button>
+               )}
+               {photoError && <p className="text-xs font-bold text-rose-400">{photoError}</p>}
+             </div>
            </section>
 
            <section className="space-y-4">

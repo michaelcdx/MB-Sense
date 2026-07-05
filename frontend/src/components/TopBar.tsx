@@ -62,13 +62,13 @@ export default function TopBar() {
           <button
             type="button"
             onClick={() => setBatteryOpen((open) => !open)}
-            className="glass-brand-button inline-flex h-10 items-center gap-2 rounded-xl px-3 text-[13px] font-black uppercase tracking-widest text-on-surface transition active:scale-[0.98]"
+            className="glass-brand-button inline-flex h-12 items-center gap-3 rounded-2xl px-4 text-base font-black uppercase tracking-widest text-on-surface transition active:scale-[0.98]"
             aria-expanded={batteryOpen}
             aria-label="Adjust battery percentage"
           >
-            <BatteryCharging className={cn('h-4 w-4', batteryTone.text)} />
+            <BatteryCharging className={cn('h-5 w-5', batteryTone.text)} />
             <span>{vehicle.batteryLevel}%</span>
-            <span className="hidden h-1.5 w-16 overflow-hidden rounded-full bg-surface-container-high sm:block">
+            <span className="hidden h-2.5 w-24 overflow-hidden rounded-full bg-surface-container-high sm:block">
               <span className={cn('block h-full rounded-full transition-all', batteryTone.fill)} style={{ width: `${vehicle.batteryLevel}%` }} />
             </span>
           </button>
@@ -77,14 +77,14 @@ export default function TopBar() {
             <motion.div
               initial={{ opacity: 0, y: -6, scale: 0.98 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
-              className="absolute left-0 top-12 w-64 rounded-2xl border border-outline-variant/45 bg-surface-container-lowest/95 p-4 shadow-ambient-lg backdrop-blur-xl"
+              className="absolute left-0 top-14 w-72 rounded-2xl border border-outline-variant/45 bg-surface-container-lowest/95 p-4 shadow-ambient-lg backdrop-blur-xl"
             >
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Battery</p>
-                  <p className="mt-1 text-2xl font-black text-on-surface">{vehicle.batteryLevel}%</p>
+                  <p className="mt-1 text-3xl font-black text-on-surface">{vehicle.batteryLevel}%</p>
                 </div>
-                <BatteryCharging className={cn('h-6 w-6', batteryTone.text)} />
+                <BatteryCharging className={cn('h-7 w-7', batteryTone.text)} />
               </div>
               <input
                 type="range"
@@ -142,7 +142,9 @@ export default function TopBar() {
           </div>
         )}
         <GlassButton onClick={() => navigate(isAuthenticated ? '/profile' : '/signin')} wrapClassName="text-[13px]" className="glass-avatar-button" aria-label="Open profile">
-          {initials}
+          {user.avatarUrl ? (
+            <img src={user.avatarUrl} alt={user.name} className="h-full w-full rounded-full object-cover" />
+          ) : initials}
         </GlassButton>
       </div>
     </header>
