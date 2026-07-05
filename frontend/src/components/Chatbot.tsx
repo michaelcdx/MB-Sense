@@ -68,7 +68,7 @@ type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
 function AiLogo({ className }: { className?: string }) {
   return (
     <img
-      src="/AI-Logo.svg"
+      src="/AI-logo.svg"
       alt=""
       aria-hidden="true"
       draggable={false}
