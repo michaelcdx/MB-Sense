@@ -601,8 +601,8 @@ export default function Home() {
         </section>
       )}
 
-      <section>
-        <div className="relative overflow-hidden rounded-3xl border border-outline-variant/45 bg-surface-container-lowest p-5 shadow-ambient-lg">
+      <section className="min-w-0 max-w-full overflow-hidden">
+        <div className="relative min-w-0 max-w-full overflow-hidden rounded-3xl border border-outline-variant/45 bg-surface-container-lowest p-4 shadow-ambient-lg sm:p-5">
           <div className="absolute inset-x-0 -top-px h-px bg-gradient-to-r from-transparent via-emerald-400/35 to-transparent" />
           <div className="relative z-10">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
@@ -616,28 +616,28 @@ export default function Home() {
               </div>
             </div>
 
-            <div className="mt-5 grid gap-3 xl:grid-cols-[minmax(0,1fr)_260px]">
-              <div className="rounded-2xl border border-outline-variant/45 bg-surface-container-low p-4">
+            <div className="mt-5 grid min-w-0 max-w-full gap-3 xl:grid-cols-[minmax(0,1fr)_260px]">
+              <div className="min-w-0 rounded-2xl border border-outline-variant/45 bg-surface-container-low p-3 sm:p-4">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div className="min-w-0">
                     <p className="text-lg font-black text-slate-100">{todayForecast.title}</p>
                     <p className="mt-1 text-[10px] font-bold uppercase tracking-widest text-slate-500">{todayForecast.subtitle}</p>
                   </div>
-                  <div className="grid grid-cols-3 gap-2 sm:min-w-[300px]">
-                    <div className={cn('rounded-xl border px-3 py-2', todayForecast.totalUsePercent > 25 ? 'border-amber-400/30 bg-amber-500/10' : todayForecast.totalUsePercent > 0 ? 'border-emerald-400/25 bg-emerald-500/10' : 'border-outline-variant/45 bg-surface-container-lowest')}>
-                      <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">Use</p>
-                      <div className="mt-1 flex items-center gap-1.5">
+                  <div className="grid min-w-0 grid-cols-[repeat(3,minmax(0,1fr))] gap-2 sm:min-w-[300px]">
+                    <div className={cn('min-w-0 rounded-xl border px-2 py-2 sm:px-3', todayForecast.totalUsePercent > 25 ? 'border-amber-400/30 bg-amber-500/10' : todayForecast.totalUsePercent > 0 ? 'border-emerald-400/25 bg-emerald-500/10' : 'border-outline-variant/45 bg-surface-container-lowest')}>
+                      <p className="text-[9px] font-black uppercase tracking-wider text-slate-500">Use</p>
+                      <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5">
                         <Battery className={cn('h-3.5 w-3.5', todayForecast.totalUsePercent > 25 ? 'text-amber-400' : todayForecast.totalUsePercent > 0 ? 'text-emerald-400' : 'text-slate-300')} />
                         <p className={cn('text-sm font-black leading-none', todayForecast.totalUsePercent > 25 ? 'text-amber-400' : todayForecast.totalUsePercent > 0 ? 'text-emerald-400' : 'text-slate-300')}>{todayForecast.totalUsePercent}%</p>
                       </div>
                     </div>
-                    <div className="rounded-xl border border-outline-variant/45 bg-surface-container-lowest px-3 py-2">
-                      <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">Driving</p>
+                    <div className="min-w-0 rounded-xl border border-outline-variant/45 bg-surface-container-lowest px-2 py-2 sm:px-3">
+                      <p className="text-[9px] font-black uppercase tracking-wider text-slate-500">Driving</p>
                       <p className="mt-1 text-sm font-black text-slate-100">{todayForecast.drivingEventCount}</p>
                     </div>
-                    <div className="rounded-xl border border-outline-variant/45 bg-surface-container-lowest px-3 py-2">
-                      <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">After</p>
-                      <div className="mt-1 flex items-center gap-1.5">
+                    <div className="min-w-0 rounded-xl border border-outline-variant/45 bg-surface-container-lowest px-2 py-2 sm:px-3">
+                      <p className="text-[9px] font-black uppercase tracking-wider text-slate-500">After</p>
+                      <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5">
                         <Battery className="h-3.5 w-3.5 text-primary" />
                         <p className="text-sm font-black text-slate-100">{todayForecast.afterSchedulePercent}%</p>
                       </div>
@@ -660,8 +660,8 @@ export default function Home() {
                               transition={{ duration: 0.22, ease: 'easeOut' }}
                               className="overflow-hidden"
                             >
-                              <div className="flex items-center justify-between gap-3 px-3 py-3">
-                                <div className="min-w-0">
+                              <div className="flex min-w-0 items-center justify-between gap-2 px-3 py-3 sm:gap-3">
+                                <div className="min-w-0 flex-1">
                                   <p className="truncate text-sm font-black leading-tight text-slate-100">{trip.title}</p>
                                   <p className="mt-1 flex items-center gap-1.5 truncate text-[11px] font-semibold text-slate-400">
                                     <MapPin className="h-3.5 w-3.5 shrink-0 text-primary" />
@@ -670,7 +670,7 @@ export default function Home() {
                                   <p className="mt-1 text-[10px] font-bold uppercase tracking-widest text-slate-500">{trip.eventTime} - {trip.distanceKm} km</p>
                                 </div>
                                 <div className="shrink-0 rounded-xl border border-primary/20 bg-primary/10 px-2.5 py-2 text-right">
-                                  <p className="text-[9px] font-black uppercase tracking-widest text-primary">Battery</p>
+                                  <p className="text-[9px] font-black uppercase tracking-wider text-primary">Battery</p>
                                   <div className="mt-1 flex items-center justify-end gap-1.5">
                                     <Battery className="h-3.5 w-3.5 text-primary" />
                                     <p className="text-sm font-black leading-none text-primary">-{trip.batteryUsePercent}%</p>
@@ -699,30 +699,30 @@ export default function Home() {
                 </motion.div>
               </div>
 
-              <div className="grid gap-2">
+              <div className="grid min-w-0 max-w-full gap-2">
                 {futureForecasts.map((bucket) => (
-                  <div key={bucket.id} className="rounded-xl border border-outline-variant/45 bg-surface-container-low p-3">
-                    <div className="flex items-start justify-between gap-2">
+                  <div key={bucket.id} className="min-w-0 rounded-xl border border-outline-variant/45 bg-surface-container-low p-3">
+                    <div className="flex min-w-0 items-start justify-between gap-2">
                       <div className="min-w-0">
                         <p className="text-xs font-black text-slate-100">{bucket.title}</p>
                         <p className="mt-1 text-[10px] font-bold uppercase tracking-widest text-slate-500">{bucket.subtitle}</p>
                       </div>
-                      <div className={cn('shrink-0 rounded-lg border px-2.5 py-1.5 text-right', bucket.totalUsePercent > 25 ? 'border-amber-400/30 bg-amber-500/10' : bucket.totalUsePercent > 0 ? 'border-emerald-400/25 bg-emerald-500/10' : 'border-outline-variant/45 bg-surface-container-lowest')}>
-                        <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">Use</p>
+                      <div className={cn('min-w-0 shrink-0 rounded-lg border px-2 py-1.5 text-right sm:px-2.5', bucket.totalUsePercent > 25 ? 'border-amber-400/30 bg-amber-500/10' : bucket.totalUsePercent > 0 ? 'border-emerald-400/25 bg-emerald-500/10' : 'border-outline-variant/45 bg-surface-container-lowest')}>
+                        <p className="text-[9px] font-black uppercase tracking-wider text-slate-500">Use</p>
                         <div className="mt-1 flex items-center justify-end gap-1.5">
                           <Battery className={cn('h-3.5 w-3.5', bucket.totalUsePercent > 25 ? 'text-amber-400' : bucket.totalUsePercent > 0 ? 'text-emerald-400' : 'text-slate-300')} />
                           <p className={cn('text-sm font-black leading-none', bucket.totalUsePercent > 25 ? 'text-amber-400' : bucket.totalUsePercent > 0 ? 'text-emerald-400' : 'text-slate-300')}>{bucket.totalUsePercent}%</p>
                         </div>
                       </div>
                     </div>
-                    <div className="mt-2 grid grid-cols-2 gap-2">
-                      <div className="rounded-lg border border-outline-variant/45 bg-surface-container-lowest px-2.5 py-1.5">
-                        <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">Driving</p>
+                    <div className="mt-2 grid min-w-0 grid-cols-[repeat(2,minmax(0,1fr))] gap-2">
+                      <div className="min-w-0 rounded-lg border border-outline-variant/45 bg-surface-container-lowest px-2 py-1.5 sm:px-2.5">
+                        <p className="text-[9px] font-black uppercase tracking-wider text-slate-500">Driving</p>
                         <p className="mt-1 text-sm font-black text-slate-100">{bucket.drivingEventCount}</p>
                       </div>
-                      <div className="rounded-lg border border-outline-variant/45 bg-surface-container-lowest px-2.5 py-1.5">
-                        <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">After</p>
-                        <div className="mt-1 flex items-center gap-1.5">
+                      <div className="min-w-0 rounded-lg border border-outline-variant/45 bg-surface-container-lowest px-2 py-1.5 sm:px-2.5">
+                        <p className="text-[9px] font-black uppercase tracking-wider text-slate-500">After</p>
+                        <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5">
                           <Battery className="h-3.5 w-3.5 text-primary" />
                           <p className="text-sm font-black text-slate-100">{bucket.afterSchedulePercent}%</p>
                         </div>
