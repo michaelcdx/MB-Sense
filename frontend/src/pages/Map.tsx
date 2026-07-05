@@ -5,6 +5,7 @@ import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import {
   AlertTriangle,
+  ArrowUp,
   Banknote,
   BatteryCharging,
   Check,
@@ -61,6 +62,8 @@ const kualaLumpurCenter: Coordinates = { lat: 3.139, lng: 101.6869 };
 const defaultDriveOriginName = 'Xiamen University Malaysia';
 const defaultDriveOriginAddress = 'Xiamen University Malaysia, Sunsuria City, Sepang';
 const defaultDriveOriginPosition = resolveLocationCoordinates(defaultDriveOriginAddress) ?? { lat: 2.835, lng: 101.706 };
+const compassDirectionLabels = ['North', 'North-east', 'East', 'South-east', 'South', 'South-west', 'West', 'North-west'];
+const compassDirectionAngles = [0, 45, 90, 135, 180, 225, 270, 315];
 
 function buildMapTilerStyleUrl(apiKey: string) {
   return `https://api.maptiler.com/maps/streets-v2/style.json?key=${apiKey}`;
@@ -130,6 +133,24 @@ type DriveDestination = {
   eventName?: string;
   eventDateLabel?: string;
   eventLocation?: string;
+};
+
+type LocationSearchResult = {
+  id: string;
+  name: string;
+  detail: string;
+  position: Coordinates;
+};
+
+type LocationSearchStatus = 'idle' | 'loading' | 'ready' | 'error' | 'unavailable';
+
+type NavigationDirectionStep = {
+  id: string;
+  instruction: string;
+  directionLabel: string;
+  directionDegrees: number;
+  distanceMeters: number;
+  distanceLabel: string;
 };
 
 type DrivingRouteResult = {
@@ -516,6 +537,10 @@ function hasGeocodedLocationKey(geocodedLocations: Record<string, Coordinates | 
   return Object.prototype.hasOwnProperty.call(geocodedLocations, getLocationResolutionKey(location));
 }
 
+function isKlangValleyCoordinate(point: Coordinates) {
+  return point.lat >= 2.72 && point.lat <= 3.35 && point.lng >= 101.45 && point.lng <= 101.86;
+}
+
 async function fetchMapTilerGeocodedLocation(location: string, apiKey: string, signal?: AbortSignal): Promise<Coordinates | null> {
   const query = location.trim();
   if (!query || !apiKey.trim()) return null;
@@ -540,6 +565,61 @@ async function fetchMapTilerGeocodedLocation(location: string, apiKey: string, s
   const [lng, lat] = coordinates;
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
   return { lat, lng };
+}
+
+async function fetchMapTilerLocationSearch(queryText: string, apiKey: string, signal?: AbortSignal): Promise<LocationSearchResult[]> {
+  const query = queryText.trim();
+  if (!query || !apiKey.trim()) return [];
+
+  const searchText = /\b(kl|kuala lumpur|selangor|malaysia)\b/i.test(query) ? query : `${query} Kuala Lumpur`;
+  const params = new URLSearchParams({
+    key: apiKey,
+    limit: '6',
+    country: 'my',
+    proximity: `${kualaLumpurCenter.lng},${kualaLumpurCenter.lat}`,
+    autocomplete: 'true',
+    language: 'en',
+  });
+  const response = await fetch(`https://api.maptiler.com/geocoding/${encodeURIComponent(searchText)}.json?${params.toString()}`, { signal });
+  if (!response.ok) return [];
+
+  const payload = await response.json() as {
+    features?: Array<{
+      id?: string;
+      text?: string;
+      place_name?: string;
+      center?: [number, number];
+      geometry?: { coordinates?: [number, number] };
+    }>;
+  };
+
+  const seen = new Set<string>();
+  return (payload.features ?? []).reduce<LocationSearchResult[]>((results, feature, index) => {
+    const coordinates = feature.center ?? feature.geometry?.coordinates;
+    if (!coordinates) return results;
+
+    const [lng, lat] = coordinates;
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return results;
+
+    const position = { lat, lng };
+    if (!isKlangValleyCoordinate(position)) return results;
+
+    const fullName = feature.place_name?.trim() || feature.text?.trim() || query;
+    const parts = fullName.split(',').map((part) => part.trim()).filter(Boolean);
+    const name = feature.text?.trim() || parts[0] || query;
+    const detail = parts.length > 1 ? parts.slice(1, 4).join(', ') : 'Kuala Lumpur, Malaysia';
+    const duplicateKey = `${name.toLowerCase()}-${position.lat.toFixed(4)}-${position.lng.toFixed(4)}`;
+    if (seen.has(duplicateKey)) return results;
+
+    seen.add(duplicateKey);
+    results.push({
+      id: `kl-search-${feature.id ?? `${name}-${index}`}`,
+      name,
+      detail,
+      position,
+    });
+    return results;
+  }, []).slice(0, 4);
 }
 
 function getDriveTrafficLabel(event: CalendarEvent) {
@@ -592,6 +672,7 @@ function buildDriveDestination({
   destinationPosition,
   traffic,
   locationStatus = 'resolved',
+  routeInsight,
 }: {
   id: string;
   name: string;
@@ -605,6 +686,7 @@ function buildDriveDestination({
   destinationPosition: Coordinates;
   traffic: string;
   locationStatus?: DriveDestination['locationStatus'];
+  routeInsight?: string;
 }): DriveDestination {
   const resolvedOriginPosition = originPosition ?? resolveLocationCoordinates(originLocation) ?? defaultDriveOriginPosition;
   const routeEstimate = estimateDrivingRoute(originLocation, eventLocation);
@@ -630,9 +712,9 @@ function buildDriveDestination({
     position: destinationPosition,
     routePath: buildRoutePath(resolvedOriginPosition, destinationPosition),
     alternativePath: buildRoutePath(resolvedOriginPosition, destinationPosition, -1),
-    routeInsight: eventName
+    routeInsight: routeInsight ?? (eventName
       ? `Route generated from calendar activity "${eventName}".`
-      : 'Route opened from Home using the selected charging destination.',
+      : 'Route opened from Home using the selected charging destination.'),
     locationStatus,
     eventName,
     eventDateLabel,
@@ -640,10 +722,24 @@ function buildDriveDestination({
   };
 }
 
+function buildDriveDestinationFromLocationSearch(result: LocationSearchResult): DriveDestination {
+  return buildDriveDestination({
+    id: `location-search-${result.id}`,
+    name: result.name,
+    eventLocation: result.detail,
+    eventTime: 'Now',
+    originName: defaultDriveOriginName,
+    originLocation: defaultDriveOriginAddress,
+    destinationPosition: result.position,
+    traffic: 'Live',
+    routeInsight: 'Route generated from KL location search.',
+  });
+}
+
 function buildCalendarDriveDestinations(events: CalendarEvent[], today: Date, geocodedLocations: Record<string, Coordinates | null>) {
   const drivingEvents = [...events]
     .filter((event) => isDrivingRequiredActivity(event))
-    .filter((event) => startOfCalendarDay(getEventDate(event)).getTime() >= today.getTime())
+    .filter((event) => isSameCalendarDay(getEventDate(event), today))
     .sort((a, b) => {
       const dateDelta = getEventDate(a).getTime() - getEventDate(b).getTime();
       return dateDelta || parseCalendarTimeToMinutes(a.departureTime ?? a.time) - parseCalendarTimeToMinutes(b.departureTime ?? b.time);
@@ -1190,16 +1286,150 @@ function toMapLibreLngLat(point: Coordinates): [number, number] {
   return [point.lng, point.lat];
 }
 
-function getCompassDirectionLabel(origin: Coordinates, destination: Coordinates) {
+function getCoordinateDistanceMeters(origin: Coordinates, destination: Coordinates) {
+  const earthRadiusMeters = 6371000;
+  const lat1 = origin.lat * Math.PI / 180;
+  const lat2 = destination.lat * Math.PI / 180;
+  const deltaLat = (destination.lat - origin.lat) * Math.PI / 180;
+  const deltaLng = (destination.lng - origin.lng) * Math.PI / 180;
+  const haversine =
+    Math.sin(deltaLat / 2) ** 2 +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(deltaLng / 2) ** 2;
+
+  return earthRadiusMeters * 2 * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine));
+}
+
+function getCompassBearingDegrees(origin: Coordinates, destination: Coordinates) {
   const lat1 = origin.lat * Math.PI / 180;
   const lat2 = destination.lat * Math.PI / 180;
   const deltaLng = (destination.lng - origin.lng) * Math.PI / 180;
   const y = Math.sin(deltaLng) * Math.cos(lat2);
   const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(deltaLng);
-  const bearing = (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
-  const directions = ['North', 'North-east', 'East', 'South-east', 'South', 'South-west', 'West', 'North-west'];
+  return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+}
 
-  return directions[Math.round(bearing / 45) % directions.length];
+function getCompassDirectionLabel(origin: Coordinates, destination: Coordinates) {
+  const bearing = getCompassBearingDegrees(origin, destination);
+
+  return compassDirectionLabels[Math.round(bearing / 45) % compassDirectionLabels.length];
+}
+
+function getCompassDirectionIndexFromBearing(bearing: number) {
+  return Math.round(bearing / 45) % 8;
+}
+
+function getCompassAngleFromDirectionIndex(index: number) {
+  return compassDirectionAngles[((index % compassDirectionAngles.length) + compassDirectionAngles.length) % compassDirectionAngles.length] ?? 0;
+}
+
+function getCompassAngleFromDirectionLabel(label: string) {
+  const index = compassDirectionLabels.findIndex((direction) => direction.toLowerCase() === label.toLowerCase());
+  return index >= 0 ? getCompassAngleFromDirectionIndex(index) : 0;
+}
+
+function getSignedBearingDelta(fromDegrees: number, toDegrees: number) {
+  return ((toDegrees - fromDegrees + 540) % 360) - 180;
+}
+
+function formatNavigationDistance(meters: number) {
+  if (!Number.isFinite(meters) || meters <= 0) return '0 m';
+  if (meters < 950) return `${Math.max(10, Math.round(meters / 10) * 10)} m`;
+  if (meters < 9950) return `${(meters / 1000).toFixed(1)} km`;
+  return `${Math.round(meters / 1000)} km`;
+}
+
+type NavigationStepGroup = {
+  start: Coordinates;
+  end: Coordinates;
+  distanceMeters: number;
+  directionDegrees: number;
+  directionIndex: number;
+};
+
+function createNavigationStepGroup(start: Coordinates, end: Coordinates, distanceMeters: number): NavigationStepGroup {
+  const directionDegrees = getCompassBearingDegrees(start, end);
+  return {
+    start,
+    end,
+    distanceMeters,
+    directionDegrees,
+    directionIndex: getCompassDirectionIndexFromBearing(directionDegrees),
+  };
+}
+
+function mergeNavigationStepGroups(first: NavigationStepGroup, second: NavigationStepGroup): NavigationStepGroup {
+  return createNavigationStepGroup(first.start, second.end, first.distanceMeters + second.distanceMeters);
+}
+
+function buildNavigationDirectionSteps(points: Coordinates[]): NavigationDirectionStep[] {
+  const validPoints = points.filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lng));
+  if (validPoints.length < 2) return [];
+
+  const groups: NavigationStepGroup[] = [];
+  let activeGroup: NavigationStepGroup | null = null;
+
+  for (let index = 1; index < validPoints.length; index += 1) {
+    const start = validPoints[index - 1];
+    const end = validPoints[index];
+    const segmentDistanceMeters = getCoordinateDistanceMeters(start, end);
+    if (segmentDistanceMeters < 8) continue;
+
+    const segmentBearing = getCompassBearingDegrees(start, end);
+    const shouldStartNewGroup =
+      activeGroup &&
+      activeGroup.distanceMeters >= 260 &&
+      Math.abs(getSignedBearingDelta(activeGroup.directionDegrees, segmentBearing)) >= 50;
+
+    if (!activeGroup || shouldStartNewGroup) {
+      if (activeGroup) groups.push(activeGroup);
+      activeGroup = createNavigationStepGroup(start, end, segmentDistanceMeters);
+      continue;
+    }
+
+    activeGroup = mergeNavigationStepGroups(activeGroup, createNavigationStepGroup(start, end, segmentDistanceMeters));
+  }
+
+  if (activeGroup) groups.push(activeGroup);
+
+  const mergedGroups = groups.reduce<NavigationStepGroup[]>((merged, group) => {
+    const previous = merged[merged.length - 1];
+    if (previous && group.distanceMeters < 120) {
+      merged[merged.length - 1] = mergeNavigationStepGroups(previous, group);
+      return merged;
+    }
+
+    merged.push(group);
+    return merged;
+  }, []);
+
+  if (mergedGroups.length > 1 && mergedGroups[mergedGroups.length - 1].distanceMeters < 120) {
+    const last = mergedGroups.pop();
+    const previous = mergedGroups.pop();
+    if (last && previous) mergedGroups.push(mergeNavigationStepGroups(previous, last));
+  }
+
+  return mergedGroups.map((group, index) => {
+    const directionLabel = compassDirectionLabels[group.directionIndex] ?? 'North';
+    const lowerDirection = directionLabel.toLowerCase();
+    const previous = mergedGroups[index - 1];
+    const turnDelta = previous ? getSignedBearingDelta(previous.directionDegrees, group.directionDegrees) : 0;
+    const verb = index === 0
+      ? 'Head'
+      : Math.abs(turnDelta) < 35
+        ? 'Continue'
+        : turnDelta > 0
+          ? 'Turn right, head'
+          : 'Turn left, head';
+
+    return {
+      id: `navigation-step-${index + 1}`,
+      instruction: `${verb} ${lowerDirection}`,
+      directionLabel,
+      directionDegrees: getCompassAngleFromDirectionIndex(group.directionIndex),
+      distanceMeters: group.distanceMeters,
+      distanceLabel: formatNavigationDistance(group.distanceMeters),
+    };
+  });
 }
 
 function fitMapLibreToCoordinates(map: maplibregl.Map, points: Coordinates[], padding = 72, maxZoom = routeOverviewZoom) {
@@ -1907,45 +2137,168 @@ function ActiveNavigationPanel({
   timeLabel,
   rangeLabel,
   directionLabel,
+  directionDegrees,
   destinationName,
+  steps,
+  onStopNavigation,
 }: {
   timeLabel: string;
   rangeLabel: string;
   directionLabel: string;
+  directionDegrees: number;
   destinationName: string;
+  steps: NavigationDirectionStep[];
+  onStopNavigation: () => void;
 }) {
+  const [directionsOpen, setDirectionsOpen] = useState(false);
+  const swipeStartYRef = useRef<number | null>(null);
+  const suppressNextClickRef = useRef(false);
+  const currentStep = steps[0];
+  const currentInstruction = currentStep?.instruction ?? `Head ${directionLabel.toLowerCase()}`;
+  const currentDistance = currentStep?.distanceLabel ?? rangeLabel;
+
+  const handleDirectionsPointerDown = (event: PointerEvent<HTMLElement>) => {
+    swipeStartYRef.current = event.clientY;
+    suppressNextClickRef.current = false;
+  };
+
+  const handleDirectionsPointerUp = (event: PointerEvent<HTMLElement>) => {
+    const startY = swipeStartYRef.current;
+    swipeStartYRef.current = null;
+    if (startY === null) return;
+
+    const deltaY = event.clientY - startY;
+    if (Math.abs(deltaY) < 34) return;
+
+    suppressNextClickRef.current = true;
+    setDirectionsOpen(deltaY < 0);
+  };
+
+  const handleDirectionsClick = () => {
+    if (suppressNextClickRef.current) {
+      suppressNextClickRef.current = false;
+      return;
+    }
+
+    setDirectionsOpen((current) => !current);
+  };
+
   return (
     <section
       aria-label="Active navigation guidance"
-      className="overflow-hidden rounded-[20px] border border-primary/25 bg-primary text-on-primary shadow-ambient-lg"
+      className="relative overflow-hidden rounded-[22px] border border-[#dbe7ff]/35 bg-[#1745d8] text-[#f8fbff] shadow-ambient-lg ring-2 ring-[#dbe7ff]/18"
     >
-      <div className="flex items-center gap-3 px-4 py-3">
-        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white text-primary shadow-ambient">
-          <Navigation className="h-5 w-5" />
+      <button
+        type="button"
+        aria-label="Exit navigation"
+        onClick={(event) => {
+          event.stopPropagation();
+          onStopNavigation();
+        }}
+        className="absolute right-2.5 top-2.5 z-20 flex h-12 w-12 items-center justify-center rounded-full border-2 border-[#f8fbff] bg-[#f8fbff] text-[#1745d8] shadow-[0_14px_30px_rgba(0,0,0,0.42)] ring-2 ring-black/10 transition hover:bg-[#edf4ff] active:scale-[0.95]"
+      >
+        <X className="h-6 w-6 stroke-[3]" />
+      </button>
+
+      <button
+        type="button"
+        onClick={handleDirectionsClick}
+        onPointerDown={handleDirectionsPointerDown}
+        onPointerUp={handleDirectionsPointerUp}
+        onPointerCancel={() => {
+          swipeStartYRef.current = null;
+        }}
+        className="flex w-full touch-pan-y items-start gap-3 bg-[#1745d8] px-4 pb-4 pt-4 pr-[4.25rem] text-left transition hover:bg-[#123fc6] active:bg-[#123fc6]"
+      >
+        <span className="flex h-[3.25rem] w-[3.25rem] shrink-0 items-center justify-center rounded-full bg-[#f8fbff] text-[#1745d8] shadow-[0_12px_28px_rgba(0,0,0,0.30)]">
+          <ArrowUp
+            className="h-7 w-7 transition-transform duration-300"
+            style={{ transform: `rotate(${currentStep?.directionDegrees ?? directionDegrees}deg)` }}
+          />
         </span>
-        <div className="min-w-0">
-          <p className="text-[8.5px] font-black uppercase tracking-[0.14em] text-white/75">Direction</p>
-          <h2 className="mt-0.5 truncate text-[19px] font-semibold leading-tight text-white">
-            Head {directionLabel}
+        <div className="min-w-0 flex-1">
+          <p className="text-[9.5px] font-black uppercase tracking-[0.14em] text-[#dbe7ff]">Direction</p>
+          <h2 className="mt-0.5 break-words text-[26px] font-black leading-tight text-[#f8fbff] drop-shadow-[0_2px_6px_rgba(0,0,0,0.35)]">
+            {currentInstruction}
           </h2>
-          <p className="mt-0.5 truncate text-[11px] font-semibold text-white/78">Toward {destinationName}</p>
+          <p className="mt-1 truncate text-[13.5px] font-black text-[#eef4ff] drop-shadow-[0_1px_4px_rgba(0,0,0,0.28)]">
+            {currentDistance} · Toward {destinationName}
+          </p>
+        </div>
+      </button>
+
+      <div className="grid grid-cols-3 border-t border-[#dbe7ff]/28 bg-[#0e2f95]">
+        <div className="px-3 py-3">
+          <p className="text-[8px] font-black uppercase tracking-[0.13em] text-[#c9d8ff]">Time</p>
+          <p className="mt-0.5 truncate text-[16px] font-black text-[#f8fbff]">{timeLabel}</p>
+        </div>
+        <div className="border-l border-[#dbe7ff]/28 px-3 py-3">
+          <p className="text-[8px] font-black uppercase tracking-[0.13em] text-[#c9d8ff]">Range</p>
+          <p className="mt-0.5 truncate text-[16px] font-black text-[#f8fbff]">{rangeLabel}</p>
+        </div>
+        <div className="border-l border-[#dbe7ff]/28 px-3 py-3">
+          <p className="text-[8px] font-black uppercase tracking-[0.13em] text-[#c9d8ff]">Direction</p>
+          <p className="mt-0.5 truncate text-[16px] font-black text-[#f8fbff]">{directionLabel}</p>
         </div>
       </div>
 
-      <div className="grid grid-cols-3 border-t border-white/18 bg-white/[0.10]">
-        <div className="px-3 py-2.5">
-          <p className="text-[8px] font-black uppercase tracking-[0.13em] text-white/65">Time</p>
-          <p className="mt-0.5 truncate text-[14px] font-semibold text-white">{timeLabel}</p>
+      <button
+        type="button"
+        onClick={handleDirectionsClick}
+        onPointerDown={handleDirectionsPointerDown}
+        onPointerUp={handleDirectionsPointerUp}
+        onPointerCancel={() => {
+          swipeStartYRef.current = null;
+        }}
+        className="flex min-h-12 w-full touch-pan-y items-center justify-center gap-2 border-t border-[#dbe7ff]/30 bg-[#f8fbff] px-3 text-[11px] font-black uppercase tracking-[0.11em] text-[#1745d8] shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] transition hover:bg-[#edf4ff] active:bg-[#dce9ff]"
+      >
+        <span className="h-1.5 w-10 rounded-full bg-[#1745d8]/70" />
+        <span>{steps.length === 1 ? '1 step' : `${steps.length || 1} steps`}</span>
+      </button>
+
+      {directionsOpen && (
+        <div className="max-h-[min(48dvh,24rem)] overflow-y-auto border-t border-blue-100 bg-[#f8fbff] p-2 text-[#123fc6] shadow-[inset_0_1px_0_rgba(255,255,255,0.95)] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <ol className="space-y-1">
+            {(steps.length ? steps : [{
+              id: 'navigation-step-fallback',
+              instruction: currentInstruction,
+              directionLabel,
+              directionDegrees,
+              distanceMeters: 0,
+              distanceLabel: rangeLabel,
+            }]).map((step, index) => (
+              <li
+                key={step.id}
+                className={cn(
+                  'flex min-h-14 items-center gap-2.5 rounded-[16px] border px-2.5 py-2 shadow-[0_10px_24px_rgba(23,69,216,0.08)]',
+                  index === 0 ? 'border-[#1745d8]/25 bg-[#eaf1ff]' : 'border-blue-100 bg-white'
+                )}
+              >
+                <span
+                  className={cn(
+                    'flex h-8 w-8 shrink-0 items-center justify-center rounded-full border',
+                    index === 0 ? 'border-[#1745d8] bg-[#1745d8] text-[#f8fbff]' : 'border-blue-200 bg-[#eef5ff] text-[#1745d8]'
+                  )}
+                >
+                  <ArrowUp
+                    className="h-4 w-4"
+                    style={{ transform: `rotate(${step.directionDegrees}deg)` }}
+                  />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[13px] font-black text-[#123fc6]">{step.instruction}</span>
+                  <span className="mt-0.5 block truncate text-[10.5px] font-semibold text-[#4b6fb8]">
+                    {step.directionLabel}
+                  </span>
+                </span>
+                <span className="shrink-0 rounded-full border border-[#1745d8]/20 bg-[#eef5ff] px-2 py-0.5 text-[9px] font-black text-[#1745d8]">
+                  {step.distanceLabel}
+                </span>
+              </li>
+            ))}
+          </ol>
         </div>
-        <div className="border-l border-white/18 px-3 py-2.5">
-          <p className="text-[8px] font-black uppercase tracking-[0.13em] text-white/65">Range</p>
-          <p className="mt-0.5 truncate text-[14px] font-semibold text-white">{rangeLabel}</p>
-        </div>
-        <div className="border-l border-white/18 px-3 py-2.5">
-          <p className="text-[8px] font-black uppercase tracking-[0.13em] text-white/65">Direction</p>
-          <p className="mt-0.5 truncate text-[14px] font-semibold text-white">{directionLabel}</p>
-        </div>
-      </div>
+      )}
     </section>
   );
 }
@@ -2788,6 +3141,9 @@ export default function MapView() {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchPanelOpen, setSearchPanelOpen] = useState(false);
   const [selectedDestinationId, setSelectedDestinationId] = useState<string | null>(null);
+  const [manualDriveDestination, setManualDriveDestination] = useState<DriveDestination | null>(null);
+  const [locationSearchResults, setLocationSearchResults] = useState<LocationSearchResult[]>([]);
+  const [locationSearchStatus, setLocationSearchStatus] = useState<LocationSearchStatus>('idle');
   const [activePanel, setActivePanel] = useState<ActivePanel>(null);
   const [openChargeMapEvStations, setOpenChargeMapEvStations] = useState<MapEvStation[]>([]);
   const [selectedEvStop, setSelectedEvStop] = useState<MapEvStation | null>(null);
@@ -2815,7 +3171,6 @@ export default function MapView() {
   const pinchRefocusTimerRef = useRef<number | null>(null);
   const destinationPreviewTimerRef = useRef<number | null>(null);
   const cameraGuardTimerRef = useRef<number | null>(null);
-  const navigationOffsetTimerRef = useRef<number | null>(null);
   const transientToastTimerRef = useRef<number | null>(null);
   const searchControlsRef = useRef<HTMLDivElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
@@ -2832,12 +3187,18 @@ export default function MapView() {
     [calendarToday, events, geocodedCalendarLocations]
   );
   const driveDestinations = useMemo(() => {
-    if (!routeRequestDestination) return calendarDriveDestinations;
-    return [
-      routeRequestDestination,
-      ...calendarDriveDestinations.filter((destination) => destination.id !== routeRequestDestination.id),
-    ];
-  }, [calendarDriveDestinations, routeRequestDestination]);
+    const destinations = [...calendarDriveDestinations];
+
+    if (manualDriveDestination && !destinations.some((destination) => destination.id === manualDriveDestination.id)) {
+      destinations.unshift(manualDriveDestination);
+    }
+
+    if (routeRequestDestination && !destinations.some((destination) => destination.id === routeRequestDestination.id)) {
+      destinations.unshift(routeRequestDestination);
+    }
+
+    return destinations;
+  }, [calendarDriveDestinations, manualDriveDestination, routeRequestDestination]);
   const visibleDrivingDestinations = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
     const destinations = query
@@ -2968,7 +3329,7 @@ export default function MapView() {
 
     events.forEach((event) => {
       if (!isDrivingRequiredActivity(event)) return;
-      if (startOfCalendarDay(getEventDate(event)).getTime() < calendarToday.getTime()) return;
+      if (!isSameCalendarDay(getEventDate(event), calendarToday)) return;
       if (resolveLocationCoordinates(event.location)) return;
       if (hasGeocodedLocationKey(geocodedCalendarLocations, event.location)) return;
       locationNames.add(event.location);
@@ -3019,7 +3380,45 @@ export default function MapView() {
   }, [mapTilerConfigResolved, runtimeMapTilerApiKey, unresolvedCalendarLocationNames]);
 
   useEffect(() => {
+    const query = searchQuery.trim();
+
+    if (isFutureDrivePreview || query.length < 2) {
+      setLocationSearchResults([]);
+      setLocationSearchStatus('idle');
+      return;
+    }
+
+    if (!runtimeMapTilerApiKey) {
+      setLocationSearchResults([]);
+      setLocationSearchStatus(mapTilerConfigResolved ? 'unavailable' : 'idle');
+      return;
+    }
+
+    const controller = new AbortController();
+    const searchTimer = window.setTimeout(() => {
+      setLocationSearchStatus('loading');
+      fetchMapTilerLocationSearch(query, runtimeMapTilerApiKey, controller.signal)
+        .then((results) => {
+          if (controller.signal.aborted) return;
+          setLocationSearchResults(results);
+          setLocationSearchStatus('ready');
+        })
+        .catch(() => {
+          if (controller.signal.aborted) return;
+          setLocationSearchResults([]);
+          setLocationSearchStatus('error');
+        });
+    }, 260);
+
+    return () => {
+      window.clearTimeout(searchTimer);
+      controller.abort();
+    };
+  }, [isFutureDrivePreview, mapTilerConfigResolved, runtimeMapTilerApiKey, searchQuery]);
+
+  useEffect(() => {
     if (routeRequestDestination) {
+      setManualDriveDestination(null);
       setSelectedDestinationId(routeRequestDestination.id);
       setSearchQuery(routeRequestDestination.name);
       setDriveExperienceMode('driveNow');
@@ -3341,7 +3740,13 @@ export default function MapView() {
   const activeRouteDistanceLabel = realDrivingRoute?.distanceMeters
     ? `${(realDrivingRoute.distanceMeters / 1000).toFixed(1)} km`
     : selectedDestination.distance;
-  const activeNavigationDirectionLabel = getCompassDirectionLabel(activeRouteOrigin, selectedDestination.position);
+  const navigationDirectionSteps = useMemo(
+    () => buildNavigationDirectionSteps(activeDrivingRoutePath.length ? activeDrivingRoutePath : routePathWithStops),
+    [activeDrivingRoutePath, routePathWithStops]
+  );
+  const currentNavigationStep = navigationDirectionSteps[0];
+  const activeNavigationDirectionLabel = currentNavigationStep?.directionLabel ?? getCompassDirectionLabel(activeRouteOrigin, selectedDestination.position);
+  const activeNavigationDirectionDegrees = currentNavigationStep?.directionDegrees ?? getCompassAngleFromDirectionLabel(activeNavigationDirectionLabel);
   const routeDependentPanelWithoutRoute = mapMode !== 'aiRoute' && !hasSelectedDriveRoute;
   const evStationsSheet = useMemo(() => ({
     ...bottomSheets.evStations,
@@ -3654,7 +4059,7 @@ export default function MapView() {
   const getVehicleFollowMockView = useCallback(() => {
     return createMockFocusView({
       point: coordsToUnitPoint(activeRouteOrigin),
-      target: { x: 0.5, y: 0.62 },
+      target: { x: 0.5, y: 0.5 },
       zoom: getMockCameraView('navigationFollow').zoom,
     });
   }, [activeRouteOrigin]);
@@ -3673,18 +4078,14 @@ export default function MapView() {
     });
 
     if (mapInstance) {
-      mapInstance.setZoom(navigationZoom);
-      mapInstance.panTo(toMapLibreLngLat(activeRouteOrigin));
-      window.setTimeout(() => {
-        mapInstance.panTo(toMapLibreLngLat(activeRouteOrigin));
-        if (navigationOffsetTimerRef.current) {
-          window.clearTimeout(navigationOffsetTimerRef.current);
-        }
-        navigationOffsetTimerRef.current = window.setTimeout(() => {
-          mapInstance.panBy([0, Math.round(window.innerHeight * 0.12)]);
-          navigationOffsetTimerRef.current = null;
-        }, 220);
-      }, 180);
+      mapInstance.stop();
+      mapInstance.easeTo({
+        center: toMapLibreLngLat(activeRouteOrigin),
+        zoom: navigationZoom,
+        offset: [0, 0],
+        duration: 420,
+        essential: true,
+      });
     }
 
     setMockView(getVehicleFollowMockView());
@@ -3827,9 +4228,6 @@ export default function MapView() {
       if (cameraGuardTimerRef.current) {
         window.clearTimeout(cameraGuardTimerRef.current);
       }
-      if (navigationOffsetTimerRef.current) {
-        window.clearTimeout(navigationOffsetTimerRef.current);
-      }
       if (transientToastTimerRef.current) {
         window.clearTimeout(transientToastTimerRef.current);
       }
@@ -3917,16 +4315,19 @@ export default function MapView() {
     });
 
     if (mapInstance) {
-      mapInstance.setZoom(nextCameraZoom);
-      mapInstance.panTo(toMapLibreLngLat(selectedDestination.originPosition));
-      window.setTimeout(() => {
-        mapInstance.panBy([0, Math.round(window.innerHeight * 0.12)]);
-      }, 180);
+      mapInstance.stop();
+      mapInstance.easeTo({
+        center: toMapLibreLngLat(activeRouteOrigin),
+        zoom: nextCameraZoom,
+        offset: [0, 0],
+        duration: 240,
+        essential: true,
+      });
     }
 
     setMockView(createMockFocusView({
-      point: coordsToUnitPoint(selectedDestination.originPosition),
-      target: { x: 0.5, y: 0.62 },
+      point: coordsToUnitPoint(activeRouteOrigin),
+      target: { x: 0.5, y: 0.5 },
       zoom: nextScale,
     }));
   };
@@ -3981,6 +4382,7 @@ export default function MapView() {
     }
 
     setDriveExperienceMode('driveNow');
+    setManualDriveDestination(destination.id.startsWith('location-search-') ? destination : null);
     setSelectedDestinationId(destination.id);
     setSearchQuery(destination.name);
     setSearchPanelOpen(false);
@@ -4047,6 +4449,48 @@ export default function MapView() {
       showTransientToast('Route unavailable', 'Live route geometry could not be loaded; showing origin and destination.', 'amber');
     } finally {
       setRouteLoadingDestinationId(null);
+    }
+  };
+
+  const handleLocationSearchResultSelect = (result: LocationSearchResult) => {
+    void handleDestinationSelect(buildDriveDestinationFromLocationSearch(result));
+  };
+
+  const handleDestinationSearchSubmit = async () => {
+    const firstResolvedDestination = visibleDrivingDestinations.find((destination) => (destination.locationStatus ?? 'resolved') === 'resolved');
+    if (firstResolvedDestination) {
+      void handleDestinationSelect(firstResolvedDestination);
+      return;
+    }
+
+    if (visibleDrivingDestinations[0]) {
+      void handleDestinationSelect(visibleDrivingDestinations[0]);
+      return;
+    }
+
+    const firstLocationResult = locationSearchResults[0];
+    if (firstLocationResult) {
+      handleLocationSearchResultSelect(firstLocationResult);
+      return;
+    }
+
+    const query = searchQuery.trim();
+    if (query.length < 2 || !runtimeMapTilerApiKey) {
+      setSearchPanelOpen(false);
+      return;
+    }
+
+    setLocationSearchStatus('loading');
+    try {
+      const results = await fetchMapTilerLocationSearch(query, runtimeMapTilerApiKey);
+      setLocationSearchResults(results);
+      setLocationSearchStatus('ready');
+      if (results[0]) {
+        handleLocationSearchResultSelect(results[0]);
+      }
+    } catch {
+      setLocationSearchResults([]);
+      setLocationSearchStatus('error');
     }
   };
 
@@ -4270,6 +4714,7 @@ export default function MapView() {
       ? 'Browsing map'
       : 'Overview';
   const MapStateIcon = activeNavigation ? Navigation : isManualExplore ? LocateFixed : Route;
+  const showLocationSearchResults = !isFutureDrivePreview && searchQuery.trim().length >= 2;
   const controlBottomClass = isFutureDrivePreview
     ? 'bottom-[calc(12.5rem+env(safe-area-inset-bottom))] sm:bottom-[calc(11rem+env(safe-area-inset-bottom))] md:bottom-8'
     : sheetState === 'expanded'
@@ -4330,14 +4775,7 @@ export default function MapView() {
             <form
               onSubmit={(event) => {
                 event.preventDefault();
-                const firstResolvedDestination = visibleDrivingDestinations.find((destination) => (destination.locationStatus ?? 'resolved') === 'resolved');
-                if (firstResolvedDestination) {
-                  handleDestinationSelect(firstResolvedDestination);
-                } else if (visibleDrivingDestinations[0]) {
-                  handleDestinationSelect(visibleDrivingDestinations[0]);
-                } else {
-                  setSearchPanelOpen(false);
-                }
+                void handleDestinationSearchSubmit();
               }}
               className="relative min-w-0 flex-1"
             >
@@ -4396,62 +4834,120 @@ export default function MapView() {
           {showDrivingDestinationPanel && (
             <div className="mt-2 overflow-hidden rounded-[22px] border border-outline-variant/45 bg-surface-container-lowest/92 p-2 shadow-ambient-lg backdrop-blur-2xl">
               <div className="flex items-center justify-between gap-3 px-2 pb-1.5">
-                <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">Driving destinations</p>
+                <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">Today's driving destinations</p>
                 <span className="rounded-full border border-primary/18 bg-primary/10 px-2 py-0.5 text-[9px] font-black text-primary">
                   {calendarDriveDestinations.length}
                 </span>
               </div>
               <div className="max-h-[min(34dvh,18rem)] overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                {visibleDrivingDestinations.length ? (
-                  visibleDrivingDestinations.map((destination) => {
-                    const isSelected = selectedDestination.id === destination.id;
-                    const isLoading = routeLoadingDestinationId === destination.id;
-                    const locationStatus = destination.locationStatus ?? 'resolved';
-                    const isLocationResolved = locationStatus === 'resolved';
-                    const destinationMeta = isLoading
-                      ? 'Loading route...'
-                      : locationStatus === 'resolving'
-                        ? 'Resolving calendar location...'
-                        : locationStatus === 'unavailable'
-                          ? 'Location unavailable'
-                          : [destination.departAt, destination.eta, destination.distance].join(' - ');
+                {visibleDrivingDestinations.map((destination) => {
+                  const isSelected = selectedDestination.id === destination.id;
+                  const isLoading = routeLoadingDestinationId === destination.id;
+                  const locationStatus = destination.locationStatus ?? 'resolved';
+                  const isLocationResolved = locationStatus === 'resolved';
+                  const destinationMeta = isLoading
+                    ? 'Loading route...'
+                    : locationStatus === 'resolving'
+                      ? 'Resolving calendar location...'
+                      : locationStatus === 'unavailable'
+                        ? 'Location unavailable'
+                        : [destination.departAt, destination.eta, destination.distance].join(' - ');
 
-                    return (
-                      <button
-                        key={destination.id}
-                        type="button"
-                        onMouseDown={(event) => event.preventDefault()}
-                        onClick={() => handleDestinationSelect(destination)}
-                        aria-disabled={!isLocationResolved}
+                  return (
+                    <button
+                      key={destination.id}
+                      type="button"
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => handleDestinationSelect(destination)}
+                      aria-disabled={!isLocationResolved}
+                      className={cn(
+                        'flex min-h-14 w-full items-center gap-2.5 rounded-[18px] px-2.5 py-2 text-left transition active:scale-[0.99]',
+                        isSelected ? 'bg-primary/12 text-on-surface' : 'hover:bg-primary/10',
+                        !isLocationResolved && 'cursor-not-allowed opacity-65 hover:bg-transparent active:scale-100'
+                      )}
+                    >
+                      <span
                         className={cn(
-                          'flex min-h-14 w-full items-center gap-2.5 rounded-[18px] px-2.5 py-2 text-left transition active:scale-[0.99]',
-                          isSelected ? 'bg-primary/12 text-on-surface' : 'hover:bg-primary/10',
-                          !isLocationResolved && 'cursor-not-allowed opacity-65 hover:bg-transparent active:scale-100'
+                          'flex h-8 w-8 shrink-0 items-center justify-center rounded-full border',
+                          isSelected ? 'border-primary/35 bg-primary text-on-primary' : 'border-primary/20 bg-primary/10 text-primary'
                         )}
                       >
-                        <span
+                        <MapPin className="h-3.5 w-3.5" />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-[13px] font-semibold text-on-surface">{destination.name}</span>
+                        <span className="mt-0.5 block truncate text-[10.5px] font-semibold text-slate-500">
+                          {destinationMeta}
+                        </span>
+                      </span>
+                      <span className="shrink-0 rounded-full border border-outline-variant/45 bg-surface-container-low px-2 py-0.5 text-[9px] font-black text-slate-300">
+                        {destination.traffic}
+                      </span>
+                    </button>
+                  );
+                })}
+
+                {showLocationSearchResults && (
+                  <div className={cn(visibleDrivingDestinations.length && 'mt-1 border-t border-outline-variant/35 pt-1')}>
+                    <div className="flex items-center justify-between gap-3 px-2 py-1">
+                      <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">KL locations</p>
+                      {locationSearchStatus === 'loading' && (
+                        <span className="text-[9px] font-black uppercase tracking-[0.08em] text-primary">Searching</span>
+                      )}
+                    </div>
+
+                    {locationSearchResults.map((result) => {
+                      const isSelected = selectedDestination.id === `location-search-${result.id}`;
+
+                      return (
+                        <button
+                          key={result.id}
+                          type="button"
+                          onMouseDown={(event) => event.preventDefault()}
+                          onClick={() => handleLocationSearchResultSelect(result)}
                           className={cn(
-                            'flex h-8 w-8 shrink-0 items-center justify-center rounded-full border',
-                            isSelected ? 'border-primary/35 bg-primary text-on-primary' : 'border-primary/20 bg-primary/10 text-primary'
+                            'flex min-h-14 w-full items-center gap-2.5 rounded-[18px] px-2.5 py-2 text-left transition active:scale-[0.99]',
+                            isSelected ? 'bg-primary/12 text-on-surface' : 'hover:bg-primary/10'
                           )}
                         >
-                          <MapPin className="h-3.5 w-3.5" />
-                        </span>
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-[13px] font-semibold text-on-surface">{destination.name}</span>
-                          <span className="mt-0.5 block truncate text-[10.5px] font-semibold text-slate-500">
-                            {destinationMeta}
+                          <span
+                            className={cn(
+                              'flex h-8 w-8 shrink-0 items-center justify-center rounded-full border',
+                              isSelected ? 'border-primary/35 bg-primary text-on-primary' : 'border-primary/20 bg-primary/10 text-primary'
+                            )}
+                          >
+                            <Search className="h-3.5 w-3.5" />
                           </span>
-                        </span>
-                        <span className="shrink-0 rounded-full border border-outline-variant/45 bg-surface-container-low px-2 py-0.5 text-[9px] font-black text-slate-300">
-                          {destination.traffic}
-                        </span>
-                      </button>
-                    );
-                  })
-                ) : (
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-[13px] font-semibold text-on-surface">{result.name}</span>
+                            <span className="mt-0.5 block truncate text-[10.5px] font-semibold text-slate-500">
+                              {result.detail}
+                            </span>
+                          </span>
+                          <span className="shrink-0 rounded-full border border-primary/18 bg-primary/10 px-2 py-0.5 text-[9px] font-black text-primary">
+                            KL
+                          </span>
+                        </button>
+                      );
+                    })}
+
+                    {!locationSearchResults.length && locationSearchStatus !== 'loading' && (
+                      <div className="flex min-h-12 items-center justify-center rounded-[18px] px-3 py-2 text-center">
+                        <p className="text-[11px] font-semibold leading-relaxed text-slate-500">
+                          {locationSearchStatus === 'unavailable'
+                            ? 'KL location search needs MapTiler config.'
+                            : locationSearchStatus === 'error'
+                              ? 'KL location search is unavailable right now.'
+                              : 'No KL location matches.'}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {!visibleDrivingDestinations.length && !showLocationSearchResults && (
                   <div className="flex min-h-14 items-center justify-center rounded-[18px] px-3 py-3 text-center">
-                    <p className="text-[11px] font-semibold leading-relaxed text-slate-500">No upcoming car-needed calendar drives.</p>
+                    <p className="text-[11px] font-semibold leading-relaxed text-slate-500">No car-needed drives on today's schedule.</p>
                   </div>
                 )}
               </div>
@@ -4590,7 +5086,10 @@ export default function MapView() {
             timeLabel={activeRouteEtaLabel}
             rangeLabel={activeRouteDistanceLabel}
             directionLabel={activeNavigationDirectionLabel}
+            directionDegrees={activeNavigationDirectionDegrees}
             destinationName={selectedDestination.name}
+            steps={navigationDirectionSteps}
+            onStopNavigation={stopNavigation}
           />
         ) : (
           <section
