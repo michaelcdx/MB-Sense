@@ -1,8 +1,10 @@
 import express from 'express';
 import 'dotenv/config';
+import fs from 'fs/promises';
 import { GoogleGenAI, Modality, type LiveServerMessage } from '@google/genai';
 import { WebSocketServer } from 'ws';
 import http from 'http';
+import path from 'path';
 
 // Initialize Gemini API
 const ai = new GoogleGenAI({ 
@@ -13,6 +15,135 @@ const ai = new GoogleGenAI({
     }
   }
 });
+
+type PersistedNotificationSettings = {
+  preferences: boolean;
+  photos: boolean;
+};
+
+type PersistedUserProfile = {
+  name: string;
+  email: string;
+  avatarUrl?: string | null;
+  notifications: PersistedNotificationSettings;
+};
+
+type PersistedCalendarEvent = Record<string, unknown> & {
+  id: string;
+  date: string;
+};
+
+type UserDatabaseRecord = {
+  email: string;
+  password: string;
+  profile: PersistedUserProfile;
+  events: PersistedCalendarEvent[];
+  createdAt: string;
+  updatedAt: string;
+};
+
+type UserDatabase = {
+  users: Record<string, UserDatabaseRecord>;
+};
+
+const defaultEmployeeEmail = 'employee@example.com';
+const defaultEmployeePassword = 'mercedesbenz';
+const defaultUserProfile: PersistedUserProfile = {
+  name: 'Michael Tan',
+  email: defaultEmployeeEmail,
+  avatarUrl: null,
+  notifications: {
+    preferences: true,
+    photos: false,
+  },
+};
+const userDatabaseDir = process.env.MBSENSE_DATA_DIR || path.join(process.cwd(), 'data');
+const userDatabasePath = process.env.MBSENSE_DB_PATH || path.join(userDatabaseDir, 'users.json');
+
+function normalizeAccountEmail(value: unknown) {
+  return typeof value === 'string' ? value.trim().toLowerCase() : '';
+}
+
+function stringValue(value: unknown, fallback: string) {
+  return typeof value === 'string' && value.trim() ? value.trim() : fallback;
+}
+
+function normalizeUserProfile(value: unknown, fallbackEmail: string): PersistedUserProfile {
+  const input = value && typeof value === 'object' ? value as Record<string, any> : {};
+  const notifications = input.notifications && typeof input.notifications === 'object'
+    ? input.notifications as Record<string, unknown>
+    : {};
+
+  return {
+    name: stringValue(input.name, defaultUserProfile.name),
+    email: stringValue(input.email, fallbackEmail || defaultUserProfile.email),
+    avatarUrl: typeof input.avatarUrl === 'string' && input.avatarUrl.trim() ? input.avatarUrl : null,
+    notifications: {
+      preferences: typeof notifications.preferences === 'boolean' ? notifications.preferences : defaultUserProfile.notifications.preferences,
+      photos: typeof notifications.photos === 'boolean' ? notifications.photos : defaultUserProfile.notifications.photos,
+    },
+  };
+}
+
+function normalizePersistedEvents(value: unknown): PersistedCalendarEvent[] {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .map((event) => {
+      if (!event || typeof event !== 'object') return null;
+
+      const rawEvent = event as Record<string, unknown>;
+      const id = stringValue(rawEvent.id, '');
+      if (!id) return null;
+
+      const rawDate = rawEvent.date;
+      const parsedDate = rawDate instanceof Date ? rawDate : new Date(String(rawDate ?? ''));
+      const date = Number.isNaN(parsedDate.getTime()) ? new Date().toISOString() : parsedDate.toISOString();
+
+      return {
+        ...rawEvent,
+        id,
+        date,
+      };
+    })
+    .filter((event): event is PersistedCalendarEvent => Boolean(event));
+}
+
+async function readUserDatabase(): Promise<UserDatabase> {
+  try {
+    const file = await fs.readFile(userDatabasePath, 'utf8');
+    const parsed = JSON.parse(file) as Partial<UserDatabase>;
+    return parsed && typeof parsed === 'object' && parsed.users && typeof parsed.users === 'object'
+      ? { users: parsed.users as Record<string, UserDatabaseRecord> }
+      : { users: {} };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      console.error('Unable to read user database:', error instanceof Error ? error.message : error);
+    }
+    return { users: {} };
+  }
+}
+
+async function writeUserDatabase(database: UserDatabase) {
+  await fs.mkdir(userDatabaseDir, { recursive: true });
+  const temporaryPath = `${userDatabasePath}.tmp`;
+  await fs.writeFile(temporaryPath, JSON.stringify(database, null, 2), 'utf8');
+  await fs.rename(temporaryPath, userDatabasePath);
+}
+
+function buildUserRecord(email: string, password: string, seed: unknown): UserDatabaseRecord {
+  const input = seed && typeof seed === 'object' ? seed as Record<string, unknown> : {};
+  const now = new Date().toISOString();
+
+  return {
+    email,
+    password,
+    profile: normalizeUserProfile(input.user, email),
+    events: normalizePersistedEvents(input.events),
+    createdAt: now,
+    updatedAt: now,
+  };
+}
 
 type ChargingMode = 'AC' | 'DC';
 
@@ -1098,7 +1229,114 @@ async function startServer() {
   const wss = new WebSocketServer({ server, path: '/live' });
   const PORT = Number(process.env.PORT || 8000);
 
-  app.use(express.json());
+  app.use(express.json({ limit: '8mb' }));
+
+  app.post('/api/auth/login', async (req, res) => {
+    const email = normalizeAccountEmail(req.body?.email);
+    const password = typeof req.body?.password === 'string' ? req.body.password : '';
+
+    if (!email || !password) {
+      res.status(400).json({ error: 'Email and password are required.' });
+      return;
+    }
+
+    try {
+      const database = await readUserDatabase();
+      let record = database.users[email];
+
+      if (!record) {
+        if (email !== defaultEmployeeEmail || password !== defaultEmployeePassword) {
+          res.status(401).json({ error: 'Invalid email or password.' });
+          return;
+        }
+
+        record = buildUserRecord(email, password, req.body?.seed);
+        database.users[email] = record;
+        await writeUserDatabase(database);
+      }
+
+      if (record.password !== password) {
+        res.status(401).json({ error: 'Invalid email or password.' });
+        return;
+      }
+
+      res.json({
+        accountEmail: record.email,
+        user: record.profile,
+        events: record.events,
+      });
+    } catch (error) {
+      console.error('Login failed:', error instanceof Error ? error.message : error);
+      res.status(500).json({ error: 'Unable to sign in.' });
+    }
+  });
+
+  app.post('/api/auth/register', async (req, res) => {
+    const email = normalizeAccountEmail(req.body?.email);
+    const password = typeof req.body?.password === 'string' ? req.body.password : '';
+
+    if (!email || !password) {
+      res.status(400).json({ error: 'Email and password are required.' });
+      return;
+    }
+
+    try {
+      const database = await readUserDatabase();
+
+      if (database.users[email]) {
+        res.status(409).json({ error: 'An account already exists for this email.' });
+        return;
+      }
+
+      const record = buildUserRecord(email, password, req.body?.seed);
+      record.profile = normalizeUserProfile({
+        ...(req.body?.seed?.user ?? {}),
+        email,
+      }, email);
+      database.users[email] = record;
+      await writeUserDatabase(database);
+
+      res.status(201).json({
+        accountEmail: record.email,
+        user: record.profile,
+        events: record.events,
+      });
+    } catch (error) {
+      console.error('Registration failed:', error instanceof Error ? error.message : error);
+      res.status(500).json({ error: 'Unable to create account.' });
+    }
+  });
+
+  app.put('/api/user-state', async (req, res) => {
+    const email = normalizeAccountEmail(req.body?.accountEmail ?? req.body?.email);
+
+    if (!email) {
+      res.status(400).json({ error: 'Account email is required.' });
+      return;
+    }
+
+    try {
+      const database = await readUserDatabase();
+      const existing = database.users[email];
+      const record = existing ?? buildUserRecord(email, defaultEmployeePassword, {});
+
+      record.profile = normalizeUserProfile(req.body?.user, email);
+      record.events = normalizePersistedEvents(req.body?.events);
+      record.updatedAt = new Date().toISOString();
+      database.users[email] = record;
+
+      await writeUserDatabase(database);
+
+      res.json({
+        accountEmail: record.email,
+        user: record.profile,
+        events: record.events,
+      });
+    } catch (error) {
+      console.error('User state save failed:', error instanceof Error ? error.message : error);
+      res.status(500).json({ error: 'Unable to save user state.' });
+    }
+  });
 
   // Simple endpoint to test the server
   app.get('/api/health', (req, res) => {

@@ -655,12 +655,21 @@ textarea {
   }
 
   .premium-btn.glass-button.glass-avatar-button span {
+    display: flex;
+    align-items: center;
+    justify-content: center;
     width: 2.75rem;
     height: 2.75rem;
     padding: 0;
+    overflow: hidden;
+    border-radius: 999px;
     font-size: 0.82rem;
     font-weight: 950;
     color: var(--color-primary);
+  }
+
+  .premium-btn.glass-button.glass-avatar-button img {
+    display: block;
   }
 
   .glass-selection-pane {

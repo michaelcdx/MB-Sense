@@ -10,6 +10,8 @@ services:
       NODE_ENV: production
     ports:
       - "127.0.0.1:8000:8000"
+    volumes:
+      - mbsense_user_data:/app/data
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8000/api/health"]
       interval: 10s
@@ -32,3 +34,6 @@ services:
         condition: service_healthy
     ports:
       - "127.0.0.1:8080:80"
+
+volumes:
+  mbsense_user_data:
