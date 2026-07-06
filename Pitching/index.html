@@ -58,6 +58,57 @@
       z-index: 2;
     }
 
+    .feature-qr {
+      position: absolute;
+      top: 50%;
+      right: clamp(0.85rem, 2.6vw, 2.8rem);
+      z-index: 5;
+      display: grid;
+      justify-items: center;
+      gap: 0.9rem;
+      width: clamp(10rem, 15vw, 18rem);
+      padding: 0;
+      opacity: 0;
+      pointer-events: none;
+      transform: translateY(-50%) translateX(18px);
+      transition:
+        opacity 280ms ease,
+        transform 280ms ease;
+    }
+
+    .feature-qr-domain {
+      color: #f8fbff;
+      font-size: clamp(1rem, 1.65vw, 1.65rem);
+      font-weight: 850;
+      line-height: 1;
+      text-align: center;
+      text-shadow:
+        0 0 18px rgba(255, 255, 255, 0.3),
+        0 8px 26px rgba(0, 0, 0, 0.45);
+    }
+
+    .feature-qr-code {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 1;
+      overflow: hidden;
+      filter: drop-shadow(0 14px 30px rgba(0, 0, 0, 0.4));
+    }
+
+    .feature-qr-code img {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 360%;
+      max-width: none;
+      transform: translate(-50%, -50%);
+    }
+
+    body.is-feature-video .feature-qr {
+      opacity: 1;
+      transform: translateY(-50%) translateX(0);
+    }
+
     body.is-demo-priming .deck {
       transition: opacity 0s;
     }
@@ -690,10 +741,10 @@
   </style>
 </head>
 <body class="is-start-gate">
-  <main class="stage" aria-label="Pitch video queue">
+  <main id="stage" class="stage" aria-label="Pitch video queue">
     <section id="presenterSlate" class="presenter-slate" aria-hidden="true">
       <div class="presenter-copy">
-        <div class="presenter-title">Too Good To Be True</div>
+        <div class="presenter-title">To Good To Be True</div>
         <div class="presenter-subtitle">PRESENTS</div>
       </div>
     </section>
@@ -715,6 +766,12 @@
     </section>
     <video id="playerA" class="deck is-active" playsinline preload="auto"></video>
     <video id="playerB" class="deck" playsinline preload="auto"></video>
+    <aside id="featureQr" class="feature-qr" aria-hidden="true">
+      <div class="feature-qr-domain">mbsense.online</div>
+      <div class="feature-qr-code">
+        <img src="QR.png" alt="">
+      </div>
+    </aside>
     <audio id="presenterSfx" src="mr_tinystark-iron-man-repulsor-157371.mp3" preload="auto"></audio>
     <audio id="brandSfx" src="whoosh-boom-dramatic-powerful-jam-fx-cinematic-whoosh-boom-1-0m08s.mp3" preload="auto"></audio>
     <audio id="featureWhooshSfx" src="dragon-studio-whoosh-cinematic-376875.mp3" preload="auto"></audio>
@@ -726,7 +783,6 @@
       'Intro MB Sense.mov',
       'F1.mp4',
       'F2.mp4',
-      'F3.mp4',
       'F4.mp4',
       'F5.mp4',
       'F6.mp4',
@@ -737,6 +793,7 @@
       'F11.mp4',
     ];
 
+    const stage = document.getElementById('stage');
     const players = [
       document.getElementById('playerA'),
       document.getElementById('playerB'),
@@ -760,6 +817,7 @@
     const demoExitDuration = 2020;
     let index = 0;
     let activeSlot = 0;
+    let activeDeck = players[activeSlot];
     let hasStarted = false;
     let isWaitingForPresenter = true;
     let isWaitingForIntro = false;
@@ -791,6 +849,28 @@
       video.dataset.src = src;
       video.src = src;
       video.load();
+    }
+
+    function isFeatureVideoSource(src) {
+      return /^F(?:[1-9]|1[0-4])\.mp4$/i.test(src);
+    }
+
+    function isVideoDeck(deck) {
+      return deck?.tagName === 'VIDEO';
+    }
+
+    function updateFeatureQrState() {
+      document.body.classList.toggle('is-feature-video', isVideoDeck(activeDeck) && isFeatureVideoSource(queue[index]));
+    }
+
+    function pauseDeck(deck) {
+      if (isVideoDeck(deck)) {
+        deck.pause();
+      }
+    }
+
+    function getStandbyVideo() {
+      return activeDeck === players[activeSlot] ? players[1 - activeSlot] : players[activeSlot];
     }
 
     function restart(video) {
@@ -829,9 +909,7 @@
 
     function preloadNext(direction = 1) {
       const preloadIndex = clampIndex(index + direction);
-      const standby = players[1 - activeSlot];
-
-      setVideoSource(standby, queue[preloadIndex]);
+      setVideoSource(getStandbyVideo(), queue[preloadIndex]);
     }
 
     function playPresenterSfx() {
@@ -1157,11 +1235,14 @@
       try {
         const playPromise = player.play();
         await Promise.all([waitForFrame(player), playPromise ?? Promise.resolve()]);
+        activeDeck = player;
         document.body.classList.add('is-playing');
+        updateFeatureQrState();
         preloadNext(1);
         return true;
       } catch {
         document.body.classList.remove('is-playing');
+        updateFeatureQrState();
         return false;
       }
     }
@@ -1173,8 +1254,8 @@
 
       isSwitching = true;
 
-      const current = players[activeSlot];
-      const nextSlot = 1 - activeSlot;
+      const current = activeDeck;
+      const nextSlot = getStandbyVideo() === players[0] ? 0 : 1;
       const next = players[nextSlot];
       const wasMuted = next.muted;
 
@@ -1188,18 +1269,21 @@
 
         next.classList.add('is-active');
         current.classList.remove('is-active');
-        current.pause();
+        pauseDeck(current);
         next.muted = wasMuted;
 
         activeSlot = nextSlot;
+        activeDeck = next;
         index = nextIndex;
         document.body.classList.add('is-playing');
+        updateFeatureQrState();
         preloadNext(direction);
         return true;
       } catch {
         next.pause();
         next.muted = wasMuted;
-        document.body.classList.toggle('is-playing', !current.paused);
+        document.body.classList.toggle('is-playing', isVideoDeck(current) && !current.paused);
+        updateFeatureQrState();
         return false;
       } finally {
         isSwitching = false;
@@ -1287,11 +1371,42 @@
       void switchTo(nextIndex, direction);
     }
 
+    function getFullscreenElement() {
+      return document.fullscreenElement || document.webkitFullscreenElement || null;
+    }
+
+    async function toggleFullscreen() {
+      try {
+        if (getFullscreenElement()) {
+          if (document.exitFullscreen) {
+            await document.exitFullscreen();
+          } else if (document.webkitExitFullscreen) {
+            document.webkitExitFullscreen();
+          }
+          return;
+        }
+
+        if (stage.requestFullscreen) {
+          await stage.requestFullscreen();
+        } else if (stage.webkitRequestFullscreen) {
+          stage.webkitRequestFullscreen();
+        }
+      } catch {
+        // Fullscreen requests can be denied by the browser; the pitch controls still work.
+      }
+    }
+
     window.addEventListener('click', () => startOrMove(1));
 
     window.addEventListener('keydown', (event) => {
       const forwardKeys = ['ArrowRight', 'ArrowDown'];
       const backKeys = ['ArrowLeft', 'ArrowUp'];
+
+      if (event.key.toLowerCase() === 'f' && !event.altKey && !event.ctrlKey && !event.metaKey) {
+        event.preventDefault();
+        void toggleFullscreen();
+        return;
+      }
 
       if (forwardKeys.includes(event.key)) {
         event.preventDefault();
@@ -1307,14 +1422,16 @@
     players.forEach((player) => {
       player.addEventListener('ended', () => {
         document.body.classList.remove('is-playing');
+        updateFeatureQrState();
 
-        if (player === players[activeSlot] && index === 0 && !hasPlayedStinger) {
+        if (player === activeDeck && index === 0 && !hasPlayedStinger) {
           showStingerGate();
         }
       });
     });
 
     setVideoSource(players[activeSlot], queue[index]);
+    updateFeatureQrState();
     preloadNext(1);
   </script>
 </body>
